@@ -1,0 +1,67 @@
+# ---------------------------------------------------------------------------
+# Backrooms - track only source code and build scripts.
+# ---------------------------------------------------------------------------
+
+# ----- Build output ----------------------------------------------------------
+# Out-of-source build trees (CMake presets use build/; IDEs use the others).
+/build/
+/out/
+/cmake-build-*/
+
+# In-source CMake artifacts (in case CMake is ever run in the source tree).
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+cmake_install.cmake
+install_manifest.txt
+CTestTestfile.cmake
+_deps/
+compile_commands.json
+
+# Per-user CMake presets (CMakePresets.json is shared and tracked).
+CMakeUserPresets.json
+
+# vcpkg manifest-mode install tree.
+vcpkg_installed/
+
+# ----- Compiled binaries and intermediates ------------------------------------
+*.exe
+*.dll
+*.lib
+*.exp
+*.pdb
+*.ilk
+*.idb
+*.obj
+*.o
+*.a
+*.so
+*.so.*
+*.dylib
+
+# ----- IDE / editor state -------------------------------------------------------
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.sln
+*.slnx
+*.vcxproj
+*.vcxproj.filters
+*.VC.db
+*.VC.opendb
+# Visual Studio Code
+.vscode/
+# JetBrains (CLion / Rider)
+.idea/
+# clangd
+.cache/
+
+# ----- Runtime output -------------------------------------------------------------
+# Screenshots saved by the game (F12 / --screenshot).
+backrooms_*.bmp
+
+# ----- OS clutter ------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
