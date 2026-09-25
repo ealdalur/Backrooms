@@ -195,25 +195,51 @@ std::vector<Sound> makeHum(uint64_t seed) {
     return {out};
 }
 
-std::vector<Sound> makeBuzz(uint64_t seed) {
-    // Faulty ballast: square-ish 120 Hz with spiky 240 Hz rattle and an
-    // irregular amplitude flutter.
-    const float loop = 4.0f, cf = 0.25f;
-    Buffer b = silence(loop + cf);
-    Biquad hp = Biquad::highpass(150.0f), lp = Biquad::lowpass(3500.0f), body = Biquad::bandpass(1800.0f, 0.8f);
-    for (size_t i = 0; i < b.size(); ++i) {
-        const float t = timeOf(i);
-        const float x = std::sin(dsp::kTwoPi * 120.0f * t);
-        const float square = std::copysign(std::pow(std::fabs(x), 0.25f), x);
-        const float rattle = std::pow(std::sin(dsp::kTwoPi * 240.0f * t), 9.0f);
-        const float flutter = 0.6f + 0.4f * noise::value1D(t * 23.0, seed);
-        const float s = (0.7f * square + 0.5f * rattle) * flutter;
-        const float filtered = lp.process(hp.process(s));
-        b[i] = filtered + 0.4f * body.process(s);
+std::vector<Sound> makeFlickerBuzz(uint64_t seed) {
+    // The "bzzzt" of a malfunctioning fluorescent tube. The arc re-ignites on
+    // every half-cycle of the 60 Hz mains, so its energy arrives in 120 Hz
+    // pulses: a hard-clipped 120 Hz buzz, a spiky 240 Hz magnetostriction
+    // rattle from the ballast core, bright arcing sizzle pulsed on each current
+    // peak, sparse crackles and an irregular flutter. The game gates each
+    // light's copy with that light's flicker, so the buzz lands on every flash.
+    // 2 s holds whole cycles of 120 / 240 Hz; the noisy parts are crossfaded.
+    const float loop = 2.0f, cf = 0.2f;
+    std::vector<Sound> out;
+    for (int v = 0; v < 3; ++v) {
+        rnd::Rng rng(rnd::hashCombine(seed, static_cast<uint64_t>(v)));
+        Noise noise(rng.next());
+        const uint64_t flutterSeed = rng.next();
+        Buffer b = silence(loop + cf);
+        Biquad coreHp = Biquad::highpass(110.0f), coreLp = Biquad::lowpass(4200.0f);
+        Biquad body = Biquad::bandpass(rng.range(900.0f, 1600.0f), 1.2f);
+        Biquad sizzleA = Biquad::bandpass(rng.range(3800.0f, 5200.0f), 0.9f);
+        Biquad sizzleB = Biquad::bandpass(rng.range(6500.0f, 8500.0f), 1.2f);
+        Biquad crackleHp = Biquad::highpass(1800.0f);
+        const float drive = rng.range(3.0f, 6.0f);
+        const float rattlePhase = rng.range(0.0f, dsp::kTwoPi);
+        const float crackleDecay = std::exp(-1.0f / (0.0012f * kRate));
+        float crackleEnv = 0.0f;
+        for (size_t i = 0; i < b.size(); ++i) {
+            const float t = timeOf(i);
+            const float mains = std::sin(dsp::kTwoPi * 120.0f * t);
+            const float core = std::tanh(drive * mains); // clipped: rich odd harmonics
+            const float rattle = std::pow(std::sin(dsp::kTwoPi * 240.0f * t + rattlePhase), 9.0f);
+            const float peaks = std::pow(std::fabs(mains), 6.0f); // arc current crests
+            const float n = noise();
+            const float sizzle = (0.7f * sizzleA.process(n) + 0.5f * sizzleB.process(n)) * (0.25f + 0.75f * peaks);
+            if (rng.chance(55.0f / kRate)) crackleEnv = rng.range(0.5f, 1.0f);
+            const float crackle = crackleHp.process(noise()) * crackleEnv;
+            crackleEnv *= crackleDecay;
+            const float flutter = 0.65f + 0.35f * noise::value1D(t * 27.0, flutterSeed);
+            b[i] = (0.55f * coreLp.process(coreHp.process(core + 0.45f * rattle)) + 0.35f * body.process(core) +
+                    0.55f * sizzle + 0.4f * crackle) *
+                   flutter;
+        }
+        Sound s{makeSeamless(b, cf), true};
+        normalize(s.samples, 0.85f);
+        out.push_back(std::move(s));
     }
-    Sound out{makeSeamless(b, cf), true};
-    normalize(out.samples, 0.8f);
-    return {out};
+    return out;
 }
 
 std::vector<Sound> makeDrone(uint64_t seed) {
@@ -354,46 +380,80 @@ std::vector<Sound> makeLandHard(uint64_t seed) {
 }
 
 std::vector<Sound> makeGrunt(uint64_t seed) {
+    // An exerted "huh!" as the player pushes off:
+    //   * "h": a forceful burst of breath before the voice, turbulent air
+    //     already shaped by the vowel (it passes through the same vocal tract);
+    //   * "uh": a short, low male vowel under strain: a pressed glottal pulse,
+    //     constant cycle-to-cycle irregularity (jitter / shimmer), alternating
+    //     strong and weak pulses (the growl of a tight throat), turbulence
+    //     riding every pulse, and gentle saturation for grit;
+    //   * a brief breath out as the voice cuts off.
+    // Pitch only falls and the formants are held steady (a closing glide reads as "oh").
     std::vector<Sound> out;
     for (int v = 0; v < 4; ++v) {
         rnd::Rng rng(rnd::hashCombine(seed, static_cast<uint64_t>(v)));
         Noise noise(rng.next());
         const float dur = 0.32f;
         Buffer b = silence(dur);
-        const float f0 = rng.range(98.0f, 132.0f);
-        const float f1Open = rng.range(600.0f, 680.0f), f2Open = rng.range(1120.0f, 1240.0f);
-        Biquad F1 = Biquad::bandpass(f1Open, 5.0f), F2 = Biquad::bandpass(f2Open, 9.0f), F3 = Biquad::bandpass(2450.0f, 14.0f);
+        const float f0 = rng.range(86.0f, 98.0f);          // at voice onset, falling ~25%: low male
+        const float voiceOn = rng.range(0.035f, 0.05f);    // length of the "h" before the voice
+        const float drive = rng.range(1.8f, 2.6f);         // saturation (grit)
+        // "Huh" vowel formants for a large (male) vocal tract, jaw open with effort.
+        Biquad F1 = Biquad::bandpass(rng.range(600.0f, 650.0f), 6.0f);
+        Biquad F2 = Biquad::bandpass(rng.range(1220.0f, 1320.0f), 9.0f);
+        Biquad F3 = Biquad::bandpass(rng.range(2350.0f, 2500.0f), 13.0f);
+        Biquad F4 = Biquad::bandpass(3300.0f, 15.0f);
+        Biquad hiss = Biquad::highpass(1500.0f); // broadband part of the breath
+
         float phase = 0.0f, prevGlottal = 0.0f, jitter = 0.0f;
+        float periodScale = 1.0f, pulseAmp = 1.0f;
+        bool strongPulse = false;
         for (size_t i = 0; i < b.size(); ++i) {
             const float t = timeOf(i);
-            // Pitch contour: effort pushes it up briefly, then it sags.
-            const float contour = 1.0f + 0.10f * (t < 0.04f ? t / 0.04f : std::exp(-(t - 0.04f) / 0.12f)) -
-                                  0.12f * smooth01(0.08f, dur, t);
-            jitter = 0.999f * jitter + 0.001f * noise(); // slow random wander (vocal jitter)
-            phase += f0 * contour * (1.0f + 0.6f * jitter) / kRate;
-            if (phase >= 1.0f) phase -= 1.0f;
+            const float tv = t - voiceOn; // time since the voice started
+            const bool voiced = tv >= 0.0f;
 
-            // Rosenberg glottal pulse; its derivative models lip radiation.
-            float glottal = 0.0f;
-            if (phase < 0.6f) glottal = 0.5f * (1.0f - std::cos(dsp::kPi * phase / 0.6f));
-            else if (phase < 0.95f) glottal = std::cos(0.5f * dsp::kPi * (phase - 0.6f) / 0.35f);
-            const float source = (glottal - prevGlottal) * 40.0f;
+            float glottal = 0.0f, source = 0.0f;
+            if (voiced) {
+                const float contour = 1.0f - 0.25f * smooth01(0.0f, dur - voiceOn, tv);
+                const float fry = smooth01(0.12f, 0.2f, tv); // creak deepens in the tail
+                jitter = 0.999f * jitter + 0.001f * noise();
+                phase += f0 * contour * (1.0f + 0.5f * jitter) * periodScale / kRate;
+                if (phase >= 1.0f) {
+                    // New glottal cycle: rough, strained phonation throughout.
+                    phase -= 1.0f;
+                    strongPulse = !strongPulse;
+                    periodScale = 1.0f / (1.0f + rng.range(-0.015f, 0.015f) +
+                                          fry * ((strongPulse ? 0.2f : -0.1f) + rng.range(-0.1f, 0.1f)));
+                    pulseAmp = (strongPulse ? 1.0f : rng.range(0.78f, 0.9f)) * (1.0f - fry * rng.range(0.0f, 0.5f));
+                }
+                // Pressed Rosenberg pulse (short open phase, abrupt closure);
+                // its derivative models lip radiation.
+                if (phase < 0.4f) glottal = 0.5f * (1.0f - std::cos(dsp::kPi * phase / 0.4f));
+                else if (phase < 0.52f) glottal = std::cos(0.5f * dsp::kPi * (phase - 0.4f) / 0.12f);
+                source = (glottal - prevGlottal) * 40.0f * pulseAmp;
+            }
             prevGlottal = glottal;
 
-            const float breath = noise() * (0.35f * std::exp(-t / 0.03f) + 0.06f);
-            const float env = smooth01(0.0f, 0.018f, t) * (t < 0.1f ? 1.0f : std::exp(-(t - 0.1f) / 0.06f));
-            const float x = (0.9f * source + breath) * env;
+            const float voiceEnv =
+                voiced ? smooth01(0.0f, 0.006f, tv) * (tv < 0.1f ? 1.0f : std::exp(-(tv - 0.1f) / 0.05f)) : 0.0f;
+            const float hBurst = smooth01(0.0f, 0.012f, t) * (1.0f - smooth01(voiceOn - 0.005f, voiceOn + 0.025f, t));
+            const float exhale = smooth01(voiceOn + 0.1f, voiceOn + 0.14f, t) *
+                                 std::exp(-std::max(0.0f, t - (voiceOn + 0.14f)) / 0.06f);
+            const float n = noise();
+            const float breath = n * (0.35f * hBurst + 0.16f * glottal * voiceEnv + 0.12f * exhale);
 
-            // Mouth closes towards the end: "uh" glides to a nasal "m" ("hmph").
-            if (i % 32 == 0) {
-                const float k = smooth01(0.12f, 0.22f, t);
-                F1.configure(Biquad::Type::Bandpass, f1Open + (320.0f - f1Open) * k, 5.0f);
-                F2.configure(Biquad::Type::Bandpass, f2Open + (1000.0f - f2Open) * k, 9.0f);
-            }
-            b[i] = F1.process(x) + 0.55f * F2.process(x) + 0.28f * F3.process(x);
+            const float x = source * voiceEnv + breath;
+            b[i] = F1.process(x) + 0.5f * F2.process(x) + 0.22f * F3.process(x) + 0.1f * F4.process(x) +
+                   0.06f * hiss.process(n) * hBurst;
         }
-        applyFilter(b, Biquad::lowpass(4500.0f));
-        applyFilter(b, Biquad::highpass(90.0f));
+        // Gentle saturation: strained, gritty harmonics.
+        normalize(b, 1.0f);
+        const float norm = 1.0f / std::tanh(drive);
+        for (float& s : b) s = std::tanh(drive * s) * norm;
+
+        applyFilter(b, Biquad::lowpass(4000.0f));
+        applyFilter(b, Biquad::highpass(80.0f));
         fadeEdges(b, 0.001f, 0.04f);
         normalize(b, 0.8f);
         out.push_back({std::move(b), false});
@@ -502,68 +562,6 @@ std::vector<Sound> makeDoorShut(uint64_t seed) {
         applyFilter(b, Biquad::highpass(40.0f));
         fadeEdges(b, 0.0005f, 0.1f);
         normalize(b, 0.95f);
-        out.push_back({std::move(b), false});
-    }
-    return out;
-}
-
-// ============================================================================
-// Fluorescent lights
-// ============================================================================
-
-std::vector<Sound> makeLightStrike(uint64_t seed) {
-    const Mode tink[] = {{3100, 0.03f, 1.0f}, {4650, 0.022f, 0.6f}, {6900, 0.015f, 0.4f}, {2100, 0.04f, 0.3f}};
-    std::vector<Sound> out;
-    for (int v = 0; v < 4; ++v) {
-        rnd::Rng rng(rnd::hashCombine(seed, static_cast<uint64_t>(v)));
-        Noise noise(rng.next());
-        Buffer b = silence(0.45f);
-        addModes(b, 0.0f, tink, 4, 0.5f, 0.06f, rng);                                         // starter / relay
-        addNoiseBurst(b, 0.0f, 0.0005f, 0.006f, Biquad::bandpass(4500.0f, 1.2f), 0.3f, noise); // arc "zap"
-
-        // Burst of mains buzz as the tube ignites (harmonic-rich 120 Hz).
-        Buffer buzz = silence(0.45f);
-        const float flutterHz = rng.range(20.0f, 35.0f);
-        for (size_t i = samplesFor(0.005f); i < buzz.size(); ++i) {
-            const float t = timeOf(i) - 0.005f;
-            float s = 0.0f;
-            for (int k = 1; k <= 24; ++k) {
-                s += std::sin(dsp::kTwoPi * 120.0f * static_cast<float>(k) * t) / std::pow(static_cast<float>(k), 0.9f) *
-                     ((k & 1) ? 1.0f : 0.6f);
-            }
-            const float env = std::min(1.0f, t / 0.004f) * std::exp(-t / 0.09f) *
-                              (0.7f + 0.3f * std::sin(dsp::kTwoPi * flutterHz * t));
-            buzz[i] = s * env;
-        }
-        Biquad body = Biquad::bandpass(1400.0f, 0.6f);
-        for (size_t i = 0; i < b.size(); ++i) b[i] += 0.35f * (0.3f * buzz[i] + body.process(buzz[i]));
-
-        applyFilter(b, Biquad::lowpass(12000.0f));
-        applyFilter(b, Biquad::highpass(90.0f));
-        fadeEdges(b, 0.0005f, 0.05f);
-        normalize(b, 0.8f);
-        out.push_back({std::move(b), false});
-    }
-    return out;
-}
-
-std::vector<Sound> makeLightOff(uint64_t seed) {
-    const Mode tick[] = {{1800, 0.012f, 1.0f}, {2900, 0.009f, 0.6f}, {950, 0.015f, 0.4f}};
-    std::vector<Sound> out;
-    for (int v = 0; v < 3; ++v) {
-        rnd::Rng rng(rnd::hashCombine(seed, static_cast<uint64_t>(v)));
-        Buffer b = silence(0.15f);
-        addModes(b, 0.0f, tick, 3, 0.5f, 0.08f, rng);
-        // A few cycles of buzz collapsing.
-        for (size_t i = 0; i < b.size(); ++i) {
-            const float t = timeOf(i);
-            b[i] += 0.15f * std::exp(-t / 0.02f) * std::sin(dsp::kTwoPi * 120.0f * t) *
-                    std::sin(dsp::kTwoPi * 360.0f * t);
-        }
-        applyFilter(b, Biquad::lowpass(8000.0f));
-        applyFilter(b, Biquad::highpass(150.0f));
-        fadeEdges(b, 0.0005f, 0.03f);
-        normalize(b, 0.6f);
         out.push_back({std::move(b), false});
     }
     return out;
@@ -711,10 +709,9 @@ void SoundBank::build() {
 
     using Generator = std::vector<Sound> (*)(uint64_t);
     const Generator generators[kSoundIdCount] = {
-        makeHum,          makeBuzz,        makeDrone,
+        makeHum,          makeFlickerBuzz, makeDrone,
         makeFootCarpet,   makeFootHard,    makeLandCarpet,  makeLandHard,  makeGrunt,
         makeDoorUnlatch,  makeDoorCreak,   makeDoorShut,
-        makeLightStrike,  makeLightOff,
         makeDistantBang,  makeDistantPounding, makeDistantFootsteps, makeDistantMachinery,
     };
 

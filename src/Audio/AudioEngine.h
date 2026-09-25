@@ -37,6 +37,7 @@ struct VoiceParams {
     float lowpassHz  = 20000.0f; ///< One-pole low-pass cutoff (muffling).
     float reverbSend = 0.1f;     ///< Amount sent to the reverb bus.
     float delay      = 0.0f;     ///< Seconds to wait before starting.
+    float startOffset = 0.0f;    ///< Start position as a fraction (0..1) of the sound.
     bool  loop       = false;
 };
 

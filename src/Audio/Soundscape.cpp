@@ -10,34 +10,30 @@
 
 #include <algorithm>
 #include <cmath>
-#include <iterator>
 
 namespace {
 // ---- Mix levels (linear gain; every source is peak-normalised) ----------------
-constexpr float kHumFloor      = 0.02f;  ///< Hum that never fully disappears.
-constexpr float kHumPerLight   = 0.035f;
-constexpr float kHumMax        = 0.12f;
-constexpr float kBuzzPerLight  = 0.12f;
-constexpr float kBuzzMax       = 0.22f;
-constexpr float kDroneGain     = 0.09f;
-constexpr float kFootBase      = 0.18f;
-constexpr float kFootPerSpeed  = 0.30f;
-constexpr float kLandBase      = 0.35f;
-constexpr float kLandPerImpact = 0.50f;
-constexpr float kGruntGain     = 0.30f;
-constexpr float kUnlatchGain   = 0.55f;
-constexpr float kCreakGain     = 0.20f;  ///< Creaks are meant to be subtle.
-constexpr float kShutGain      = 0.65f;
-constexpr float kStrikeGain    = 0.35f;
-constexpr float kDropGain      = 0.20f;
+constexpr float kHumFloor        = 0.01f;   ///< Hum that never fully disappears.
+constexpr float kHumPerLight     = 0.0175f;
+constexpr float kHumMax          = 0.06f;
+constexpr float kFlickerBuzzGain = 0.22f;   ///< Malfunction buzz while the faulty tube is lit.
+constexpr float kFlickerBuzzIdle = 0.08f;   ///< Fraction still heard between flicker bursts.
+constexpr float kDroneGain       = 0.09f;
+constexpr float kFootBase        = 0.18f;
+constexpr float kFootPerSpeed    = 0.30f;
+constexpr float kLandBase        = 0.35f;
+constexpr float kLandPerImpact   = 0.50f;
+constexpr float kGruntGain       = 0.30f;
+constexpr float kUnlatchGain     = 0.55f;
+constexpr float kCreakGain       = 0.20f;   ///< Creaks are meant to be subtle.
+constexpr float kShutGain        = 0.65f;
 
 // ---- Behaviour -------------------------------------------------------------------
 constexpr float  kLightHearingRange = 14.0f; ///< Lights farther away are inaudible.
-constexpr float  kFlickerThreshold  = 0.5f;  ///< On/off boundary for click detection.
-constexpr double kMinClickInterval  = 0.06;  ///< Per-light rate limit (s).
-constexpr double kStutterWindow     = 0.25;  ///< Clicks closer together than this are "stutter"...
-constexpr float  kStutterGain       = 0.5f;  ///< ...and play at reduced level.
-constexpr int    kMaxClicksPerFrame = 4;
+constexpr float  kBuzzRange         = 11.0f; ///< Faulty tubes farther away get no buzz voice.
+constexpr size_t kMaxBuzzVoices     = 6;     ///< Nearest faulty tubes that buzz at once.
+constexpr float  kBuzzGateLow       = 0.35f; ///< Tube output at or below this is "off": no buzz...
+constexpr float  kBuzzGateHigh      = 0.90f; ///< ...and at or above this, full buzz.
 constexpr float  kOccludedGain      = 0.35f;
 constexpr float  kOccludedLowpass   = 900.0f;
 /// Occlusion is tested up to a point this far in front of the source (towards
@@ -45,6 +41,11 @@ constexpr float  kOccludedLowpass   = 900.0f;
 /// wall or doorway never count their own wall as an obstruction.
 constexpr float  kSourceClearance   = 0.15f;
 constexpr float  kUnlatchToCreak    = 0.18f; ///< Creak starts once the latch has released.
+
+inline float smoothGate(float e0, float e1, float x) {
+    const float t = std::clamp((x - e0) / (e1 - e0), 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
 } // namespace
 
 bool Soundscape::init() {
@@ -57,8 +58,6 @@ bool Soundscape::init() {
     loop.reverbSend = 0.0f;
     loop.gain = kHumFloor;
     m_hum = m_audio.play(m_bank.get(SoundId::HumLoop, 0), loop);
-    loop.gain = 0.0f;
-    m_buzz = m_audio.play(m_bank.get(SoundId::BuzzLoop, 0), loop);
     loop.gain = kDroneGain;
     loop.reverbSend = 0.15f;
     m_drone = m_audio.play(m_bank.get(SoundId::DroneLoop, 0), loop);
@@ -154,7 +153,7 @@ void Soundscape::handlePlayer(const Player& player) {
             break;
         }
         case PlayerEvent::Type::Jump:
-            play2D(SoundId::Grunt, kGruntGain, 0.0f, m_rng.range(0.96f, 1.04f), 0.08f);
+            play2D(SoundId::Grunt, kGruntGain, 0.0f, m_rng.range(0.97f, 1.03f), 0.08f);
             // Push-off scuff from the feet.
             play2D(e.elevated ? SoundId::FootHard : SoundId::FootCarpet, 0.25f, 0.0f, m_rng.range(0.95f, 1.05f), 0.05f);
             break;
@@ -180,8 +179,8 @@ void Soundscape::handleDoors(const std::vector<DoorEvent>& events, const WorldGe
 
 void Soundscape::updateLights(double time, const ChunkManager& chunks, const WorldGenerator& generator) {
     const ChunkCoord center = ChunkCoord::fromWorld(m_listener.x, m_listener.z);
-    float humSum = 0.0f, buzzSum = 0.0f, buzzPan = 0.0f;
-    int clicks = 0;
+    float humSum = 0.0f;
+    m_buzzCandidates.clear();
 
     for (int dz = -1; dz <= 1; ++dz) {
         for (int dx = -1; dx <= 1; ++dx) {
@@ -200,54 +199,79 @@ void Soundscape::updateLights(double time, const ChunkManager& chunks, const Wor
 
                 // Every ballast adds to the hum while its tube is lit.
                 humSum += intensity * occlusion / (1.0f + (dist / 4.0f) * (dist / 4.0f));
-                // Faulty ballasts buzz, but only while their tube is actually on.
-                if (light.mode() == FlickerMode::Intermittent || light.mode() == FlickerMode::Failing) {
-                    const float w = intensity * occlusion / (1.0f + (dist / 2.5f) * (dist / 2.5f));
-                    buzzSum += w;
-                    buzzPan += w * s.pan;
-                }
 
-                // Click exactly when a tube strikes or drops out.
                 const uint64_t key = rnd::hashCombine(chunk->seed(), static_cast<uint64_t>(i));
-                auto it = m_lights.find(key);
-                if (it == m_lights.end()) {
-                    m_lights.emplace(key, LightState{intensity, -1.0, m_frame});
-                    continue;
-                }
-                LightState& st = it->second;
-                const bool struck = st.previous < kFlickerThreshold && intensity >= kFlickerThreshold;
-                const bool dropped = st.previous >= kFlickerThreshold && intensity < kFlickerThreshold;
-                if ((struck || dropped) && time - st.lastClick > kMinClickInterval && clicks < kMaxClicksPerFrame) {
-                    // A tube stuttering rapidly clicks softer than one striking after a pause.
-                    const float stutter = (time - st.lastClick < kStutterWindow) ? kStutterGain : 1.0f;
-                    VoiceParams p;
-                    p.gain = (struck ? kStrikeGain : kDropGain) * s.gain * stutter;
-                    p.pan = s.pan;
-                    p.lowpassHz = s.lowpassHz;
-                    p.pitch = 1.0f + m_rng.range(-0.06f, 0.06f);
-                    p.reverbSend = 0.12f;
-                    const SoundId id = struck ? SoundId::LightStrike : SoundId::LightOff;
-                    m_audio.play(m_bank.get(id, pickVariant(id)), p);
-                    st.lastClick = time;
-                    ++clicks;
-                }
-                st.previous = intensity;
+                LightState& st = m_lights[key];
                 st.lastSeen = m_frame;
+
+                // Faulty tubes buzz while their arc is lit: silent in the dim
+                // "off" moments of a flicker, full on each flash, and only a
+                // faint residue between bursts.
+                if ((light.mode() == FlickerMode::Intermittent || light.mode() == FlickerMode::Failing) &&
+                    dist <= kBuzzRange) {
+                    const float lit = smoothGate(kBuzzGateLow, kBuzzGateHigh, intensity);
+                    const float activity = light.isMalfunctioning(time) ? 1.0f : kFlickerBuzzIdle;
+                    m_buzzCandidates.push_back(
+                        {&st, key, dist, kFlickerBuzzGain * lit * activity * s.gain, s.pan, s.lowpassHz});
+                }
             }
         }
     }
 
+    updateBuzzVoices();
+
     // Forget lights that have been out of earshot for a while.
     if (m_frame % 120 == 0) {
         for (auto it = m_lights.begin(); it != m_lights.end();) {
-            it = (m_frame - it->second.lastSeen > 240) ? m_lights.erase(it) : std::next(it);
+            if (m_frame - it->second.lastSeen > 240) {
+                if (it->second.buzz) m_audio.stop(it->second.buzz);
+                it = m_lights.erase(it);
+            } else {
+                ++it;
+            }
         }
     }
 
     const float hum = kHumFloor + std::min(humSum * kHumPerLight, kHumMax);
-    const float buzz = std::min(buzzSum * kBuzzPerLight, kBuzzMax);
     m_audio.setVoice(m_hum, hum, 0.0f, 20000.0f);
-    m_audio.setVoice(m_buzz, buzz, buzzSum > 1e-4f ? buzzPan / buzzSum : 0.0f, 20000.0f);
+}
+
+void Soundscape::updateBuzzVoices() {
+    // The nearest faulty tubes get (or keep) a positional buzz voice.
+    std::sort(m_buzzCandidates.begin(), m_buzzCandidates.end(),
+              [](const BuzzCandidate& a, const BuzzCandidate& b) { return a.distance < b.distance; });
+    const size_t count = std::min(m_buzzCandidates.size(), kMaxBuzzVoices);
+    for (size_t i = 0; i < count; ++i) {
+        const BuzzCandidate& c = m_buzzCandidates[i];
+        LightState& st = *c.state;
+        if (st.buzz == 0 || !m_audio.isPlaying(st.buzz)) {
+            // Variant, pitch and loop phase come from the light's key, so each
+            // faulty tube keeps its own recognisable buzz when you return to it.
+            VoiceParams p;
+            p.loop = true;
+            p.gain = 0.0f; // start silent: the ramp below avoids a click mid-waveform
+            p.pan = c.pan;
+            p.lowpassHz = c.lowpassHz;
+            p.reverbSend = 0.1f;
+            p.pitch = 0.97f + 0.06f * rnd::toUnit(rnd::hashCombine(c.key, 1));
+            p.startOffset = rnd::toUnit(rnd::hashCombine(c.key, 2));
+            const int variant = static_cast<int>(c.key % static_cast<uint64_t>(m_bank.variantCount(SoundId::FlickerBuzz)));
+            st.buzz = m_audio.play(m_bank.get(SoundId::FlickerBuzz, variant), p);
+        }
+        // Gain follows the flicker every frame; the mixer's few-ms smoothing
+        // keeps each "bzzt" edge sharp but click-free.
+        m_audio.setVoice(st.buzz, c.gain, c.pan, c.lowpassHz);
+        st.buzzFrame = m_frame;
+    }
+
+    // Lights that dropped out of range, or were outranked by nearer ones, fall silent.
+    for (auto& kv : m_lights) {
+        LightState& st = kv.second;
+        if (st.buzz && st.buzzFrame != m_frame) {
+            m_audio.stop(st.buzz, 0.15f);
+            st.buzz = 0;
+        }
+    }
 }
 
 void Soundscape::updateDistantEvents(float dt) {

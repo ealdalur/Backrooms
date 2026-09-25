@@ -29,6 +29,11 @@ public:
     /// Relative light output in [0, 1] at absolute simulation time `t` (s).
     float intensity(double t) const;
 
+    /// True while the tube is actively misbehaving at time `t`: inside a
+    /// flicker burst (Intermittent) or at any time (Failing). Drives the
+    /// malfunction buzz, which should fall quiet between bursts.
+    bool isMalfunctioning(double t) const;
+
     const glm::vec3& center() const { return m_center; }
     const glm::vec2& halfSize() const { return m_halfSize; }
     const glm::vec3& color() const { return m_color; }
@@ -40,6 +45,9 @@ public:
     const std::vector<glm::ivec2>& visibleCells() const { return m_visibleCells; }
 
 private:
+    /// Whether `t` falls inside an Intermittent flicker burst; also returns
+    /// the burst's period index and the time elapsed since it started.
+    bool burstAt(double t, int64_t& period, double& inBurst) const;
     float intermittent(double t) const;
     float failing(double t) const;
 

@@ -91,6 +91,8 @@ VoiceHandle AudioEngine::play(const Sound& sound, const VoiceParams& p) {
     v.generation = generation == 0 ? 1u : generation;
     v.samples = sound.samples.data();
     v.length = sound.samples.size();
+    v.position = std::floor(static_cast<double>(std::clamp(p.startOffset, 0.0f, 1.0f)) *
+                            static_cast<double>(v.length - 1));
     v.pitch = std::max(0.05f, p.pitch);
     v.loop = p.loop;
     v.active = true;

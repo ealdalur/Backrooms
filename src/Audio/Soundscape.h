@@ -2,13 +2,14 @@
 // ---------------------------------------------------------------------------
 // Soundscape.h
 // Game-side audio director. Translates world state into sound:
-//   * Ambient bed: ballast hum whose level follows the live intensity of the
-//     nearby fluorescent tubes, a harsher buzz that tracks faulty (flickering)
-//     tubes, and a distant machinery drone.
+//   * Ambient bed: faint ballast hum whose level follows the live intensity
+//     of the nearby fluorescent tubes, plus a distant machinery drone.
+//   * Malfunction buzz: each nearby faulty tube gets its own positional
+//     "bzzzt" voice, gated every frame by that tube's flicker so the buzz
+//     lands exactly on its flashes.
 //   * Sparse distant, muffled events (bangs, pounding, footsteps, machinery).
 //   * Player footsteps / jump grunt / landings from PlayerEvents.
 //   * Door unlatch / creak / shut from DoorEvents.
-//   * Tube strike / drop-out clicks exactly when a nearby light flickers.
 // Positional sounds get distance attenuation, equal-power panning, head
 // shadow and occlusion (muffled and quieter when a wall is in the way).
 // ---------------------------------------------------------------------------
@@ -50,9 +51,18 @@ private:
         bool  occluded; ///< A wall stands between the source and the listener.
     };
     struct LightState {
-        float    previous;   ///< Intensity last frame.
-        double   lastClick;  ///< Time of the last strike/drop-out sound.
-        uint64_t lastSeen;   ///< Frame index, for pruning.
+        uint64_t    lastSeen = 0;   ///< Frame index, for pruning.
+        VoiceHandle buzz = 0;       ///< Malfunction buzz voice, if this light has one.
+        uint64_t    buzzFrame = 0;  ///< Frame the buzz voice was last kept alive.
+    };
+    /// A faulty light close enough to be given a buzz voice this frame.
+    struct BuzzCandidate {
+        LightState* state;
+        uint64_t    key;
+        float       distance;
+        float       gain;
+        float       pan;
+        float       lowpassHz;
     };
 
     Spatial spatialize(const glm::vec3& source, float refDistance, const WorldGenerator& generator) const;
@@ -67,6 +77,7 @@ private:
     void handlePlayer(const Player& player);
     void handleDoors(const std::vector<DoorEvent>& events, const WorldGenerator& generator);
     void updateLights(double time, const ChunkManager& chunks, const WorldGenerator& generator);
+    void updateBuzzVoices();
     void updateDistantEvents(float dt);
 
     AudioEngine m_audio;
@@ -79,11 +90,11 @@ private:
     glm::vec3 m_listenerForward{0.0f, 0.0f, -1.0f};
 
     VoiceHandle m_hum = 0;
-    VoiceHandle m_buzz = 0;
     VoiceHandle m_drone = 0;
 
     float    m_nextDistantEvent = 7.0f;
     uint64_t m_frame = 0;
     std::array<int, kSoundIdCount> m_lastVariant{};
     std::unordered_map<uint64_t, LightState> m_lights;
+    std::vector<BuzzCandidate> m_buzzCandidates; ///< Scratch, reused every frame.
 };

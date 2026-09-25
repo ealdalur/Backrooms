@@ -48,21 +48,41 @@ LightFixture::LightFixture(const glm::vec3& center, const glm::vec2& halfSize, u
     m_color = glm::vec3(1.0f + 0.03f * warm, 0.97f + 0.02f * green, 0.86f - 0.05f * warm);
 }
 
-float LightFixture::intermittent(double t) const {
+bool LightFixture::burstAt(double t, int64_t& period, double& inBurst) const {
     const double local = t + m_phase;
-    const int64_t period = static_cast<int64_t>(std::floor(local / m_burstPeriod));
-    if (eventRandom(m_seed, period, 1) > m_burstChance) return 1.0f; // this period stays calm
+    period = static_cast<int64_t>(std::floor(local / m_burstPeriod));
+    if (eventRandom(m_seed, period, 1) > m_burstChance) return false; // this period stays calm
 
     // Burst start jittered within the period.
     const double start = static_cast<double>(period) * m_burstPeriod +
                          eventRandom(m_seed, period, 2) * std::max(0.0f, m_burstPeriod - m_burstDuration);
-    const double inBurst = local - start;
-    if (inBurst < 0.0 || inBurst >= m_burstDuration) return 1.0f;
+    inBurst = local - start;
+    return inBurst >= 0.0 && inBurst < m_burstDuration;
+}
+
+float LightFixture::intermittent(double t) const {
+    int64_t period = 0;
+    double inBurst = 0.0;
+    if (!burstAt(t, period, inBurst)) return 1.0f;
 
     // Quantised on/off pattern inside the burst.
     const int64_t step = static_cast<int64_t>(std::floor(inBurst * m_flickerRate));
     const bool on = eventRandom(m_seed, period * 1024 + step, 3) > m_threshold;
     return on ? 1.0f : m_dimLevel;
+}
+
+bool LightFixture::isMalfunctioning(double t) const {
+    switch (m_mode) {
+    case FlickerMode::Failing:
+        return true; // a dying tube never settles
+    case FlickerMode::Intermittent: {
+        int64_t period = 0;
+        double inBurst = 0.0;
+        return burstAt(t, period, inBurst);
+    }
+    default:
+        return false;
+    }
 }
 
 float LightFixture::failing(double t) const {

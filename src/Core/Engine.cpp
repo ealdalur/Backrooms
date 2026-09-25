@@ -181,7 +181,7 @@ void Engine::update(float dt) {
     m_player->update(dt, m_input, m_settings, *m_chunks, *m_physics);
     m_chunks->update(m_player->feetPosition(), dt, m_player->bodyBox());
     // After both updates so this frame's footstep / door events are heard, and
-    // with the renderer's clock so tube clicks coincide with visible flicker.
+    // with the renderer's clock so the tube buzz coincides with visible flicker.
     m_sound->update(dt, m_simTime, *m_player, *m_chunks, *m_world);
 
     // Crosshair ring fades in when a door is within reach.
