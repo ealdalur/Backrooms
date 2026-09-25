@@ -59,6 +59,22 @@ void normalize(Buffer& b, float peak) {
     for (float& s : b) s *= g;
 }
 
+/// Scales a short sound so its loudest 50 ms stretch has the given RMS level.
+/// Keeps noise-based takes consistently loud, which peak normalisation
+/// cannot (a noise burst's peak is essentially random).
+void normalizeLoudness(Buffer& b, float targetRms) {
+    const size_t w = samplesFor(0.05f);
+    double best = 0.0;
+    for (size_t a = 0; a + w <= b.size(); a += w / 4) {
+        double e = 0.0;
+        for (size_t i = a; i < a + w; ++i) e += static_cast<double>(b[i]) * b[i];
+        best = std::max(best, std::sqrt(e / static_cast<double>(w)));
+    }
+    if (best < 1e-9) return;
+    const float g = targetRms / static_cast<float>(best);
+    for (float& s : b) s *= g;
+}
+
 /// Short fades at both ends so no sound starts or stops with a click.
 void fadeEdges(Buffer& b, float inSeconds, float outSeconds) {
     const size_t fi = std::min(b.size(), samplesFor(inSeconds));
@@ -141,6 +157,24 @@ void addNoiseBurst(Buffer& b, float at, float attack, float decay, Biquad filter
     }
 }
 
+/// Adds a pitchless "thunk": white noise through two cascaded Butterworth
+/// low-passes (24 dB/oct, no resonant peak at the cutoff, so no pitch), shaped
+/// by a smooth attack and a two-stage decay (`tailFraction` of the level
+/// decays more slowly with `tailDecay`).
+void addNoiseThunk(Buffer& b, Noise& noise, float at, float gain, float cutoffHz, float attack, float decay,
+                   float tailFraction = 0.0f, float tailDecay = 0.001f) {
+    Biquad lp1 = Biquad::lowpass(cutoffHz), lp2 = Biquad::lowpass(cutoffHz);
+    const size_t start = samplesFor(at);
+    const size_t len = samplesFor(attack + 7.0f * std::max(decay, tailDecay));
+    for (size_t i = 0; i < len && start + i < b.size(); ++i) {
+        const float t = timeOf(i);
+        const float env = t < attack ? smooth01(0.0f, attack, t)
+                                     : (1.0f - tailFraction) * std::exp(-(t - attack) / decay) +
+                                           tailFraction * std::exp(-(t - attack) / tailDecay);
+        b[start + i] += gain * env * lp2.process(lp1.process(noise()));
+    }
+}
+
 /// Bakes distance: steep low-pass (occlusion through walls) then a big,
 /// damped reverb (long carpeted halls). Extends the buffer by `tailSeconds`.
 void bakeDistance(Buffer& b, float lowpassHz, float roomSize, float damping, float dryMix, float wetMix,
@@ -161,12 +195,8 @@ void bakeDistance(Buffer& b, float lowpassHz, float roomSize, float damping, flo
 
 // ----- Shared material mode sets --------------------------------------------------
 
-const Mode kLatchModes[] = {{2150, 0.05f, 1.0f}, {3480, 0.035f, 0.7f}, {5210, 0.025f, 0.5f},
-                            {7300, 0.015f, 0.3f}, {1250, 0.04f, 0.35f}};
 const Mode kDeskModes[] = {{170, 0.05f, 1.0f}, {390, 0.035f, 0.7f}, {720, 0.025f, 0.45f},
                            {1230, 0.018f, 0.3f}, {2250, 0.03f, 0.12f}, {3600, 0.02f, 0.08f}};
-const Mode kDoorPanelModes[] = {{150, 0.12f, 1.0f}, {290, 0.08f, 0.7f}, {470, 0.06f, 0.5f},
-                                {820, 0.04f, 0.35f}, {1400, 0.025f, 0.2f}};
 
 // ============================================================================
 // Loops
@@ -465,30 +495,37 @@ std::vector<Sound> makeGrunt(uint64_t seed) {
 // Doors
 // ============================================================================
 
-std::vector<Sound> makeDoorUnlatch(uint64_t seed) {
-    const Mode wood[] = {{160, 0.05f, 1.0f}, {330, 0.035f, 0.6f}};
+std::vector<Sound> makeDoorHandle(uint64_t seed) {
+    // Commercial lever handle: "chunk-chunk", two dull knocks as the latch bolt
+    // snaps inside a solid-core door. Like the shut "thunk", every layer is
+    // enveloped, low-passed white noise: no tuned resonances, so no pitch.
+    // Knock 1: lever pressed down, bolt retracts. Knock 2: the bolt clears the
+    // strike plate as the door starts to move (a little lighter). Each knock is
+    // smaller and brighter than the door slam: a quick noise body plus a
+    // very short contact burst that gives it a defined edge.
     std::vector<Sound> out;
     for (int v = 0; v < 3; ++v) {
         rnd::Rng rng(rnd::hashCombine(seed, static_cast<uint64_t>(v)));
         Noise noise(rng.next());
-        Buffer b = silence(0.55f);
-        // Lever turning against its spring.
-        addNoiseBurst(b, 0.0f, 0.03f, 0.04f, Biquad::bandpass(2600.0f, 2.5f), 0.12f, noise, 0.4f);
-        // Latch bolt retracting.
-        const float click = rng.range(0.06f, 0.09f);
-        addNoiseBurst(b, click, 0.0003f, 0.0015f, Biquad::highpass(3000.0f), 0.5f, noise);
-        addModes(b, click, kLatchModes, 5, 0.6f, 0.05f, rng);
-        // Bolt clearing the strike plate; the panel knocks softly.
-        const float release = rng.range(0.17f, 0.23f);
-        addModes(b, release, kLatchModes, 5, 0.35f, 0.08f, rng);
-        addModes(b, release, wood, 2, 0.4f, 0.05f, rng);
-        addThump(b, release, 140.0f, 90.0f, 0.02f, 0.25f);
-        // Lever springing back.
-        addModes(b, rng.range(0.32f, 0.38f), kLatchModes, 5, 0.2f, 0.1f, rng);
-        applyFilter(b, Biquad::lowpass(11000.0f));
-        applyFilter(b, Biquad::highpass(120.0f));
+        Buffer b = silence(0.4f);
+        // Faint friction of the lever turning against its spring.
+        addNoiseBurst(b, 0.0f, 0.03f, 0.025f, Biquad::bandpass(1100.0f, 1.5f), 0.05f, noise, 0.4f);
+        const float bodyCutoff = rng.range(450.0f, 650.0f);
+        auto knock = [&](float at, float gain) {
+            addNoiseThunk(b, noise, at, gain, bodyCutoff, 0.001f, 0.022f, 0.25f, 0.05f); // body
+            addNoiseThunk(b, noise, at, 0.35f * gain, 2200.0f, 0.0005f, 0.004f);          // contact
+        };
+        const float first = rng.range(0.03f, 0.05f);
+        const float gap = rng.range(0.10f, 0.14f);
+        const float secondGain = rng.range(0.6f, 0.75f);
+        knock(first, 1.0f);
+        knock(first + gap, secondGain);
+        applyFilter(b, Biquad::lowpass(3000.0f)); // nothing bright: a chunk, not a tink
+        applyFilter(b, Biquad::highpass(70.0f));
         fadeEdges(b, 0.001f, 0.05f);
-        normalize(b, 0.8f);
+        // Consistent loudness across takes; 0.224 matches the average level of
+        // the previous (modal) handle, so the tuned kHandleGain keeps its meaning.
+        normalizeLoudness(b, 0.224f);
         out.push_back({std::move(b), false});
     }
     return out;
@@ -543,25 +580,23 @@ std::vector<Sound> makeDoorCreak(uint64_t seed) {
 }
 
 std::vector<Sound> makeDoorShut(uint64_t seed) {
+    // Door shutting: a "thunk" built purely from white noise, low-passed and
+    // shaped by an impact envelope. There are no sine sweeps or resonant modes,
+    // so it carries no pitch. Every layer is noise:
+    //   * the body: dark noise with a fast decay and a small longer tail;
+    //   * contact: a brief, brighter burst giving the impact definition;
+    //   * settling: a small knock as the door seats against its stop.
     std::vector<Sound> out;
     for (int v = 0; v < 3; ++v) {
         rnd::Rng rng(rnd::hashCombine(seed, static_cast<uint64_t>(v)));
         Noise noise(rng.next());
-        Buffer b = silence(0.8f);
-        addThump(b, 0.0f, 80.0f, 50.0f, 0.09f, 1.0f);
-        addModes(b, 0.0f, kDoorPanelModes, 5, 0.7f, 0.08f, rng);
-        addNoiseBurst(b, 0.0f, 0.001f, 0.02f, Biquad::lowpass(1200.0f), 0.5f, noise);
-        // Latch snapping into the strike plate.
-        addNoiseBurst(b, 0.012f, 0.0003f, 0.0015f, Biquad::highpass(3000.0f), 0.3f, noise);
-        addModes(b, 0.012f, kLatchModes, 5, 0.4f, 0.05f, rng);
-        // Frame rattle.
-        for (int k = 0; k < rng.rangeInt(2, 3); ++k) {
-            addModes(b, rng.range(0.04f, 0.09f), kLatchModes, 5, 0.1f, 0.15f, rng);
-        }
-        applyFilter(b, Biquad::lowpass(9000.0f));
+        Buffer b = silence(0.6f);
+        addNoiseThunk(b, noise, 0.0f, 1.0f, rng.range(260.0f, 380.0f), 0.002f, rng.range(0.045f, 0.065f), 0.2f, 0.14f); // body
+        addNoiseThunk(b, noise, 0.0f, 0.25f, 1400.0f, 0.0008f, 0.006f, 0.0f, 0.001f);                                     // contact
+        addNoiseThunk(b, noise, rng.range(0.018f, 0.03f), 0.3f, 600.0f, 0.001f, 0.02f, 0.0f, 0.001f);                   // settling
         applyFilter(b, Biquad::highpass(40.0f));
-        fadeEdges(b, 0.0005f, 0.1f);
-        normalize(b, 0.95f);
+        fadeEdges(b, 0.0005f, 0.08f);
+        normalize(b, 0.9f);
         out.push_back({std::move(b), false});
     }
     return out;
@@ -711,7 +746,7 @@ void SoundBank::build() {
     const Generator generators[kSoundIdCount] = {
         makeHum,          makeFlickerBuzz, makeDrone,
         makeFootCarpet,   makeFootHard,    makeLandCarpet,  makeLandHard,  makeGrunt,
-        makeDoorUnlatch,  makeDoorCreak,   makeDoorShut,
+        makeDoorHandle,   makeDoorCreak,   makeDoorShut,
         makeDistantBang,  makeDistantPounding, makeDistantFootsteps, makeDistantMachinery,
     };
 

@@ -9,7 +9,7 @@
 //     lands exactly on its flashes.
 //   * Sparse distant, muffled events (bangs, pounding, footsteps, machinery).
 //   * Player footsteps / jump grunt / landings from PlayerEvents.
-//   * Door unlatch / creak / shut from DoorEvents.
+//   * Door handle "chunk-chunk", hinge creak and shut "thunk" from DoorEvents.
 // Positional sounds get distance attenuation, equal-power panning, head
 // shadow and occlusion (muffled and quieter when a wall is in the way).
 // ---------------------------------------------------------------------------

@@ -24,9 +24,9 @@ constexpr float kFootPerSpeed    = 0.30f;
 constexpr float kLandBase        = 0.35f;
 constexpr float kLandPerImpact   = 0.50f;
 constexpr float kGruntGain       = 0.30f;
-constexpr float kUnlatchGain     = 0.55f;
+constexpr float kHandleGain      = 0.21f;   ///< Lever "chunk-chunk", clearly audible over the creak.
 constexpr float kCreakGain       = 0.20f;   ///< Creaks are meant to be subtle.
-constexpr float kShutGain        = 0.65f;
+constexpr float kShutGain        = 0.425f;  ///< Closing "thunk" (energy is mostly below ~400 Hz).
 
 // ---- Behaviour -------------------------------------------------------------------
 constexpr float  kLightHearingRange = 14.0f; ///< Lights farther away are inaudible.
@@ -40,7 +40,7 @@ constexpr float  kOccludedLowpass   = 900.0f;
 /// the listener). It exceeds half a wall's thickness, so sources mounted in a
 /// wall or doorway never count their own wall as an obstruction.
 constexpr float  kSourceClearance   = 0.15f;
-constexpr float  kUnlatchToCreak    = 0.18f; ///< Creak starts once the latch has released.
+constexpr float  kHandleToCreak     = 0.20f; ///< Creak starts after the handle's "chunk-chunk".
 
 inline float smoothGate(float e0, float e1, float x) {
     const float t = std::clamp((x - e0) / (e1 - e0), 0.0f, 1.0f);
@@ -167,13 +167,16 @@ void Soundscape::handlePlayer(const Player& player) {
 
 void Soundscape::handleDoors(const std::vector<DoorEvent>& events, const WorldGenerator& generator) {
     for (const DoorEvent& e : events) {
+        // Opening from closed: the handle goes "chunk-chunk", then the hinges creak.
         const bool unlatched = (e.flags & Door::kEventUnlatch) != 0;
-        if (unlatched) playAt(SoundId::DoorUnlatch, e.position, kUnlatchGain, 0.04f, 0.12f, generator);
+        if (unlatched) playAt(SoundId::DoorHandle, e.position, kHandleGain, 0.03f, 0.1f, generator);
         if (e.flags & Door::kEventSwing) {
             playAt(SoundId::DoorCreak, e.position, kCreakGain, 0.1f, 0.15f, generator,
-                   unlatched ? kUnlatchToCreak : 0.0f);
+                   unlatched ? kHandleToCreak : 0.0f);
         }
-        if (e.flags & Door::kEventShut) playAt(SoundId::DoorShut, e.position, kShutGain, 0.04f, 0.2f, generator);
+        // Closing: "thunk" the moment the panel meets the frame. A small reverb
+        // send keeps the room's comb filters from colouring it with a pitch.
+        if (e.flags & Door::kEventShut) playAt(SoundId::DoorShut, e.position, kShutGain, 0.04f, 0.08f, generator);
     }
 }
 

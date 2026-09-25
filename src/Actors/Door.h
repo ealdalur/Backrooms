@@ -18,9 +18,9 @@ public:
     enum class State : uint8_t { Closed, Opening, Open, Closing };
 
     /// Event bits reported by takeEvents() (consumed by the soundscape).
-    static constexpr uint8_t kEventUnlatch = 1 << 0; ///< Opening from fully closed: lever + latch.
+    static constexpr uint8_t kEventUnlatch = 1 << 0; ///< Opening from fully closed (handle released the latch).
     static constexpr uint8_t kEventSwing   = 1 << 1; ///< Started moving (open or close, incl. reversals).
-    static constexpr uint8_t kEventShut    = 1 << 2; ///< Reached closed: panel thud + latch.
+    static constexpr uint8_t kEventShut    = 1 << 2; ///< Reached fully closed.
 
     /// @param id        Globally unique, deterministic identifier (edge hash).
     /// @param hinge     World position of the hinge axis at floor level.

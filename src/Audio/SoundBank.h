@@ -22,9 +22,9 @@ enum class SoundId : uint8_t {
     LandHard,         ///< Landing on furniture.
     Grunt,            ///< Exerted, low male "huh!" on jump take-off.
     // Doors.
-    DoorUnlatch,      ///< Lever turn and latch bolt retracting.
+    DoorHandle,       ///< Lever handle "chunk-chunk" as the latch releases.
     DoorCreak,        ///< Hinge creak while the door swings (stick-slip friction).
-    DoorShut,         ///< Panel thud plus the latch snapping into the strike plate.
+    DoorShut,         ///< Pitchless "thunk" (enveloped low-passed noise) as the door closes.
     // Distant, muffled ambience (reverb and distance baked in).
     DistantBang,
     DistantPounding,
