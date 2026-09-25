@@ -68,7 +68,7 @@ void ChunkManager::update(const glm::vec3& focus, float dt, const AABB& playerBo
     for (auto& kv : m_chunks) {
         kv.second->update(dt, playerBox);
         for (Door& d : kv.second->doors()) {
-            if (const uint8_t flags = d.takeEvents()) m_doorEvents.push_back({flags, d.center()});
+            if (const uint8_t flags = d.takeEvents()) m_doorEvents.push_back({flags, d.doorwayCenter()});
         }
     }
 }

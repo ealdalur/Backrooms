@@ -56,6 +56,9 @@ private:
     };
 
     Spatial spatialize(const glm::vec3& source, float refDistance, const WorldGenerator& generator) const;
+    /// Point (x/z) just in front of `source` on the listener's side, used as
+    /// the far end of the occlusion test.
+    glm::vec2 occlusionProbe(const glm::vec3& source) const;
     void playAt(SoundId id, const glm::vec3& source, float gain, float pitchJitter, float reverbSend,
                 const WorldGenerator& generator, float delay = 0.0f);
     void play2D(SoundId id, float gain, float pan, float pitch, float reverbSend, float lowpassHz = 20000.0f);

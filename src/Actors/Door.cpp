@@ -188,6 +188,10 @@ glm::vec3 Door::center() const {
     return glm::vec3(modelMatrix() * glm::vec4(localPanel().center(), 1.0f));
 }
 
+glm::vec3 Door::doorwayCenter() const {
+    return m_hinge + m_axis * (world::kDoorPanelWidth * 0.5f) + glm::vec3(0.0f, kHandleY, 0.0f);
+}
+
 Door::State Door::state() const {
     if (m_opening) return m_progress >= 1.0f ? State::Open : State::Opening;
     return m_progress <= 0.0f ? State::Closed : State::Closing;

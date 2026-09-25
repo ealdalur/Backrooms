@@ -40,6 +40,10 @@ constexpr float  kStutterGain       = 0.5f;  ///< ...and play at reduced level.
 constexpr int    kMaxClicksPerFrame = 4;
 constexpr float  kOccludedGain      = 0.35f;
 constexpr float  kOccludedLowpass   = 900.0f;
+/// Occlusion is tested up to a point this far in front of the source (towards
+/// the listener). It exceeds half a wall's thickness, so sources mounted in a
+/// wall or doorway never count their own wall as an obstruction.
+constexpr float  kSourceClearance   = 0.15f;
 constexpr float  kUnlatchToCreak    = 0.18f; ///< Creak starts once the latch has released.
 } // namespace
 
@@ -71,6 +75,14 @@ int Soundscape::pickVariant(SoundId id) {
     return v;
 }
 
+glm::vec2 Soundscape::occlusionProbe(const glm::vec3& source) const {
+    const glm::vec2 src(source.x, source.z);
+    const glm::vec2 toListener = glm::vec2(m_listener.x, m_listener.z) - src;
+    const float len = glm::length(toListener);
+    if (len <= kSourceClearance) return glm::vec2(m_listener.x, m_listener.z); // right at the source
+    return src + toListener * (kSourceClearance / len);
+}
+
 Soundscape::Spatial Soundscape::spatialize(const glm::vec3& source, float refDistance,
                                            const WorldGenerator& generator) const {
     const glm::vec3 d = source - m_listener;
@@ -86,7 +98,7 @@ Soundscape::Spatial Soundscape::spatialize(const glm::vec3& source, float refDis
         s.pan = side * 0.85f * std::min(flatLen, 1.0f);           // sounds at your feet stay centred
         if (front < 0.0f) s.lowpassHz = 18000.0f + (7000.0f - 18000.0f) * -front; // head shadow
     }
-    if (generator.isLightBlocked(glm::vec2(m_listener.x, m_listener.z), glm::vec2(source.x, source.z))) {
+    if (generator.isLightBlocked(glm::vec2(m_listener.x, m_listener.z), occlusionProbe(source))) {
         s.gain *= kOccludedGain;
         s.lowpassHz = std::min(s.lowpassHz, kOccludedLowpass);
         s.occluded = true;

@@ -54,6 +54,10 @@ public:
     /// World-space centre of the panel at its current angle.
     glm::vec3 center() const;
 
+    /// Centre of the doorway at handle height (where the latch and hinges
+    /// make their sounds), independent of the current swing angle.
+    glm::vec3 doorwayCenter() const;
+
     uint64_t id() const { return m_id; }
     State state() const;
 
