@@ -37,21 +37,35 @@ void Player::update(float dt, const Input& input, const Settings& settings, cons
                     const Physics& physics) {
     m_events.clear();
     if (dt <= 0.0f) return;
-    updateLook(input, settings);
+    updateLook(dt, input, settings);
     updateCrouch(dt, input, world, physics);
     updateMovement(dt, input, settings, world, physics);
     updateCamera(dt, physics);
 }
 
-void Player::updateLook(const Input& input, const Settings& settings) {
-    // Holding the right mouse button locks the view: the mouse drives movement instead.
+void Player::updateLook(float dt, const Input& input, const Settings& settings) {
+    // Holding the right mouse button locks mouse look: the mouse drives movement instead.
     m_mouseDriveActive = input.mouseDown(SDL_BUTTON_RIGHT);
-    if (m_mouseDriveActive) return;
+    if (!m_mouseDriveActive) {
+        const glm::vec2 d = input.mouseDelta();
+        const float k = cfg::kLookRadiansPerPixel * settings.mouseSensitivity;
+        m_yaw -= d.x * k;
+        m_pitch -= d.y * k * (settings.invertY ? -1.0f : 1.0f);
+    }
 
-    const glm::vec2 d = input.mouseDelta();
-    const float k = cfg::kLookRadiansPerPixel * settings.mouseSensitivity;
-    m_yaw -= d.x * k;
-    m_pitch -= d.y * k * (settings.invertY ? -1.0f : 1.0f);
+    // Arrow keys pan / tilt for playing without a mouse (always available,
+    // even during RMB mouse-drive). The rate eases in, so a tap nudges the
+    // view for fine aiming and a hold turns smoothly at full speed.
+    glm::vec2 keys(0.0f); // x: +1 pans left, y: +1 tilts up
+    if (input.keyDown(SDL_SCANCODE_LEFT)) keys.x += 1.0f;
+    if (input.keyDown(SDL_SCANCODE_RIGHT)) keys.x -= 1.0f;
+    if (input.keyDown(SDL_SCANCODE_UP)) keys.y += 1.0f;
+    if (input.keyDown(SDL_SCANCODE_DOWN)) keys.y -= 1.0f;
+    m_keyLook += (keys - m_keyLook) * approachFactor(cfg::kKeyLookResponse, dt);
+    if (keys == glm::vec2(0.0f) && glm::length(m_keyLook) < 1e-3f) m_keyLook = glm::vec2(0.0f); // no drift after release
+    m_yaw += m_keyLook.x * glm::radians(cfg::kKeyPanSpeedDeg) * settings.mouseSensitivity * dt;
+    m_pitch += m_keyLook.y * glm::radians(cfg::kKeyTiltSpeedDeg) * settings.mouseSensitivity * dt;
+
     const float maxPitch = glm::radians(cfg::kMaxPitchDeg);
     m_pitch = std::clamp(m_pitch, -maxPitch, maxPitch);
     m_yaw = std::fmod(m_yaw, kTwoPi);

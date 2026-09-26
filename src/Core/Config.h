@@ -58,6 +58,9 @@ inline constexpr float kLookRadiansPerPixel   = 0.0022f; // Base look speed (x s
 inline constexpr float kMouseDriveMetersPerPx = 0.012f;  // RMB drive: metres per mouse pixel (x sensitivity)
 inline constexpr float kMouseDriveMaxSpeed    = 8.0f;    // Safety clamp for RMB driving
 inline constexpr float kMaxPitchDeg           = 89.0f;
+inline constexpr float kKeyPanSpeedDeg        = 120.0f;  // Arrow-key pan at full hold (deg/s, x sensitivity)
+inline constexpr float kKeyTiltSpeedDeg       = 90.0f;   // Arrow-key tilt at full hold (deg/s, x sensitivity)
+inline constexpr float kKeyLookResponse       = 10.0f;   // Arrow-key ease-in rate (1/s): taps nudge, holds turn
 // Head bob follows a footstep cadence that rises gently with speed, like a
 // real gait (~1.8 steps/s walking, ~2.6 steps/s running), rather than being
 // locked to distance travelled (which makes fast movement look jittery).

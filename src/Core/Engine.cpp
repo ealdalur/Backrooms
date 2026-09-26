@@ -97,9 +97,9 @@ bool Engine::init() {
 
     std::cout << "[Engine] World seed 0x" << std::hex << m_options.seed << std::dec << ", " << m_chunks->chunkCount()
               << " chunks loaded, spawn (" << spawn.x << ", " << spawn.z << ")\n"
-              << "[Engine] Controls: WASD move, Shift run, Space jump, C crouch, E use door,\n"
-              << "         hold RMB + move mouse to drive, +/- sensitivity, F11 fullscreen,\n"
-              << "         F12 screenshot, P pause/resume, Esc quit.\n";
+              << "[Engine] Controls: WASD move, mouse or arrow keys look, Shift run, Space jump,\n"
+              << "         C crouch, E use door, hold RMB + move mouse to drive, +/- sensitivity,\n"
+              << "         F11 fullscreen, F12 screenshot, P pause/resume, Esc quit.\n";
 
     setState(GameState::Running);
     return true;

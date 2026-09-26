@@ -52,7 +52,7 @@ public:
     const std::vector<PlayerEvent>& events() const { return m_events; }
 
 private:
-    void updateLook(const Input& input, const Settings& settings);
+    void updateLook(float dt, const Input& input, const Settings& settings);
     void updateCrouch(float dt, const Input& input, const ICollisionWorld& world, const Physics& physics);
     void updateMovement(float dt, const Input& input, const Settings& settings, const ICollisionWorld& world,
                         const Physics& physics);
@@ -72,6 +72,7 @@ private:
 
     bool      m_mouseDriveActive = false;
     glm::vec2 m_mouseDrive{0.0f}; ///< Smoothed RMB drive velocity (x = strafe, y = forward), m/s.
+    glm::vec2 m_keyLook{0.0f};    ///< Eased arrow-key look rate (x = pan left, y = tilt up), -1..1.
 
     float m_bobPhase = 0.0f;
     float m_bobWeight = 0.0f;
