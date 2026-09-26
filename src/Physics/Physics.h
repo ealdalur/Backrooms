@@ -6,8 +6,9 @@
 // The body is an upright box described by its feet position (bottom centre),
 // a half width and a (dynamically varying) height. Movement is resolved one
 // axis at a time with sub-stepping, which gives robust "slide along walls"
-// behaviour, automatic step-up onto low ledges, landing on top of furniture
-// and head bumps against headers and the ceiling.
+// behaviour, automatic step-up onto low ledges, mid-air mantling onto
+// ledges just within reach, landing on top of furniture and head bumps
+// against headers and the ceiling.
 // ---------------------------------------------------------------------------
 
 #include "Physics/AABB.h"
@@ -35,7 +36,7 @@ struct MoveResult {
     bool  hitCeiling = false; ///< Upward motion was stopped.
     bool  blockedX   = false; ///< Horizontal X motion was stopped by an obstacle.
     bool  blockedZ   = false; ///< Horizontal Z motion was stopped by an obstacle.
-    float steppedUp  = 0.0f;  ///< Net vertical offset applied by step-up / ground snap.
+    float steppedUp  = 0.0f;  ///< Net vertical offset applied by step-up / mantle / ground snap.
 };
 
 class Physics {
@@ -49,10 +50,12 @@ public:
     static AABB bodyBox(const glm::vec3& feet, const BodyShape& shape);
 
     /// Moves the body by `displacement`, resolving collisions against `world`.
-    /// @param allowStep     Try to climb ledges up to the step height (grounded only).
+    /// @param climbHeight   When blocked horizontally, climb onto an obstacle
+    ///                      whose top is at most this far above the feet (0 = never).
+    ///                      A small step when grounded; a larger reach for mid-air mantling.
     /// @param snapToGround  Keep contact with the ground when walking down small ledges.
     MoveResult move(glm::vec3& feet, const BodyShape& shape, const glm::vec3& displacement,
-                    bool allowStep, bool snapToGround, const ICollisionWorld& world) const;
+                    float climbHeight, bool snapToGround, const ICollisionWorld& world) const;
 
     /// True if `box` does not overlap any obstacle, the floor or the ceiling.
     bool isFree(const AABB& box, const ICollisionWorld& world) const;

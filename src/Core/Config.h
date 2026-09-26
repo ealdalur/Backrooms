@@ -40,6 +40,9 @@ inline constexpr float kCrouchHeight       = 1.15f;
 inline constexpr float kEyeBelowTop        = 0.16f;  // Eye offset from top of AABB
 inline constexpr float kCrouchEaseRate     = 10.0f;  // Exponential ease-out rate (1/s)
 inline constexpr float kStepHeight         = 0.32f;  // Auto step-up for small ledges
+inline constexpr float kMantleHeight       = 0.35f;  // Mid-air reach: climb onto a ledge this far above the feet
+inline constexpr float kStepEaseRate       = 12.0f;  // Camera catch-up after a step-up (1/s)
+inline constexpr float kMantleEaseRate     = 7.0f;   // Slower camera rise after a mantle: hauling yourself up
 
 // ----- Player kinematics -------------------------------------------------------
 inline constexpr float kWalkSpeed          = 3.2f;   // m/s

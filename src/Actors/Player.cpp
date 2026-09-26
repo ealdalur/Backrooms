@@ -154,7 +154,10 @@ void Player::updateMovement(float dt, const Input& input, const Settings& settin
     // ---- Collide ----------------------------------------------------------------------
     const bool wasGrounded = m_grounded;
     const glm::vec3 displacement(m_velocity.x * dt, dy, m_velocity.z * dt);
-    const MoveResult r = physics.move(m_feet, shape(), displacement, wasGrounded,
+    // On the ground, step up small ledges. In the air, mantle: moving into an
+    // obstacle whose top is just within reach of the feet climbs onto it.
+    const float climb = wasGrounded ? cfg::kStepHeight : cfg::kMantleHeight;
+    const MoveResult r = physics.move(m_feet, shape(), displacement, climb,
                                       wasGrounded && m_velocity.y <= 0.0f, world);
 
     if (r.blockedX) m_velocity.x = 0.0f;
@@ -174,6 +177,9 @@ void Player::updateMovement(float dt, const Input& input, const Settings& settin
         if (m_velocity.y < 0.0f) m_velocity.y = 0.0f;
     }
     m_grounded = r.grounded;
+    // The body moves up at once; the camera lags and catches up, slower for a
+    // mantle so it reads as hauling yourself up rather than teleporting.
+    if (r.steppedUp > 0.01f) m_stepEaseRate = wasGrounded ? cfg::kStepEaseRate : cfg::kMantleEaseRate;
     m_stepOffset = std::clamp(m_stepOffset - r.steppedUp, -0.4f, 0.4f);
 
     // Sprint blend for FOV: only when actually running forward on the ground.
@@ -220,8 +226,8 @@ void Player::updateCamera(float dt, const Physics& physics) {
         remaining -= h;
     }
 
-    // ---- Smooth out step-ups -------------------------------------------------------------
-    m_stepOffset *= std::exp(-12.0f * dt);
+    // ---- Smooth out step-ups and mantles ---------------------------------------------------
+    m_stepOffset *= std::exp(-m_stepEaseRate * dt);
 
     glm::vec3 eye = m_feet;
     eye.y += m_height - cfg::kEyeBelowTop + bobY + m_landOffset + m_stepOffset;

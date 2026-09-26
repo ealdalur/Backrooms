@@ -64,11 +64,11 @@ bool Physics::sweepAxis(glm::vec3& feet, const BodyShape& shape, int axis, float
 }
 
 MoveResult Physics::move(glm::vec3& feet, const BodyShape& shape, const glm::vec3& displacement,
-                         bool allowStep, bool snapToGround, const ICollisionWorld& world) const {
+                         float climbHeight, bool snapToGround, const ICollisionWorld& world) const {
     MoveResult result;
 
     // Gather every obstacle the body could possibly touch during this move.
-    const float reach = glm::length(displacement) + m_stepHeight + 0.25f;
+    const float reach = glm::length(displacement) + std::max(m_stepHeight, climbHeight) + 0.25f;
     m_scratch.clear();
     world.gatherColliders(bodyBox(feet, shape).expanded(reach), m_scratch);
 
@@ -85,11 +85,13 @@ MoveResult Physics::move(glm::vec3& feet, const BodyShape& shape, const glm::vec
             const glm::vec3 before = feet;
             bool hit = sweepAxis(feet, shape, axis, d[axis], m_scratch);
 
-            if (hit && allowStep) {
-                // Attempt to climb: raise, move, then settle back down.
+            if (hit && climbHeight > 0.0f) {
+                // Attempt to climb: raise, move, then settle back down. Only
+                // succeeds if the obstacle's top is within climbHeight and there
+                // is headroom above it, so walls can never be climbed.
                 glm::vec3 stepPos = before;
                 const float yStart = stepPos.y;
-                sweepAxis(stepPos, shape, 1, m_stepHeight, m_scratch);
+                sweepAxis(stepPos, shape, 1, climbHeight, m_scratch);
                 const float raised = stepPos.y - yStart;
                 if (raised > 0.01f) {
                     const bool hitRaised = sweepAxis(stepPos, shape, axis, d[axis], m_scratch);

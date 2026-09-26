@@ -78,7 +78,8 @@ private:
     float m_bobWeight = 0.0f;
     float m_landOffset = 0.0f;    ///< Damped-spring camera dip after landing.
     float m_landVelocity = 0.0f;
-    float m_stepOffset = 0.0f;    ///< Camera lag that smooths step-ups.
+    float m_stepOffset = 0.0f;    ///< Camera lag that smooths step-ups and mantles.
+    float m_stepEaseRate = cfg::kStepEaseRate; ///< Catch-up rate for the current step / mantle (1/s).
     float m_runBlend = 0.0f;      ///< 0..1, drives the sprint FOV kick.
 
     std::vector<PlayerEvent> m_events;
