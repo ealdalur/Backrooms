@@ -288,5 +288,5 @@ void Soundscape::updateDistantEvents(float dt) {
                      : roll < 0.50f ? SoundId::DistantPounding
                      : roll < 0.75f ? SoundId::DistantFootsteps
                                     : SoundId::DistantMachinery;
-    play2D(id, m_rng.range(0.12f, 0.30f), m_rng.range(-0.9f, 0.9f), m_rng.range(0.85f, 1.1f), 0.3f, 2500.0f);
+    play2D(id, 2.0f * m_rng.range(0.12f, 0.30f), m_rng.range(-0.9f, 0.9f), m_rng.range(0.85f, 1.1f), 0.3f, 2500.0f);
 }
