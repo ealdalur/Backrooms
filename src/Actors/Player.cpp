@@ -61,6 +61,9 @@ void Player::updateLook(float dt, const Input& input, const Settings& settings) 
     if (input.keyDown(SDL_SCANCODE_RIGHT)) keys.x -= 1.0f;
     if (input.keyDown(SDL_SCANCODE_UP)) keys.y += 1.0f;
     if (input.keyDown(SDL_SCANCODE_DOWN)) keys.y -= 1.0f;
+    // The run key speeds the view up by the same factor running beats walking.
+    // Applied to the eased target, so pressing or releasing it mid-turn is smooth.
+    if (input.keyDown(SDL_SCANCODE_LSHIFT)) keys *= cfg::kRunSpeed / cfg::kWalkSpeed;
     m_keyLook += (keys - m_keyLook) * approachFactor(cfg::kKeyLookResponse, dt);
     if (keys == glm::vec2(0.0f) && glm::length(m_keyLook) < 1e-3f) m_keyLook = glm::vec2(0.0f); // no drift after release
     m_yaw += m_keyLook.x * glm::radians(cfg::kKeyPanSpeedDeg) * settings.mouseSensitivity * dt;

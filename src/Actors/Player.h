@@ -72,7 +72,7 @@ private:
 
     bool      m_mouseDriveActive = false;
     glm::vec2 m_mouseDrive{0.0f}; ///< Smoothed RMB drive velocity (x = strafe, y = forward), m/s.
-    glm::vec2 m_keyLook{0.0f};    ///< Eased arrow-key look rate (x = pan left, y = tilt up), -1..1.
+    glm::vec2 m_keyLook{0.0f};    ///< Eased arrow-key look rate (x = pan left, y = tilt up); 1 = full walk-rate hold.
 
     float m_bobPhase = 0.0f;
     float m_bobWeight = 0.0f;
