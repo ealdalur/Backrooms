@@ -167,6 +167,33 @@ void build(MeshData& mesh, std::vector<AABB>& colliders, int gx, int gz, int low
     rail({S - HT - 0.06f, yLand + R + kRailHeight, zTop}, {S - HT - 0.06f, LH + kRailHeight, zL}, S - HT);
 }
 
+void addEntranceSign(MeshData& mesh, int gx, int gz, int level, int rotation, bool up) {
+    // Local frame: the entrance is the south edge (z = 0), outside is -z.
+    // Above both a door header (2.15 m) and an archway (2.35 m).
+    const glm::mat4 toWorld = cellTransform(gx, gz, level, rotation);
+    const float hw = 0.3f, y0 = 2.44f, y1 = 2.64f;
+    const float back = -HT, front = -HT - 0.05f;
+
+    mesh::BoxDesc housing; // steel box the lit face sits in
+    housing.min = {S * 0.5f - hw - 0.015f, y0 - 0.015f, front - 0.001f};
+    housing.max = {S * 0.5f + hw + 0.015f, y1 + 0.015f, back};
+    housing.material = MaterialId::GrayMetal;
+    housing.faces = mesh::FaceAll & ~mesh::FacePosZ;
+    housing.transform = toWorld;
+    mesh::addBox(mesh, housing);
+
+    // Lit face, just proud of the housing. Seen from outside (looking +z) the
+    // viewer's right is local -x, so u runs towards -x.
+    const float z = front - 0.002f;
+    const float v0 = up ? 0.5f : 0.0f, v1 = v0 + 0.5f;
+    const glm::vec3 local[4] = {{S * 0.5f + hw, y0, z}, {S * 0.5f - hw, y0, z}, {S * 0.5f - hw, y1, z}, {S * 0.5f + hw, y1, z}};
+    const glm::vec2 uvs[4] = {{0.0f, v0}, {1.0f, v0}, {1.0f, v1}, {0.0f, v1}};
+    glm::vec3 corners[4];
+    for (int i = 0; i < 4; ++i) corners[i] = glm::vec3(toWorld * glm::vec4(local[i], 1.0f));
+    const glm::vec3 normal = glm::normalize(glm::vec3(toWorld * glm::vec4(0.0f, 0.0f, -1.0f, 0.0f)));
+    mesh::addQuad(mesh, corners, normal, uvs, MaterialId::StairSign);
+}
+
 FixtureSpot lobbyFixture(int gx, int gz, int rotation) {
     // Over the foot of flight A rather than the doorway: an open door would
     // otherwise sit right under the tube.

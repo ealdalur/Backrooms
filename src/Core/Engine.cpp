@@ -717,7 +717,7 @@ void Engine::setupDemo() {
     const glm::vec3 feet = m_player->feetPosition();
     const glm::vec3 fwd = glm::normalize(glm::vec3(m_player->lookDirection().x, 0.0f, m_player->lookDirection().z));
 
-    if (demo == "stairs" || demo == "stairs-top" || demo == "climb" || demo == "descend") {
+    if (demo == "stairs" || demo == "stairs-top" || demo == "stairs-sign" || demo == "climb" || demo == "descend") {
         // Nearest stairwell rising from the start storey (spiral over chunk columns).
         const int level = m_focusLevel;
         const ChunkCoord home = ChunkCoord::fromWorld(feet.x, feet.z, level);
@@ -733,6 +733,16 @@ void Engine::setupDemo() {
                     const glm::mat4 toWorld = stairs::cellTransform(gx, gz, level, s->rotation);
                     std::cout << "[Demo] Stairwell at cell (" << gx << ", " << gz << ") level " << level
                               << ", rotation " << s->rotation << "\n";
+                    if (demo == "stairs-sign") {
+                        // A few metres back from the (closed) entrance, as a player would come across it.
+                        const int signLevel = level + (m_options.demoInput == "upper" ? 1 : 0);
+                        const glm::mat4 at = stairs::cellTransform(gx, gz, signLevel, s->rotation);
+                        const glm::vec3 feetPos(at * glm::vec4(world::kCellSize * 0.5f, 0.0f, -4.0f, 1.0f));
+                        const glm::vec3 door(at * glm::vec4(world::kCellSize * 0.5f, 0.0f, 0.0f, 1.0f));
+                        teleportPlayer(feetPos, signLevel, yawToward(door - feetPos));
+                        m_player->setViewAngles(yawToward(door - feetPos), glm::radians(8.0f));
+                        return;
+                    }
                     if (demo == "stairs-top") {
                         // Upper lobby, at the head of flight B, looking down the shaft.
                         const glm::vec3 top(toWorld * glm::vec4(3.4f, world::kLevelHeight, 0.9f, 1.0f));

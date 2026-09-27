@@ -95,6 +95,7 @@ const int MAT_WALLPAPER = 0;
 const int MAT_CARPET    = 1;
 const int MAT_CEILING   = 2;
 const int MAT_CRT       = 10;
+const int MAT_SIGN      = 12;
 
 const uint EDGE_OPEN = 0u;
 const uint EDGE_WALL = 1u;
@@ -371,6 +372,10 @@ void main() {
     // Powered terminal screens glow with their own scrolling text.
     if (vMaterial == MAT_CRT) {
         color += crtEmission(vUV, vInstanceOrigin, emissiveMask) * params.w;
+    }
+    // Stairwell signs glow on their own, with a faint mains shimmer.
+    if (vMaterial == MAT_SIGN) {
+        color += albedo * emissiveMask * params.w * (0.97 + 0.03 * sin(uTime * 377.0));
     }
 
     // Humid, yellowish squared-exponential haze.

@@ -7,6 +7,7 @@
 
 #include "Math/Noise.h"
 #include "Math/Random.h"
+#include "Render/BitmapFont.h"
 
 #include <SDL3/SDL_video.h>
 
@@ -414,6 +415,39 @@ void generateFlesh(Canvas& c) {
     });
 }
 
+// ----- Stair sign ---------------------------------------------------------------------
+// Mapped once per sign face. The top half reads "^ STAIRS" (the way up), the
+// bottom half "v STAIRS" (the way down): white lettering from the built-in
+// pixel font on a glowing green panel, inside a dark frame.
+void generateStairSign(Canvas& c) {
+    static const char* const kText[2] = {"v STAIRS", "^ STAIRS"}; // bottom band, top band
+    const float signAspect = 0.6f / 0.2f;      // sign face: 0.6 m wide, 0.2 m tall
+    const int   textCols = 8 * (font::kGlyphW + 1) - 1;
+    const float pxU = 0.84f / static_cast<float>(textCols);
+    const float pxV = pxU * signAspect;         // square font pixels, in band-height units
+    const float u0 = 0.5f - 0.5f * pxU * static_cast<float>(textCols);
+    const float vTop = 0.5f + 0.5f * pxV * static_cast<float>(font::kGlyphH);
+    forEachTexel(c, [&](int x, int y, float u, float v) {
+        const int band = v < 0.5f ? 0 : 1;
+        const float vv = v * 2.0f - static_cast<float>(band); // 0 at the band's bottom edge
+        const float edge = std::min(std::min(u, 1.0f - u) * signAspect, std::min(vv, 1.0f - vv));
+        if (edge < 0.05f) { // frame
+            c.put(x, y, glm::vec3(0.06f, 0.07f, 0.06f), 0.5f, 0.3f, 0.0f);
+            return;
+        }
+        bool ink = false;
+        const int col = static_cast<int>(std::floor((u - u0) / pxU));
+        const int row = static_cast<int>(std::floor((vTop - vv) / pxV));
+        if (col >= 0 && col < textCols && row >= 0 && row < font::kGlyphH && col % (font::kGlyphW + 1) < font::kGlyphW) {
+            const uint8_t* rows = font::glyph(kText[band][col / (font::kGlyphW + 1)]);
+            ink = rows && (rows[row] & (0x10 >> (col % (font::kGlyphW + 1))));
+        }
+        const float grain = 0.97f + 0.03f * noise::white(x, y, 0x5160u);
+        if (ink) c.put(x, y, glm::vec3(0.95f, 1.0f, 0.95f) * grain, 0.5f, 0.3f, 1.0f);
+        else     c.put(x, y, glm::vec3(0.12f, 0.62f, 0.30f) * grain, 0.5f, 0.3f, 0.45f);
+    });
+}
+
 } // namespace
 
 bool MaterialLibrary::build(int size) {
@@ -425,6 +459,7 @@ bool MaterialLibrary::build(int size) {
         generateWallpaper, generateCarpet, generateCeiling, generateWood,
         generateMetal,     generateLightPanel, generatePlastic, generateFabric,
         generateConcrete,  generateBeigePlastic, generateCrtScreen, generateFlesh,
+        generateStairSign,
     };
 
     // Synthesise every layer concurrently: each generator is independent and

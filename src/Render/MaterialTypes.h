@@ -22,6 +22,7 @@ enum class MaterialId : uint8_t {
     BeigePlastic,  ///< Sun-yellowed ABS of a 1980s computer case.
     CrtScreen,     ///< Curved CRT glass; the shader draws live scrolling text on it.
     Flesh,         ///< Pale, clammy, veined skin (the Wanderer).
+    StairSign,     ///< Illuminated "^ STAIRS" (top half) / "v STAIRS" (bottom half) sign face.
     Count
 };
 
@@ -58,6 +59,7 @@ inline const MaterialInfo& materialInfo(MaterialId id) {
         {"BeigePlastic",  0.50f, 0.30f,  24.0f, 0.0004f, 0.0f},
         {"CrtScreen",     1.00f, 0.90f, 120.0f, 0.0000f, 2.6f},
         {"Flesh",         0.50f, 0.35f,  20.0f, 0.0015f, 0.0f},
+        {"StairSign",     1.00f, 0.40f,  60.0f, 0.0000f, 3.2f},
     };
     static_assert(kMaterialCount <= kMaxMaterials, "raise kMaxMaterials and the shader array");
     return kTable[static_cast<int>(id)];

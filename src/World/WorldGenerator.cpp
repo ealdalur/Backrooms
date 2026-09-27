@@ -341,9 +341,15 @@ ChunkBlueprint WorldGenerator::generate(const ChunkCoord& c) const {
             buildVertex(bp, origin, gx, gz);
         }
     }
-    // The stair itself belongs to the storey it rises from.
+    // The stair itself belongs to the storey it rises from; each storey signs
+    // its own entrances.
     if (const auto up = stairwell(c.level, c.x, c.z)) {
-        stairs::build(bp.staticMesh, bp.colliders, c.x * kN + up->lx, c.z * kN + up->lz, c.level, up->rotation);
+        const int gx = c.x * kN + up->lx, gz = c.z * kN + up->lz;
+        stairs::build(bp.staticMesh, bp.colliders, gx, gz, c.level, up->rotation);
+        stairs::addEntranceSign(bp.staticMesh, gx, gz, c.level, up->rotation, true);
+    }
+    if (const auto down = stairwell(c.level - 1, c.x, c.z)) {
+        stairs::addEntranceSign(bp.staticMesh, c.x * kN + down->lx, c.z * kN + down->lz, c.level, down->rotation, false);
     }
     placeLights(bp, origin);
     placeFurniture(bp, origin);

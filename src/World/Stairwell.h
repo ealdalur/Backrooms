@@ -54,6 +54,11 @@ glm::vec4 holeRect(int gx, int gz, int rotation);
 /// and handrails (world space) plus their colliders.
 void build(MeshData& mesh, std::vector<AABB>& colliders, int gx, int gz, int lowerLevel, int rotation);
 
+/// Appends the illuminated sign above the entrance, on the outside wall of
+/// storey `level` (the stairwell's lower storey reads "^ STAIRS", its upper
+/// storey "v STAIRS"), so stairwells can be spotted down a corridor.
+void addEntranceSign(MeshData& mesh, int gx, int gz, int level, int rotation, bool up);
+
 /// A ceiling fixture position: centre of the emitter (x/z, world) and
 /// whether the tube's long side runs along world X.
 struct FixtureSpot {
