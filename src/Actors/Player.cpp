@@ -39,7 +39,7 @@ void Player::teleport(const glm::vec3& feet, float yaw) {
     m_feet = feet;
     m_velocity = glm::vec3(0.0f);
     m_grounded = false;
-    m_stepOffset = m_landOffset = m_landVelocity = 0.0f;
+    m_stepOffset = m_stepVelocity = m_landOffset = m_landVelocity = 0.0f;
     m_keyLook = m_mouseDrive = glm::vec2(0.0f);
     setViewAngles(yaw, 0.0f);
     m_camera.position = m_feet + glm::vec3(0.0f, m_height - cfg::kEyeBelowTop, 0.0f);
@@ -64,7 +64,7 @@ void Player::update(float dt, const Input& input, const Settings& settings, cons
     updateLook(dt, input, settings);
     updateCrouch(dt, input, world, physics);
     updateMovement(dt, input, settings, world, physics);
-    updateCamera(dt);
+    updateCamera(dt, world, physics);
 }
 
 void Player::updateLook(float dt, const Input& input, const Settings& settings) {
@@ -201,9 +201,10 @@ void Player::updateMovement(float dt, const Input& input, const Settings& settin
         if (m_velocity.y < 0.0f) m_velocity.y = 0.0f;
     }
     m_grounded = r.grounded;
-    // The body moves up at once; the camera lags and catches up, slower for a
+    // The body steps up or down at once; the camera keeps its height and
+    // catches up smoothly (the same way in both directions), slower for a
     // mantle so it reads as hauling yourself up rather than teleporting.
-    if (r.steppedUp > 0.01f) m_stepEaseRate = wasGrounded ? cfg::kStepEaseRate : cfg::kMantleEaseRate;
+    if (std::fabs(r.steppedUp) > 0.01f) m_stepEaseRate = wasGrounded ? cfg::kStepEaseRate : cfg::kMantleEaseRate;
     m_stepOffset = std::clamp(m_stepOffset - r.steppedUp, -0.4f, 0.4f);
 
     // Sprint blend for FOV: only when actually running forward on the ground.
@@ -211,7 +212,7 @@ void Player::updateMovement(float dt, const Input& input, const Settings& settin
     m_runBlend += ((running ? 1.0f : 0.0f) - m_runBlend) * approachFactor(6.0f, dt);
 }
 
-void Player::updateCamera(float dt) {
+void Player::updateCamera(float dt, const ICollisionWorld& world, const Physics& physics) {
     const float speed = horizontalSpeed();
     const float crouch = crouchFactor();
 
@@ -239,26 +240,33 @@ void Player::updateCamera(float dt) {
     const float bobY = std::sin(2.0f * m_bobPhase) * cfg::kBobVerticalAmp * amp; // one dip per footstep
     const float bobX = std::cos(m_bobPhase) * cfg::kBobLateralAmp * amp;         // sway per stride
 
-    // ---- Landing dip: critically damped spring, sub-stepped for stability -------------------
+    // ---- Landing dip, and the camera catching up after steps and mantles -----------------------
+    // Both are critically damped springs, sub-stepped for stability. A step
+    // moves the body instantly and adds the opposite offset to the camera, so
+    // the view never jumps; the spring then carries it along with continuous
+    // velocity, so a flight of stairs reads as one smooth slope in either
+    // direction. Its stiffness gives the same average lag behind the body as
+    // a first-order ease at m_stepEaseRate would.
     const float k = 170.0f;
     const float c = 2.0f * std::sqrt(k);
+    const float w = 2.0f * m_stepEaseRate;
     float remaining = dt;
     while (remaining > 0.0f) {
         const float h = std::min(remaining, 1.0f / 240.0f);
         m_landVelocity += (-k * m_landOffset - c * m_landVelocity) * h;
         m_landOffset += m_landVelocity * h;
+        m_stepVelocity += (-w * w * m_stepOffset - 2.0f * w * m_stepVelocity) * h;
+        m_stepOffset += m_stepVelocity * h;
         remaining -= h;
     }
-
-    // ---- Smooth out step-ups and mantles ---------------------------------------------------
-    m_stepOffset *= std::exp(-m_stepEaseRate * dt);
 
     glm::vec3 eye = m_feet;
     eye.y += m_height - cfg::kEyeBelowTop + bobY + m_landOffset + m_stepOffset;
     eye += m_camera.right() * bobX;
-    // The body never passes the ceiling, so keeping the eye inside the body
-    // keeps it out of the ceiling slab too.
-    eye.y = std::min(eye.y, m_feet.y + m_height - 0.04f);
+    // Keep the eye out of whatever is actually overhead (the ceiling slab, a
+    // door header); in an open stair shaft there is nothing to clip against.
+    const glm::vec3 mid = m_feet + glm::vec3(0.0f, m_height * 0.5f, 0.0f);
+    eye.y = std::min(eye.y, mid.y + physics.headroom(mid, 0.1f, 3.0f, world) - 0.06f);
 
     m_camera.position = eye;
     m_camera.yaw = m_yaw;

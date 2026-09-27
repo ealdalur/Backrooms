@@ -120,6 +120,21 @@ MoveResult Physics::move(glm::vec3& feet, const BodyShape& shape, const glm::vec
     return result;
 }
 
+float Physics::headroom(const glm::vec3& point, float halfWidth, float maxUp, const ICollisionWorld& world) const {
+    const AABB column(point - glm::vec3(halfWidth, 0.0f, halfWidth), point + glm::vec3(halfWidth, maxUp, halfWidth));
+    m_scratch.clear();
+    world.gatherColliders(column, m_scratch);
+    float clear = maxUp;
+    for (const AABB& c : m_scratch) {
+        // Only things overhead: overlapping the column and starting above the
+        // point (a door panel swinging through the body is not a ceiling).
+        if (c.max.x <= column.min.x || c.min.x >= column.max.x || c.max.z <= column.min.z || c.min.z >= column.max.z) continue;
+        if (c.min.y < point.y) continue;
+        clear = std::min(clear, c.min.y - point.y);
+    }
+    return clear;
+}
+
 bool Physics::isFree(const AABB& box, const ICollisionWorld& world) const {
     m_scratch.clear();
     world.gatherColliders(box, m_scratch);

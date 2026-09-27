@@ -60,6 +60,11 @@ public:
     /// True if `box` does not overlap any obstacle.
     bool isFree(const AABB& box, const ICollisionWorld& world) const;
 
+    /// Clear height above `point` (up to `maxUp`) inside a vertical column
+    /// of half width `halfWidth`: the distance to the underside of the first
+    /// obstacle overhead (the ceiling, a door header...), or `maxUp`.
+    float headroom(const glm::vec3& point, float halfWidth, float maxUp, const ICollisionWorld& world) const;
+
 private:
     /// Moves along a single axis (0 = x, 1 = y, 2 = z) and clamps against the
     /// first obstacle entered. Returns true if the motion was obstructed.

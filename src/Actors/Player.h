@@ -65,7 +65,7 @@ private:
     void updateCrouch(float dt, const Input& input, const ICollisionWorld& world, const Physics& physics);
     void updateMovement(float dt, const Input& input, const Settings& settings, const ICollisionWorld& world,
                         const Physics& physics);
-    void updateCamera(float dt);
+    void updateCamera(float dt, const ICollisionWorld& world, const Physics& physics);
     float crouchFactor() const;
 
     Camera    m_camera;
@@ -87,8 +87,9 @@ private:
     float m_bobWeight = 0.0f;
     float m_landOffset = 0.0f;    ///< Damped-spring camera dip after landing.
     float m_landVelocity = 0.0f;
-    float m_stepOffset = 0.0f;    ///< Camera lag that smooths step-ups and mantles.
-    float m_stepEaseRate = cfg::kStepEaseRate; ///< Catch-up rate for the current step / mantle (1/s).
+    float m_stepOffset = 0.0f;    ///< Camera lag that smooths steps (up and down) and mantles.
+    float m_stepVelocity = 0.0f;  ///< Rate of change of m_stepOffset (it is a spring).
+    float m_stepEaseRate = cfg::kStepEaseRate; ///< Catch-up rate for the current step / mantle (1/s; spring stiffness 2x this).
     float m_runBlend = 0.0f;      ///< 0..1, drives the sprint FOV kick.
 
     std::vector<PlayerEvent> m_events;
