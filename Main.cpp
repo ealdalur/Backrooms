@@ -3,16 +3,19 @@
 // Application entry point for the Backrooms infinite labyrinth simulator.
 //
 // Usage:
-//   Backrooms [seed] [--seed <n>] [--level <n>] [--demo <scene>]
-//             [--screenshot <file.bmp> [--delay <seconds>]]
+//   Backrooms [seed] [--seed <n>] [--level <n>] [--no-entities] [--dump-sounds <dir>]
+//             [--demo <scene> [--type <text>]] [--screenshot <file.bmp> [--delay <seconds>]]
 //
 //   seed          World seed (decimal or 0x-prefixed hex). Same seed -> same world.
 //   --level       Storey to start on (0 = the classic floor; negative = below).
-//   --demo        Developer scene: stairs, stairs-top, climb / descend (scripted
-//                 walk up / down the nearest stairwell), stalker, ambush (it creeps up from
+//   --demo        Developer scene: stairs, stairs-top, stairs-sign (a closed
+//                 entrance and its sign; --type upper for the storey above),
+//                 climb / descend (scripted walk up / down the nearest
+//                 stairwell), stalker, ambush (it creeps up from
 //                 behind, then the view whips round), caught (...and it never
 //                 does), wanderer, terminal, idle (just logs entity activity).
-//   --type        Text typed into the terminal in the terminal scene.
+//   --type        Text typed into the terminal in the terminal scene
+//                 ("upper" in the stairs-sign scene).
 //   --no-entities Disable the Stalker and the Wanderer.
 //   --dump-sounds Write every procedurally synthesised sound to <dir> as WAV.
 //   --screenshot  Render for a few seconds, save a BMP of the frame and exit
@@ -40,7 +43,7 @@ bool parseSeed(const char* text, uint64_t& out) {
 void printUsage(const char* exe) {
     std::cout << "Usage: " << exe << " [seed] [--seed <n>] [--level <n>] [--no-entities] [--dump-sounds <dir>]\n"
               << "       [--demo <scene> [--type <text>]] [--screenshot <file.bmp> [--delay <seconds>]]\n"
-              << "  demo scenes: stairs, stairs-top, climb, descend, stalker, ambush, caught, wanderer, terminal, idle\n";
+              << "  demo scenes: stairs, stairs-top, stairs-sign, climb, descend, stalker, ambush, caught, wanderer, terminal, idle\n";
 }
 
 } // namespace

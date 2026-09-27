@@ -48,10 +48,10 @@ struct EngineOptions {
     int         startLevel = 0;          ///< Storey to spawn on.
     std::string screenshotPath;          ///< If set: capture a BMP after a delay, then exit.
     float       screenshotDelay = 3.0f;  ///< Seconds of simulation before the capture.
-    /// Developer scene set up at start: stairs, stairs-top, climb, descend,
+    /// Developer scene set up at start: stairs, stairs-top, stairs-sign, climb, descend,
     /// stalker, ambush, caught, wanderer, terminal, idle (only logs entity activity).
     std::string demo;
-    std::string demoInput;               ///< Typed into the terminal in the "terminal" scene.
+    std::string demoInput;               ///< Typed into the terminal in the "terminal" scene ("upper" in "stairs-sign").
     bool        noEntities = false;      ///< Disable the anomalies.
     std::string dumpSoundsDir;           ///< If set: write every synthesised sound there as WAV.
 };
