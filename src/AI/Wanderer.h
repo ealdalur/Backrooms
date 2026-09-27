@@ -4,7 +4,8 @@
 // The blind entity. An emaciated, eyeless figure over two metres tall that
 // navigates purely by ear:
 //
-//   Roaming       - shuffles aimlessly through the rooms, arms hanging.
+//   Roaming       - shuffles aimlessly through the rooms, arms hanging -
+//                   though its wandering tends to drift the player's way.
 //   Investigating - heard something: it stops, cocks its head, then walks
 //                   to where the sound came from (with an error that grows
 //                   with distance), arms reaching out ahead of it.
@@ -60,7 +61,8 @@ public:
 
 private:
     bool listen(const std::vector<NoiseEvent>& noises, const NavGrid& nav);
-    void pickRoamTarget(const NavGrid& nav);
+    /// Plans a short aimless walk (that tends to lean towards the player).
+    void pickRoamTarget(const NavGrid& nav, const glm::vec3& playerFeet);
     /// Handles a closed door on the path; true while it is waiting for one.
     bool handleDoors(float dt, const NavGrid& nav, ChunkManager& chunks, const Physics& physics);
     void animate(float dt, std::vector<EntitySound>& sounds);

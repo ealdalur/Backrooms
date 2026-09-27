@@ -20,6 +20,7 @@
 #include "Core/Input.h"
 #include "Render/Camera.h"
 #include "Render/EntityRenderer.h"
+#include "World/WorldConstants.h"
 
 #include <SDL3/SDL.h>
 #include <glm/glm.hpp>
@@ -49,7 +50,8 @@ struct EngineOptions {
     std::string screenshotPath;          ///< If set: capture a BMP after a delay, then exit.
     float       screenshotDelay = 3.0f;  ///< Seconds of simulation before the capture.
     /// Developer scene set up at start: stairs, stairs-top, stairs-sign, climb, descend,
-    /// stalker, ambush, caught, wanderer, terminal, idle (only logs entity activity).
+    /// stalker, ambush, caught, wanderer, terminal, explore (a long scripted walk,
+    /// Stalker off; --type <n> picks the route), idle (only logs entity activity).
     std::string demo;
     std::string demoInput;               ///< Typed into the terminal in the "terminal" scene ("upper" in "stairs-sign").
     bool        noEntities = false;      ///< Disable the anomalies.
@@ -71,6 +73,15 @@ public:
 
 private:
     enum class GameState { Running, Paused, Terminal, Caught };
+
+    /// A point of a scripted walk. `door` marks the approach to a door that
+    /// has to be opened first (the edge it hangs in follows).
+    struct AutopilotPoint {
+        glm::vec3       pos;
+        bool            door = false;
+        int             level = 0, gx = 0, gz = 0;
+        world::EdgeAxis axis = world::EdgeAxis::West;
+    };
 
     bool createWindow();
     void processEvents();
@@ -109,6 +120,8 @@ private:
     // ---- Developer scenes ----------------------------------------------------------------
     void setupDemo();
     void driveAutopilot(Input& input);
+    /// A random walk of `steps` cells from `from`, preferring unvisited rooms.
+    std::vector<AutopilotPoint> exploreRoute(const glm::vec3& from, int level, int steps, uint64_t seed) const;
     void updateDemo(float dt);
 
     EngineOptions m_options;
@@ -169,8 +182,14 @@ private:
     bool   m_screenshotRequested = false;
 
     // Developer scenes.
-    std::vector<glm::vec3> m_autopilot;  ///< Remaining waypoints of a scripted walk.
+    std::vector<AutopilotPoint> m_autopilot; ///< Waypoints of a scripted walk.
     size_t m_autopilotIndex = 0;
+    float  m_autopilotStuck = 0.0f;          ///< Seconds the scripted walk has made no progress.
+    float  m_autopilotWait = 0.0f;           ///< Seconds spent waiting for a door to swing open.
+    float  m_autopilotDetour = 0.0f;         ///< Seconds left of a sidestep round an obstacle.
+    float  m_autopilotSide = 1.0f;           ///< Alternates the sidestep direction.
+    int    m_autopilotTries = 0;             ///< Sidesteps tried for the current waypoint.
+    float  m_lastDt = 0.0f;
     float  m_demoTime = 0.0f;
     int    m_demoStep = 0;
     std::string m_lastEntityStates;

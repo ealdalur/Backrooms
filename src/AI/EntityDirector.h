@@ -4,8 +4,8 @@
 // Owns the anomalies and paces the horror. Responsibilities:
 //   * spawning: each entity first appears after a grace period, somewhere
 //     suitable around the player (the Stalker in a dark spot the player
-//     cannot see; the Wanderer out of earshot, so the first thing the player
-//     notices is its distant muttering);
+//     cannot see; the Wanderer out of earshot somewhere ahead of where the
+//     player is heading, so the first thing they notice is its muttering);
 //   * resurfacing: entities are not bound to one storey - if the player
 //     leaves the area or changes level, they fade out and manifest again
 //     near the player a little later ("they always find you");
@@ -58,8 +58,9 @@ public:
     /// be made to start hunting at once with `hunt`.
     void spawnAt(EntityKind kind, const glm::vec3& feet, int level, float yaw, bool hunt = false);
 
-    /// Disables / enables the anomalies entirely.
+    /// Disables / enables the anomalies entirely, or just one of them.
     void setEnabled(bool enabled);
+    void setEnabled(EntityKind kind, bool enabled);
 
     void buildDrawList(EntityDrawList& list, const Camera& camera) const;
     const std::vector<LightDisturbance>& lightDisturbances() const { return m_disturbances; }
@@ -90,17 +91,21 @@ private:
     };
 
     /// Tries to find a spot `minDist`..`maxDist` from the player on their
-    /// storey, out of their sight, preferring darkness if asked.
+    /// storey, out of their sight, preferring darkness if asked and the
+    /// direction `ahead` (unit, horizontal) if given.
     bool findSpawn(const PlayerView& view, float minDist, float maxDist, bool preferDark, const Physics& physics,
-                   const ChunkManager& chunks, glm::vec3& out);
-    /// Removes an entity that drifted out of reach; returns true if it did.
-    bool manageLifetime(Agent& agent, float& timer, const PlayerView& view, const ChunkManager& chunks, bool canVanish);
+                   const ChunkManager& chunks, glm::vec3& out, const glm::vec3* ahead = nullptr);
+    /// Removes an entity that drifted out of reach (farther than
+    /// `maxDistance`, on another storey, unloaded, stuck); true if it did.
+    bool manageLifetime(Agent& agent, float& timer, const PlayerView& view, const ChunkManager& chunks, bool canVanish,
+                        float maxDistance);
 
     NavGrid  m_nav;
     rnd::Rng m_rng;
     Stalker  m_stalker;
     Wanderer m_wanderer;
-    bool     m_enabled = true;
+    bool     m_stalkerEnabled = true;
+    bool     m_wandererEnabled = true;
     bool     m_holding = false; ///< A catch is being staged: entities hold still.
     float    m_stalkerTimer;   ///< Countdown to the next (re)appearance.
     bool     m_stalkerResurface = false; ///< Next appearance is a close-range resurfacing.
@@ -108,6 +113,8 @@ private:
     std::optional<EntityKind> m_catch;
 
     PlayerView                    m_view;
+    glm::vec3                     m_lastFeet{0.0f};
+    glm::vec3                     m_travel{0.0f, 0.0f, -1.0f}; ///< Which way the player is heading (smoothed).
     std::vector<LightDisturbance> m_disturbances;
     std::vector<EntitySound>      m_sounds;
     float                         m_fear = 0.0f;

@@ -6,6 +6,7 @@
 #include "Core/Engine.h"
 
 #include "AI/EntityDirector.h"
+#include "AI/NavGrid.h"
 #include "Actors/Player.h"
 #include "Audio/Soundscape.h"
 #include "Core/GpuSelection.h"
@@ -19,6 +20,7 @@
 #include "World/WorldGenerator.h"
 
 #include <algorithm>
+#include <climits>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -446,6 +448,10 @@ void Engine::updateCaught(float dt) {
             teleportPlayer(near, level, rng.range(0.0f, 2.0f * kPi));
             teleportPlayer(m_chunks->findSpawnPoint(near, level, m_player->shape(), *m_physics), level, m_player->yaw());
             m_entities->scatter();
+            if (m_options.demo == "explore") { // keep exploring from wherever the player woke up
+                m_autopilot = exploreRoute(m_player->feetPosition(), level, 600, rng.next());
+                m_autopilotIndex = 0;
+            }
             char msg[48];
             std::snprintf(msg, sizeof(msg), "YOU WAKE UP ON LEVEL %d", level);
             showMessage(msg, 5.0f);
@@ -465,6 +471,7 @@ void Engine::updateCaught(float dt) {
 void Engine::update(float dt) {
     if (m_state == GameState::Paused) return;
     m_simTime += dt;
+    m_lastDt = dt;
     m_noises.clear();
     m_messageTimer = std::max(0.0f, m_messageTimer - dt);
     updateDemo(dt);
@@ -772,10 +779,10 @@ void Engine::setupDemo() {
                         }
                     }
                     if (demo == "climb") {
-                        m_autopilot.assign(route.begin() + 1, route.end());
+                        for (auto it = route.begin() + 1; it != route.end(); ++it) m_autopilot.push_back({*it});
                         m_autopilotIndex = 0;
                     } else if (demo == "descend") {
-                        m_autopilot.assign(route.rbegin() + 1, route.rend());
+                        for (auto it = route.rbegin() + 1; it != route.rend(); ++it) m_autopilot.push_back({*it});
                         m_autopilotIndex = 0;
                     }
                     return;
@@ -830,6 +837,13 @@ void Engine::setupDemo() {
         // Re-find it: teleporting may have reloaded its chunk.
         if (Terminal* t = m_chunks->terminalById(best->id())) enterTerminal(*t);
         m_terminalBlend = 1.0f;
+    } else if (demo == "explore") {
+        // A long walk through the rooms (Stalker off: a catch would teleport
+        // the player); for measuring how often the Wanderer is met.
+        m_entities->setEnabled(EntityKind::Stalker, false);
+        const uint64_t routeSeed = m_options.demoInput.empty() ? 1 : std::strtoull(m_options.demoInput.c_str(), nullptr, 10);
+        m_autopilot = exploreRoute(feet, m_focusLevel, 600, routeSeed);
+        m_autopilotIndex = 0;
     } else if (demo != "idle") { // "idle": nothing staged, entity activity is just logged
         std::cerr << "[Demo] Unknown demo '" << demo << "'\n";
     }
@@ -880,27 +894,119 @@ void Engine::updateDemo(float dt) {
     const bool tick = std::floor(m_demoTime * 2.0f) != std::floor((m_demoTime - dt) * 2.0f); // twice a second
     if (states != m_lastEntityStates || (tick && (st.active() || wa.active()))) {
         m_lastEntityStates = states;
-        std::printf("[Demo] t=%.2f %s, stalker %.1fm (stuck %.1fs), wanderer %.1fm (stuck %.1fs, agitation %.2f)\n",
+        std::printf("[Demo] t=%.2f %s, stalker %.1fm (stuck %.1fs), wanderer %.1fm (stuck %.1fs, agitation %.2f), "
+                    "player (%.1f, %.1f)\n",
                     m_demoTime, states, m_entities->stalkerDistance(), st.stuckTime(), m_entities->wandererDistance(),
-                    wa.stuckTime(), wa.agitation());
+                    wa.stuckTime(), wa.agitation(), m_player->feetPosition().x, m_player->feetPosition().z);
     }
+}
+
+std::vector<Engine::AutopilotPoint> Engine::exploreRoute(const glm::vec3& from, int level, int steps,
+                                                         uint64_t seed) const {
+    // A random walk over the cell graph that prefers rooms it has not been
+    // through yet, passing each opening square-on (as the entities do).
+    rnd::Rng rng(seed);
+    glm::ivec2 cell = NavGrid::cellOf(from), prev(INT_MAX, INT_MAX);
+    std::unordered_map<uint64_t, int> visits;
+    auto key = [](const glm::ivec2& c) {
+        return (static_cast<uint64_t>(static_cast<uint32_t>(c.x)) << 32) | static_cast<uint32_t>(c.y);
+    };
+    const glm::ivec2 dirs[4] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+    std::vector<AutopilotPoint> route;
+    for (int i = 0; i < steps; ++i) {
+        std::vector<glm::ivec2> options;
+        int fewest = INT_MAX;
+        for (const glm::ivec2& dir : dirs) {
+            const glm::ivec2 nb = cell + dir;
+            int gx, gz;
+            world::EdgeAxis axis;
+            NavGrid::edgeBetween(cell, nb, gx, gz, axis);
+            if (m_world->edge(level, gx, gz, axis) == world::EdgeType::Wall) continue;
+            if (m_world->cellRole(level, nb.x, nb.y) != world::CellRole::Room) continue;
+            const int v = visits[key(nb)] + (nb == prev ? 2 : 0); // rather not turn straight back
+            if (v < fewest) options.clear();
+            if (v <= fewest) {
+                fewest = v;
+                options.push_back(nb);
+            }
+        }
+        if (options.empty()) break;
+        const glm::ivec2 next = options[rng.next() % options.size()];
+        int gx, gz;
+        world::EdgeAxis axis;
+        NavGrid::edgeBetween(cell, next, gx, gz, axis);
+        const float S = world::kCellSize, y = world::levelFloorY(level);
+        const glm::vec3 mid = axis == world::EdgeAxis::West
+                                  ? glm::vec3(static_cast<float>(gx) * S, y, (static_cast<float>(gz) + 0.5f) * S)
+                                  : glm::vec3((static_cast<float>(gx) + 0.5f) * S, y, static_cast<float>(gz) * S);
+        const glm::vec3 through(static_cast<float>(next.x - cell.x), 0.0f, static_cast<float>(next.y - cell.y));
+        const bool door = m_world->edge(level, gx, gz, axis) == world::EdgeType::Door;
+        route.push_back({mid - through * 0.9f, door, level, gx, gz, axis});
+        route.push_back({mid + through * 0.9f, false, level, gx, gz, axis});
+        prev = cell;
+        cell = next;
+        ++visits[key(cell)];
+    }
+    return route;
 }
 
 void Engine::driveAutopilot(Input& input) {
     if (m_autopilotIndex >= m_autopilot.size()) return;
+    const bool verbose = m_options.demo != "explore"; // long walks only report problems
     const glm::vec3 feet = m_player->feetPosition();
-    const glm::vec3 target = m_autopilot[m_autopilotIndex];
-    glm::vec3 d = target - feet;
+    const AutopilotPoint& point = m_autopilot[m_autopilotIndex];
+    glm::vec3 d = point.pos - feet;
     d.y = 0.0f;
     if (glm::length(d) < 0.3f) {
-        std::printf("[Autopilot] Waypoint %zu reached at (%.2f, %.2f, %.2f), level %d\n", m_autopilotIndex, feet.x,
-                    feet.y, feet.z, m_focusLevel);
+        if (verbose) {
+            std::printf("[Autopilot] Waypoint %zu reached at (%.2f, %.2f, %.2f), level %d\n", m_autopilotIndex, feet.x,
+                        feet.y, feet.z, m_focusLevel);
+        }
         ++m_autopilotIndex;
+        m_autopilotStuck = 0.0f;
+        m_autopilotWait = 0.0f;
+        m_autopilotTries = 0;
         if (m_autopilotIndex >= m_autopilot.size()) {
             std::printf("[Autopilot] Route complete: feet height %.2f, level %d\n", feet.y, m_focusLevel);
             input.setKeyDown(SDL_SCANCODE_W, false);
         }
         return;
+    }
+
+    // Doors: open the one ahead like a player would, then wait for it to swing clear.
+    if (point.door) {
+        Door* door = m_chunks->doorOnEdge(point.level, point.gx, point.gz, point.axis);
+        if (door && door->state() == Door::State::Closed && glm::length(d) < 2.5f) door->toggle(feet);
+    } else if (m_autopilotIndex > 0 && m_autopilot[m_autopilotIndex - 1].door) {
+        const AutopilotPoint& at = m_autopilot[m_autopilotIndex - 1];
+        Door* door = m_chunks->doorOnEdge(at.level, at.gx, at.gz, at.axis);
+        if (door && door->state() == Door::State::Closed) door->toggle(feet); // its approach was skipped
+        if (door && door->state() != Door::State::Open && m_autopilotWait < 2.0f) {
+            m_autopilotWait += m_lastDt;
+            input.setKeyDown(SDL_SCANCODE_W, false);
+            return;
+        }
+    }
+
+    // Snagged on furniture: sidestep, alternating sides, as the entities do.
+    // If that keeps failing, jump to the waypoint (reported, so a soak test
+    // can tell how often the scripted walk needed help).
+    m_autopilotStuck = m_player->horizontalSpeed() < 0.3f ? m_autopilotStuck + m_lastDt : 0.0f;
+    if (m_autopilotStuck > 0.5f) {
+        m_autopilotStuck = 0.0f;
+        m_autopilotDetour = 0.6f;
+        m_autopilotSide = -m_autopilotSide;
+        if (++m_autopilotTries > 4) {
+            std::printf("[Autopilot] Stuck near (%.2f, %.2f), jumping to waypoint %zu\n", feet.x, feet.z, m_autopilotIndex);
+            m_player->teleport(point.pos, m_player->yaw());
+            m_autopilotTries = 0;
+            return;
+        }
+    }
+    if (m_autopilotDetour > 0.0f) {
+        m_autopilotDetour -= m_lastDt;
+        const float a = 1.2f * m_autopilotSide;
+        d = glm::vec3(d.x * std::cos(a) - d.z * std::sin(a), 0.0f, d.x * std::sin(a) + d.z * std::cos(a));
     }
     m_player->setViewAngles(yawToward(d), 0.0f);
     input.setKeyDown(SDL_SCANCODE_W, true);

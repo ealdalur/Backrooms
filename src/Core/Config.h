@@ -97,9 +97,13 @@ inline constexpr float kWandererFirstSpawn   = 20.0f;
 inline constexpr float kWandererRoamSpeed    = 1.0f;
 inline constexpr float kWandererSearchSpeed  = 1.9f;
 inline constexpr float kWandererHuntSpeed    = 3.3f;   // Faster than walking, slower than running
+inline constexpr float kWandererSpawnMin     = 18.0f;  // Appears this far from the player...
+inline constexpr float kWandererSpawnMax     = 30.0f;  // ...and no farther, preferably ahead of them
+inline constexpr float kWandererDrift        = 0.6f;   // Chance each aimless step leans towards the player
+inline constexpr float kWandererRelocateDist = 48.0f;  // Left farther behind than this: it resurfaces nearer
 // Both.
 inline constexpr float kCatchDistance        = 0.85f;
-inline constexpr float kEntityRelocateDist   = 70.0f;  // Farther than this: it resurfaces nearer
+inline constexpr float kStalkerRelocateDist  = 70.0f;  // Farther than this: it resurfaces nearer
 // Audible radius (m) of player-made noise; walls halve it.
 inline constexpr float kNoiseFootstepRun     = 22.0f;  // Scaled by footstep intensity
 inline constexpr float kNoiseLanding         = 18.0f;

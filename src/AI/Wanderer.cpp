@@ -97,20 +97,28 @@ bool Wanderer::listen(const std::vector<NoiseEvent>& noises, const NavGrid& nav)
 
 // ---- Movement -----------------------------------------------------------------------------
 
-void Wanderer::pickRoamTarget(const NavGrid& nav) {
-    // A short random walk over the cell graph.
+void Wanderer::pickRoamTarget(const NavGrid& nav, const glm::vec3& playerFeet) {
+    // A short random walk over the cell graph. Most steps lean towards the
+    // player: it has not heard them, but somehow it always drifts their way.
     glm::ivec2 cell = NavGrid::cellOf(m_feet);
+    const glm::ivec2 player = NavGrid::cellOf(playerFeet);
     const NavProfile profile;
     const glm::ivec2 steps[4] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+    auto distance = [&player](const glm::ivec2& c) { return std::abs(c.x - player.x) + std::abs(c.y - player.y); };
     for (int n = m_rng.rangeInt(3, 7); n > 0; --n) {
+        const bool drift = m_rng.chance(cfg::kWandererDrift);
         const int first = m_rng.rangeInt(0, 3);
+        glm::ivec2 next = cell;
         for (int k = 0; k < 4; ++k) {
             const glm::ivec2 nb = cell + steps[(first + k) % 4];
-            if (nav.canStep(m_level, cell, nb, profile)) {
-                cell = nb;
+            if (!nav.canStep(m_level, cell, nb, profile)) continue;
+            if (!drift) {
+                next = nb;
                 break;
             }
+            if (next == cell || distance(nb) < distance(next)) next = nb;
         }
+        cell = next;
     }
     const glm::vec3 c = NavGrid::cellCenter(cell, m_level);
     planTo(nav, c + glm::vec3(m_rng.range(-1.5f, 1.5f), 0.0f, m_rng.range(-1.5f, 1.5f)), profile);
@@ -156,7 +164,7 @@ bool Wanderer::update(float dt, const PlayerView& player, const NavGrid& nav, Ch
                 m_timer -= dt;
                 integrate(dt, glm::vec3(0.0f), 6.0f, chunks, physics);
                 if (m_timer <= 0.0f) {
-                    pickRoamTarget(nav);
+                    pickRoamTarget(nav, player.feet);
                     m_timer = m_rng.range(0.5f, 3.0f);
                 }
             } else if (!handleDoors(dt, nav, chunks, physics) &&
