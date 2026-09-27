@@ -88,6 +88,28 @@ void GpuMesh::upload(const MeshData& data, bool instanced) {
     m_indexCount = static_cast<GLsizei>(data.indices.size());
 }
 
+void GpuMesh::stream(const MeshData& data) {
+    if (data.empty()) {
+        m_indexCount = 0;
+        return;
+    }
+    if (!m_vao) {
+        upload(data);
+        return;
+    }
+    // The element buffer binding is VAO state, so bind the VAO first.
+    glBindVertexArray(m_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
+    glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(data.vertices.size() * sizeof(Vertex)),
+                 data.vertices.data(), GL_STREAM_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_ebo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(data.indices.size() * sizeof(uint32_t)),
+                 data.indices.data(), GL_STREAM_DRAW);
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    m_indexCount = static_cast<GLsizei>(data.indices.size());
+}
+
 void GpuMesh::setInstances(const std::vector<glm::mat4>& models) {
     m_instanceCount = static_cast<GLsizei>(models.size());
     if (!m_instanceVbo || models.empty()) return;

@@ -34,15 +34,21 @@ public:
     /// malfunction buzz, which should fall quiet between bursts.
     bool isMalfunctioning(double t) const;
 
+    /// Long-run mean of intensity(): how bright the tube is "on average".
+    /// Lets AI reason about dark areas without chasing individual flickers.
+    float averageIntensity() const;
+
     const glm::vec3& center() const { return m_center; }
     const glm::vec2& halfSize() const { return m_halfSize; }
     const glm::vec3& color() const { return m_color; }
     FlickerMode mode() const { return m_mode; }
+    uint64_t seed() const { return m_seed; }
 
-    /// Global light-grid cells (2.5 m squares) this light can reach without
-    /// being blocked by walls. Filled in by the world generator.
-    std::vector<glm::ivec2>& visibleCells() { return m_visibleCells; }
-    const std::vector<glm::ivec2>& visibleCells() const { return m_visibleCells; }
+    /// Global light-grid cells (2.5 m squares, as (gx, gz, level)) this light
+    /// can reach without being blocked by walls. Filled in by the world
+    /// generator; lights inside a stairwell shaft also reach the storey below.
+    std::vector<glm::ivec3>& visibleCells() { return m_visibleCells; }
+    const std::vector<glm::ivec3>& visibleCells() const { return m_visibleCells; }
 
 private:
     /// Whether `t` falls inside an Intermittent flicker burst; also returns
@@ -67,5 +73,5 @@ private:
     float m_phase;         ///< Time offset so fixtures are not synchronised.
     float m_shimmer;       ///< Amplitude of the steady-state shimmer.
 
-    std::vector<glm::ivec2> m_visibleCells;
+    std::vector<glm::ivec3> m_visibleCells;
 };

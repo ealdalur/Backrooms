@@ -58,6 +58,10 @@ public:
     /// created and wired to attributes 4..7 with a divisor of 1.
     void upload(const MeshData& data, bool instanced = false);
 
+    /// Replaces the geometry of a non-instanced mesh every frame, reusing
+    /// (orphaning) its buffers instead of recreating the GL objects.
+    void stream(const MeshData& data);
+
     /// Streams per-instance model matrices (buffer orphaning each call).
     void setInstances(const std::vector<glm::mat4>& models);
 

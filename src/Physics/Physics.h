@@ -6,9 +6,11 @@
 // The body is an upright box described by its feet position (bottom centre),
 // a half width and a (dynamically varying) height. Movement is resolved one
 // axis at a time with sub-stepping, which gives robust "slide along walls"
-// behaviour, automatic step-up onto low ledges, mid-air mantling onto
-// ledges just within reach, landing on top of furniture and head bumps
-// against headers and the ceiling.
+// behaviour, automatic step-up onto low ledges (and stairs), mid-air
+// mantling onto ledges just within reach, landing on top of furniture and
+// head bumps against headers and the ceiling. Floors and ceilings are slab
+// colliders supplied by the world, so bodies can use stairwells and fall
+// down shafts between storeys.
 // ---------------------------------------------------------------------------
 
 #include "Physics/AABB.h"
@@ -41,10 +43,8 @@ struct MoveResult {
 
 class Physics {
 public:
-    /// @param floorY    Height of the infinite floor plane.
-    /// @param ceilingY  Height of the infinite ceiling plane.
     /// @param stepHeight Maximum ledge height the body climbs automatically.
-    Physics(float floorY, float ceilingY, float stepHeight);
+    explicit Physics(float stepHeight);
 
     /// World-space AABB occupied by a body standing at `feet`.
     static AABB bodyBox(const glm::vec3& feet, const BodyShape& shape);
@@ -57,11 +57,8 @@ public:
     MoveResult move(glm::vec3& feet, const BodyShape& shape, const glm::vec3& displacement,
                     float climbHeight, bool snapToGround, const ICollisionWorld& world) const;
 
-    /// True if `box` does not overlap any obstacle, the floor or the ceiling.
+    /// True if `box` does not overlap any obstacle.
     bool isFree(const AABB& box, const ICollisionWorld& world) const;
-
-    float floorY() const { return m_floorY; }
-    float ceilingY() const { return m_ceilingY; }
 
 private:
     /// Moves along a single axis (0 = x, 1 = y, 2 = z) and clamps against the
@@ -69,8 +66,6 @@ private:
     bool sweepAxis(glm::vec3& feet, const BodyShape& shape, int axis, float delta,
                    const std::vector<AABB>& colliders) const;
 
-    float m_floorY;
-    float m_ceilingY;
     float m_stepHeight;
     mutable std::vector<AABB> m_scratch; ///< Reused collider buffer (avoids per-frame allocs).
 };

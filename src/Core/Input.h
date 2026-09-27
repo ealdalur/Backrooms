@@ -32,6 +32,9 @@ public:
     /// Relative mouse motion (pixels) accumulated over this frame.
     glm::vec2 mouseDelta() const { return m_mouseDelta; }
 
+    /// Forces a key's held state (scripted input: autopilot / tests).
+    void setKeyDown(SDL_Scancode sc, bool down) { m_keys[static_cast<size_t>(sc)] = down; }
+
 private:
     std::array<bool, SDL_SCANCODE_COUNT> m_keys{};
     std::array<bool, SDL_SCANCODE_COUNT> m_pressed{};

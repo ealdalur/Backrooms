@@ -121,4 +121,63 @@ void addCylinder(MeshData& mesh, const glm::mat4& transform, float radius, float
     }
 }
 
+void addLimb(MeshData& mesh, const glm::vec3& a, const glm::vec3& b, float ra, float rb, MaterialId material,
+             int sides, int capRings) {
+    glm::vec3 axis = b - a;
+    const float len = glm::length(axis);
+    if (len < 1e-5f) return;
+    axis /= len;
+    // Orthonormal frame around the axis.
+    const glm::vec3 ref = std::fabs(axis.y) < 0.95f ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0);
+    const glm::vec3 u = glm::normalize(glm::cross(ref, axis));
+    const glm::vec3 v = glm::cross(axis, u);
+
+    // Slope of the frustum side: normals tilt towards the thinner end.
+    const float slope = std::atan2(ra - rb, len);
+
+    // Rings from the tip of cap A to the tip of cap B. Each ring: centre on
+    // the axis, radius, and the elevation angle of its normal.
+    struct Ring {
+        glm::vec3 centre;
+        float     radius;
+        float     elevation; ///< Normal angle out of the radial plane (towards +axis).
+    };
+    std::vector<Ring> rings;
+    const float halfPi = 1.5707963f;
+    for (int i = 0; i <= capRings; ++i) { // cap A: from the pole (-axis) to the equator
+        const float phi = -halfPi + (halfPi + slope) * static_cast<float>(i) / static_cast<float>(capRings);
+        rings.push_back({a + axis * (ra * std::sin(phi)), ra * std::cos(phi), phi});
+    }
+    for (int i = 0; i <= capRings; ++i) { // cap B: from its equator to the pole (+axis)
+        const float phi = slope + (halfPi - slope) * static_cast<float>(i) / static_cast<float>(capRings);
+        rings.push_back({b + axis * (rb * std::sin(phi)), rb * std::cos(phi), phi});
+    }
+
+    const float invTile = 1.0f / materialInfo(material).tileSize;
+    const float mat = static_cast<float>(material);
+    const float twoPi = 6.28318530718f;
+    const uint32_t base = static_cast<uint32_t>(mesh.vertices.size());
+    for (size_t r = 0; r < rings.size(); ++r) {
+        const Ring& ring = rings[r];
+        const float along = glm::dot(ring.centre - a, axis);
+        for (int s = 0; s <= sides; ++s) {
+            const float t = twoPi * static_cast<float>(s) / static_cast<float>(sides);
+            const glm::vec3 radial = u * std::cos(t) + v * std::sin(t);
+            const glm::vec3 n = radial * std::cos(ring.elevation) + axis * std::sin(ring.elevation);
+            const glm::vec3 p = ring.centre + radial * ring.radius;
+            const glm::vec2 uv(t * std::max(ra, rb) * invTile, along * invTile);
+            mesh.vertices.push_back({p, glm::normalize(n), uv, mat, -1.0f});
+        }
+    }
+    const uint32_t stride = static_cast<uint32_t>(sides + 1);
+    for (uint32_t r = 0; r + 1 < rings.size(); ++r) {
+        for (uint32_t s = 0; s < static_cast<uint32_t>(sides); ++s) {
+            const uint32_t i0 = base + r * stride + s;
+            const uint32_t i1 = i0 + stride;
+            // CCW seen from outside: ring r -> r+1 runs along +axis, s along +angle (u -> v).
+            mesh.indices.insert(mesh.indices.end(), {i0, i0 + 1, i1 + 1, i0, i1 + 1, i1});
+        }
+    }
+}
+
 } // namespace mesh

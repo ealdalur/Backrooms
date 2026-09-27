@@ -116,6 +116,11 @@ void AudioEngine::setVoice(VoiceHandle h, float gain, float pan, float lowpassHz
     v->targetLpCoef = dsp::onePoleCoefficient(lowpassHz);
 }
 
+void AudioEngine::setVoicePitch(VoiceHandle h, float pitch) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (Voice* v = resolve(h)) v->pitch = std::max(0.05f, pitch);
+}
+
 void AudioEngine::stop(VoiceHandle h, float fadeSeconds) {
     std::lock_guard<std::mutex> lock(m_mutex);
     Voice* v = resolve(h);
@@ -178,7 +183,13 @@ void AudioEngine::mix(float* out, int frames) {
             v.lpCoef += (v.targetLpCoef - v.lpCoef) * k;
             v.lpState += v.lpCoef * (x - v.lpState);
 
-            const float y = v.lpState * v.gain;
+            float y = v.lpState * v.gain;
+            // A single non-finite sample would poison the reverb's feedback
+            // state for good: drop it (and reset the filter) instead.
+            if (!(std::fabs(y) < 1e4f)) {
+                y = 0.0f;
+                v.lpState = 0.0f;
+            }
             out[f * 2 + 0] += y * v.gainL;
             out[f * 2 + 1] += y * v.gainR;
             m_sendBuffer[static_cast<size_t>(f)] += y * v.send;

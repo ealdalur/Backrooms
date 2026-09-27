@@ -62,6 +62,9 @@ public:
     /// Updates a playing voice's targets; changes glide over a few ms.
     void setVoice(VoiceHandle voice, float gain, float pan, float lowpassHz);
 
+    /// Changes a playing voice's playback rate (e.g. a loop's tempo).
+    void setVoicePitch(VoiceHandle voice, float pitch);
+
     /// Fades a voice out and frees it.
     void stop(VoiceHandle voice, float fadeSeconds = 0.05f);
 

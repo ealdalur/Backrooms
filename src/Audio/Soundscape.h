@@ -10,10 +10,17 @@
 //   * Sparse distant, muffled events (bangs, pounding, footsteps, machinery).
 //   * Player footsteps / jump grunt / landings from PlayerEvents.
 //   * Door handle "chunk-chunk", hinge creak and shut "thunk" from DoorEvents.
+//   * Entities: the Wanderer's endlessly looping, broken phrases (tracked
+//     from its head every frame, so they swell as it approaches), its
+//     dragging steps, the Stalker's skittering and hiss, and its breathing
+//     when it is right behind you; a heartbeat that quickens with fear.
+//   * Terminals: key clicks, beeps, glitches, boot and the monitor's hum.
 // Positional sounds get distance attenuation, equal-power panning, head
-// shadow and occlusion (muffled and quieter when a wall is in the way).
+// shadow and occlusion (muffled and quieter when a wall is in the way, and
+// always when the source is on another storey).
 // ---------------------------------------------------------------------------
 
+#include "AI/Perception.h"
 #include "Audio/AudioEngine.h"
 #include "Audio/SoundBank.h"
 #include "Math/Random.h"
@@ -31,6 +38,13 @@ struct DoorEvent;
 
 class Soundscape {
 public:
+    Soundscape() = default;
+    /// Stops the audio thread before the sound bank it reads from is freed
+    /// (members are destroyed in reverse order, bank first).
+    ~Soundscape() { m_audio.shutdown(); }
+    Soundscape(const Soundscape&) = delete;
+    Soundscape& operator=(const Soundscape&) = delete;
+
     /// Synthesises the sound bank, opens the audio device and starts the
     /// ambient loops. Returns false if no audio device exists (the game
     /// then simply runs silently).
@@ -42,6 +56,23 @@ public:
                 const WorldGenerator& generator);
 
     void setPaused(bool paused) { m_audio.setPaused(paused); }
+
+    /// Entity voices, breathing, footsteps and the heartbeat. Call once per
+    /// frame after update().
+    void updateEntities(float dt, const EntityAudioState& state, const std::vector<EntitySound>& sounds, float fear,
+                        const WorldGenerator& generator);
+
+    /// A positional one-shot (terminal keys, beeps...).
+    void playEffect(SoundId id, const glm::vec3& at, float gain, const WorldGenerator& generator);
+
+    /// Hum of the monitor in use; `on` = false silences it.
+    void setMonitorHum(bool on, const glm::vec3& at, const WorldGenerator& generator);
+
+    /// The shock when an entity reaches the player.
+    void playSting();
+
+    /// Writes the whole synthesised sound bank to WAV files.
+    void dumpSounds(const std::string& directory) const { m_bank.writeWavFiles(directory); }
 
 private:
     struct Spatial {
@@ -86,11 +117,17 @@ private:
     bool        m_enabled = false;
 
     glm::vec3 m_listener{0.0f};
+    int       m_listenerLevel = 0;
     glm::vec3 m_listenerRight{1.0f, 0.0f, 0.0f};
     glm::vec3 m_listenerForward{0.0f, 0.0f, -1.0f};
 
     VoiceHandle m_hum = 0;
     VoiceHandle m_drone = 0;
+    VoiceHandle m_breath = 0;     ///< Stalker breathing loop (silent unless it is close).
+    VoiceHandle m_heart = 0;      ///< Heartbeat loop (gain and tempo follow fear).
+    VoiceHandle m_voice = 0;      ///< The Wanderer's current phrase.
+    VoiceHandle m_monitor = 0;    ///< CRT hum of the terminal in use.
+    float       m_voiceGap = 0.0f; ///< Pause before its next phrase.
 
     float    m_nextDistantEvent = 7.0f;
     uint64_t m_frame = 0;

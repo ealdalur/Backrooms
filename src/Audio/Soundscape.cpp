@@ -27,6 +27,17 @@ constexpr float kGruntGain       = 0.30f;
 constexpr float kHandleGain      = 0.21f;   ///< Lever "chunk-chunk", clearly audible over the creak.
 constexpr float kCreakGain       = 0.20f;   ///< Creaks are meant to be subtle.
 constexpr float kShutGain        = 0.425f;  ///< Closing "thunk" (energy is mostly below ~400 Hz).
+constexpr float kMutterGain      = 0.55f;   ///< The Wanderer murmuring to itself...
+constexpr float kCryGain         = 0.85f;   ///< ...and crying out when it has heard you.
+constexpr float kVoiceRefDistance = 4.0f;   ///< Its voice carries: audible from far away.
+constexpr float kWandererStepGain = 0.45f;
+constexpr float kSkitterGain     = 0.5f;
+constexpr float kHissGain        = 0.55f;
+constexpr float kBreathGain      = 0.32f;
+constexpr float kBreathRange     = 6.5f;
+constexpr float kHeartGain       = 0.55f;
+constexpr float kStingGain       = 0.8f;
+constexpr float kMonitorHumGain  = 0.05f;
 
 // ---- Behaviour -------------------------------------------------------------------
 constexpr float  kLightHearingRange = 14.0f; ///< Lights farther away are inaudible.
@@ -61,8 +72,102 @@ bool Soundscape::init() {
     loop.gain = kDroneGain;
     loop.reverbSend = 0.15f;
     m_drone = m_audio.play(m_bank.get(SoundId::DroneLoop, 0), loop);
+    // Entity loops idle silently until something is near.
+    loop.gain = 0.0f;
+    loop.reverbSend = 0.1f;
+    m_breath = m_audio.play(m_bank.get(SoundId::StalkerBreath, 0), loop);
+    loop.reverbSend = 0.0f;
+    m_heart = m_audio.play(m_bank.get(SoundId::Heartbeat, 0), loop);
     m_lastVariant.fill(-1);
+    m_voiceGap = 2.0f;
     return true;
+}
+
+void Soundscape::updateEntities(float dt, const EntityAudioState& state, const std::vector<EntitySound>& sounds,
+                                float fear, const WorldGenerator& generator) {
+    if (!m_enabled) return;
+    for (const EntitySound& s : sounds) {
+        switch (s.type) {
+        case EntitySound::Type::StalkerSkitter:
+            playAt(SoundId::StalkerSkitter, s.position, kSkitterGain * (0.4f + 0.6f * s.intensity), 0.08f, 0.2f, generator);
+            break;
+        case EntitySound::Type::StalkerHiss:
+            playAt(SoundId::StalkerHiss, s.position, kHissGain, 0.05f, 0.25f, generator);
+            break;
+        case EntitySound::Type::WandererStep:
+            playAt(SoundId::WandererStep, s.position, kWandererStepGain * s.intensity, 0.06f, 0.15f, generator);
+            break;
+        }
+    }
+
+    // ---- The Wanderer never stops talking. Each phrase is a positional voice
+    //      re-spatialised every frame, so the muttering swells as it closes in.
+    if (state.wandererActive) {
+        const bool agitated = state.wandererAgitation > 0.55f;
+        const Spatial s = spatialize(state.wandererHead, kVoiceRefDistance, generator);
+        const float gain = (agitated ? kCryGain : kMutterGain) * s.gain;
+        if (m_voice && m_audio.isPlaying(m_voice)) {
+            m_audio.setVoice(m_voice, gain, s.pan, s.lowpassHz);
+        } else if ((m_voiceGap -= dt) <= 0.0f) {
+            const SoundId id = agitated ? SoundId::WandererCry : SoundId::WandererMutter;
+            VoiceParams p;
+            p.gain = gain;
+            p.pan = s.pan;
+            p.lowpassHz = s.lowpassHz;
+            p.pitch = m_rng.range(0.94f, 1.04f);
+            p.reverbSend = 0.35f;
+            m_voice = m_audio.play(m_bank.get(id, pickVariant(id)), p);
+            m_voiceGap = agitated ? m_rng.range(0.3f, 1.2f) : m_rng.range(1.0f, 3.2f);
+        }
+    } else if (m_voice) {
+        m_audio.stop(m_voice, 0.6f);
+        m_voice = 0;
+    }
+
+    // ---- Breathing when the Stalker is right there (usually behind you).
+    float breath = 0.0f, pan = 0.0f, lowpass = 20000.0f;
+    if (state.stalkerActive) {
+        const float d = glm::length(state.stalkerPosition - m_listener);
+        if (d < kBreathRange) {
+            const Spatial s = spatialize(state.stalkerPosition, 1.0f, generator);
+            breath = kBreathGain * (1.0f - d / kBreathRange) * (s.occluded ? kOccludedGain : 1.0f);
+            pan = s.pan;
+            lowpass = s.lowpassHz;
+        }
+    }
+    m_audio.setVoice(m_breath, breath, pan, lowpass);
+
+    // ---- Heartbeat: louder and faster with fear.
+    m_audio.setVoice(m_heart, kHeartGain * std::pow(fear, 1.5f), 0.0f, 20000.0f);
+    m_audio.setVoicePitch(m_heart, 1.0f + 0.9f * fear);
+}
+
+void Soundscape::playEffect(SoundId id, const glm::vec3& at, float gain, const WorldGenerator& generator) {
+    if (!m_enabled) return;
+    playAt(id, at, gain, 0.04f, 0.1f, generator);
+}
+
+void Soundscape::setMonitorHum(bool on, const glm::vec3& at, const WorldGenerator& generator) {
+    if (!m_enabled) return;
+    if (!on) {
+        if (m_monitor) m_audio.stop(m_monitor, 0.2f);
+        m_monitor = 0;
+        return;
+    }
+    const Spatial s = spatialize(at, 0.6f, generator);
+    if (!m_monitor || !m_audio.isPlaying(m_monitor)) {
+        VoiceParams p;
+        p.loop = true;
+        p.gain = 0.0f;
+        p.reverbSend = 0.0f;
+        m_monitor = m_audio.play(m_bank.get(SoundId::CrtHum, 0), p);
+    }
+    m_audio.setVoice(m_monitor, kMonitorHumGain * s.gain, s.pan, s.lowpassHz);
+}
+
+void Soundscape::playSting() {
+    if (!m_enabled) return;
+    play2D(SoundId::CatchSting, kStingGain, 0.0f, 1.0f, 0.3f);
 }
 
 int Soundscape::pickVariant(SoundId id) {
@@ -97,7 +202,9 @@ Soundscape::Spatial Soundscape::spatialize(const glm::vec3& source, float refDis
         s.pan = side * 0.85f * std::min(flatLen, 1.0f);           // sounds at your feet stay centred
         if (front < 0.0f) s.lowpassHz = 18000.0f + (7000.0f - 18000.0f) * -front; // head shadow
     }
-    if (generator.isLightBlocked(glm::vec2(m_listener.x, m_listener.z), occlusionProbe(source))) {
+    // Another storey is heard through the slab: always occluded.
+    const bool otherLevel = world::levelOf(source.y) != m_listenerLevel;
+    if (otherLevel || generator.isLightBlocked(m_listenerLevel, glm::vec2(m_listener.x, m_listener.z), occlusionProbe(source))) {
         s.gain *= kOccludedGain;
         s.lowpassHz = std::min(s.lowpassHz, kOccludedLowpass);
         s.occluded = true;
@@ -133,6 +240,7 @@ void Soundscape::update(float dt, double time, const Player& player, const Chunk
     if (!m_enabled) return;
     ++m_frame;
     m_listener = player.eyePosition();
+    m_listenerLevel = world::levelOf(player.feetPosition().y);
     m_listenerRight = player.camera().right();
     m_listenerForward = player.camera().flatForward();
 
@@ -181,13 +289,13 @@ void Soundscape::handleDoors(const std::vector<DoorEvent>& events, const WorldGe
 }
 
 void Soundscape::updateLights(double time, const ChunkManager& chunks, const WorldGenerator& generator) {
-    const ChunkCoord center = ChunkCoord::fromWorld(m_listener.x, m_listener.z);
+    const ChunkCoord center = ChunkCoord::fromWorld(m_listener.x, m_listener.z, m_listenerLevel);
     float humSum = 0.0f;
     m_buzzCandidates.clear();
 
     for (int dz = -1; dz <= 1; ++dz) {
         for (int dx = -1; dx <= 1; ++dx) {
-            const Chunk* chunk = chunks.chunkAt({center.x + dx, center.z + dz});
+            const Chunk* chunk = chunks.chunkAt({center.x + dx, center.z + dz, center.level});
             if (!chunk) continue;
             const std::vector<LightFixture>& lights = chunk->lights();
             for (size_t i = 0; i < lights.size(); ++i) {

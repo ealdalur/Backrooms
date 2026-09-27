@@ -31,8 +31,9 @@ public:
     /// plates) in door-local space: hinge at the origin, panel along +X.
     static MeshData buildMesh();
 
-    /// Starts opening (away from `playerPos`) or closing; reverses mid-swing.
-    void toggle(const glm::vec3& playerPos);
+    /// Starts opening (away from `userPos`, the player or an entity) or
+    /// closing; reverses mid-swing.
+    void toggle(const glm::vec3& userPos);
 
     /// Advances the swing animation. The door only pauses if its panel would
     /// actually intersect the player at the next step (it never pushes into
@@ -60,6 +61,9 @@ public:
 
     uint64_t id() const { return m_id; }
     State state() const;
+
+    /// Swing progress: 0 = shut, 1 = fully open (drives AI sight / passage).
+    float openAmount() const { return m_progress; }
 
     /// Persistable state: 0 = closed, +1 / -1 = open towards that side.
     int persistentState() const;

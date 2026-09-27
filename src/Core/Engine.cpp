@@ -5,21 +5,63 @@
 
 #include "Core/Engine.h"
 
+#include "AI/EntityDirector.h"
 #include "Actors/Player.h"
 #include "Audio/Soundscape.h"
 #include "Core/GpuSelection.h"
+#include "Gameplay/TerminalConsole.h"
+#include "Math/Random.h"
 #include "Physics/Physics.h"
 #include "Render/Renderer.h"
 #include "World/ChunkManager.h"
+#include "World/Stairwell.h"
 #include "World/WorldConstants.h"
 #include "World/WorldGenerator.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <iostream>
 #include <utility>
 #include <vector>
+
+namespace {
+
+constexpr float kPi = 3.14159265f;
+
+/// Yaw that makes the camera look along direction `d` (see Camera::forward).
+inline float yawToward(const glm::vec3& d) { return std::atan2(-d.x, -d.z); }
+inline float pitchToward(const glm::vec3& d) { return std::asin(std::clamp(d.y / std::max(glm::length(d), 1e-4f), -1.0f, 1.0f)); }
+/// Wraps an angle difference into [-pi, pi].
+inline float wrapAngle(float a) { return std::remainder(a, 2.0f * kPi); }
+inline float smooth01(float x) {
+    x = std::clamp(x, 0.0f, 1.0f);
+    return x * x * (3.0f - 2.0f * x);
+}
+
+const char* stalkerStateName(Stalker::State s) {
+    switch (s) {
+    case Stalker::State::Lurking:  return "LURKING";
+    case Stalker::State::Stalking: return "STALKING";
+    case Stalker::State::Frozen:   return "FROZEN";
+    case Stalker::State::Fleeing:  return "FLEEING";
+    case Stalker::State::Lunging:  return "LUNGING";
+    }
+    return "?";
+}
+
+const char* wandererStateName(Wanderer::State s) {
+    switch (s) {
+    case Wanderer::State::Roaming:       return "ROAMING";
+    case Wanderer::State::Investigating: return "INVESTIGATING";
+    case Wanderer::State::Hunting:       return "HUNTING";
+    case Wanderer::State::Searching:     return "SEARCHING";
+    }
+    return "?";
+}
+
+} // namespace
 
 Engine::Engine(EngineOptions options) : m_options(std::move(options)) {}
 
@@ -82,37 +124,71 @@ bool Engine::init() {
     // Audio is optional: without a playback device the game runs silently.
     m_sound = std::make_unique<Soundscape>();
     m_sound->init();
+    if (!m_options.dumpSoundsDir.empty()) m_sound->dumpSounds(m_options.dumpSoundsDir);
 
     m_world = std::make_unique<WorldGenerator>(m_options.seed);
-    m_chunks = std::make_unique<ChunkManager>(*m_world, cfg::kChunkLoadRadius, cfg::kChunkBuildBudget);
-    m_physics = std::make_unique<Physics>(0.0f, world::kCeilingHeight, cfg::kStepHeight);
+    m_chunks = std::make_unique<ChunkManager>(*m_world, cfg::kChunkLoadRadius, cfg::kChunkAdjacentRadius,
+                                              cfg::kChunkBuildBudget);
+    m_physics = std::make_unique<Physics>(cfg::kStepHeight);
+    m_entities = std::make_unique<EntityDirector>(*m_world, *m_chunks, m_options.seed);
+    m_entities->setEnabled(!m_options.noEntities);
 
     // Load the neighbourhood of the origin, find a free spot and spawn there.
-    const BodyShape standing{cfg::kPlayerHalfWidth, cfg::kStandHeight};
-    const glm::vec3 probe(world::kCellSize * 2.5f, 0.0f, world::kCellSize * 2.5f);
-    m_chunks->update(probe, 0.0f, Physics::bodyBox(probe, standing), true);
-    const glm::vec3 spawn = m_chunks->findSpawnPoint(standing, *m_physics);
-    m_chunks->update(spawn, 0.0f, Physics::bodyBox(spawn, standing), true);
-    m_player = std::make_unique<Player>(spawn, 0.0f);
+    const int level = m_options.startLevel;
+    const glm::vec3 probe(world::kCellSize * 2.5f, world::levelFloorY(level), world::kCellSize * 2.5f);
+    m_player = std::make_unique<Player>(probe, 0.0f);
+    teleportPlayer(probe, level, 0.0f);
+    const glm::vec3 spawn =
+        m_chunks->findSpawnPoint(probe, level, {cfg::kPlayerHalfWidth, cfg::kStandHeight}, *m_physics);
+    teleportPlayer(spawn, level, 0.0f);
+    if (!m_options.demo.empty()) setupDemo();
 
     std::cout << "[Engine] World seed 0x" << std::hex << m_options.seed << std::dec << ", " << m_chunks->chunkCount()
-              << " chunks loaded, spawn (" << spawn.x << ", " << spawn.z << ")\n"
-              << "[Engine] Controls: WASD move, mouse or arrow keys look, Shift run, Space jump,\n"
-              << "         C crouch, E use door, hold RMB + move mouse to drive, +/- sensitivity,\n"
-              << "         F11 fullscreen, F12 screenshot, P pause/resume, Esc quit.\n";
+              << " chunks loaded, spawn (" << m_player->feetPosition().x << ", " << m_player->feetPosition().z
+              << ") on level " << m_focusLevel << "\n"
+              << "[Engine] Controls: WASD move, mouse or arrow keys look, Shift run, Space jump, C crouch,\n"
+              << "         E open doors / use terminals (Esc leaves a terminal), hold RMB + move mouse to drive,\n"
+              << "         +/- sensitivity, F3 entity debug, F11 fullscreen, F12 screenshot, P pause, Esc quit.\n";
 
-    setState(GameState::Running);
+    setState(m_state);
     return true;
 }
 
+// ---- State ---------------------------------------------------------------------------------------
+
 void Engine::setState(GameState state) {
     m_state = state;
-    const bool running = state == GameState::Running;
-    SDL_SetWindowRelativeMouseMode(m_window, running);
-    if (m_sound) m_sound->setPaused(!running);
+    SDL_SetWindowRelativeMouseMode(m_window, state != GameState::Paused);
+    if (m_sound) m_sound->setPaused(state == GameState::Paused);
+    if (state == GameState::Terminal) SDL_StartTextInput(m_window);
+    else SDL_StopTextInput(m_window);
     m_input.reset();
     m_titleDirty = true; // refresh the title immediately
 }
+
+void Engine::teleportPlayer(const glm::vec3& feet, int level, float yaw) {
+    m_focusLevel = level;
+    const BodyShape standing{cfg::kPlayerHalfWidth, cfg::kStandHeight};
+    m_chunks->update(feet, level, 0.0f, Physics::bodyBox(feet, standing), true);
+    m_player->teleport(feet, yaw);
+}
+
+void Engine::updateFocusLevel() {
+    const float y = m_player->feetPosition().y;
+    const float base = world::levelFloorY(m_focusLevel);
+    if (y > base + cfg::kLevelSwitchBand * world::kLevelHeight) ++m_focusLevel;
+    else if (y < base - cfg::kLevelSwitchBand * world::kLevelHeight) --m_focusLevel;
+    else return;
+    m_titleDirty = true;
+    std::cout << "[Engine] Now on level " << m_focusLevel << "\n";
+}
+
+void Engine::showMessage(const std::string& text, float seconds) {
+    m_message = text;
+    m_messageTimer = seconds;
+}
+
+// ---- Events --------------------------------------------------------------------------------------
 
 void Engine::processEvents() {
     SDL_Event e;
@@ -128,19 +204,37 @@ void Engine::processEvents() {
             m_renderer->resize(m_pixelWidth, m_pixelHeight);
             break;
         case SDL_EVENT_WINDOW_FOCUS_LOST:
-            if (m_state == GameState::Running && m_options.screenshotPath.empty()) setState(GameState::Paused);
+            if (m_state != GameState::Paused && m_options.screenshotPath.empty()) {
+                m_resumeState = m_state;
+                setState(GameState::Paused);
+            }
             break;
         case SDL_EVENT_MOUSE_BUTTON_DOWN:
-            if (m_state == GameState::Paused && e.button.button == SDL_BUTTON_LEFT) setState(GameState::Running);
+            if (m_state == GameState::Paused && e.button.button == SDL_BUTTON_LEFT) setState(m_resumeState);
+            break;
+        case SDL_EVENT_TEXT_INPUT:
+            if (m_state == GameState::Terminal && m_console) m_console->type(e.text.text);
             break;
         case SDL_EVENT_KEY_DOWN:
+            if (m_state == GameState::Terminal) {
+                handleTerminalKey(e.key);
+                break;
+            }
             if (e.key.repeat) break;
             switch (e.key.scancode) {
             case SDL_SCANCODE_ESCAPE:
                 m_quit = true; // exit immediately
                 break;
             case SDL_SCANCODE_P:
-                setState(m_state == GameState::Running ? GameState::Paused : GameState::Running);
+                if (m_state == GameState::Paused) {
+                    setState(m_resumeState);
+                } else {
+                    m_resumeState = m_state;
+                    setState(GameState::Paused);
+                }
+                break;
+            case SDL_SCANCODE_F3:
+                m_debugHud = !m_debugHud;
                 break;
             case SDL_SCANCODE_F11:
                 m_fullscreen = !m_fullscreen;
@@ -169,29 +263,341 @@ void Engine::processEvents() {
     }
 }
 
-void Engine::update(float dt) {
-    if (m_state != GameState::Running) return;
-    m_simTime += dt;
+void Engine::handleTerminalKey(const SDL_KeyboardEvent& key) {
+    // While seated, the keyboard belongs to the console (characters arrive as
+    // text input events); only editing keys and a few globals are handled here.
+    if (!m_console) return;
+    switch (key.scancode) {
+    case SDL_SCANCODE_ESCAPE:
+        if (!key.repeat) leaveTerminal(false);
+        break;
+    case SDL_SCANCODE_BACKSPACE:
+        m_console->backspace();
+        break;
+    case SDL_SCANCODE_RETURN:
+    case SDL_SCANCODE_KP_ENTER:
+        if (!key.repeat) m_console->submit(terminalContext());
+        break;
+    case SDL_SCANCODE_UP:
+        m_console->historyUp();
+        break;
+    case SDL_SCANCODE_DOWN:
+        m_console->historyDown();
+        break;
+    case SDL_SCANCODE_F11:
+        if (!key.repeat) {
+            m_fullscreen = !m_fullscreen;
+            SDL_SetWindowFullscreen(m_window, m_fullscreen);
+        }
+        break;
+    case SDL_SCANCODE_F12:
+        m_screenshotRequested = true;
+        break;
+    default:
+        break;
+    }
+}
 
-    // Doors: interact with the one in front of the player.
-    if (m_input.keyPressed(SDL_SCANCODE_E)) {
-        m_chunks->interact(m_player->eyePosition(), m_player->lookDirection(), m_player->feetPosition());
+// ---- Terminals -----------------------------------------------------------------------------------
+
+Terminal* Engine::activeTerminal() const { return m_terminalId ? m_chunks->terminalById(m_terminalId) : nullptr; }
+
+TerminalContext Engine::terminalContext() const {
+    TerminalContext ctx;
+    ctx.level = m_focusLevel;
+    ctx.playerFeet = m_player->feetPosition();
+    ctx.stalkerDistance = m_entities->stalkerDistance();
+    ctx.stalkerBehind = m_entities->stalkerBehindPlayer();
+    ctx.wandererDistance = m_entities->wandererDistance();
+    ctx.world = m_world.get();
+    return ctx;
+}
+
+void Engine::enterTerminal(Terminal& terminal) {
+    auto it = m_consoles.find(terminal.id());
+    if (it == m_consoles.end()) {
+        if (m_consoles.size() >= 8) m_consoles.clear(); // forget old sessions
+        it = m_consoles.emplace(terminal.id(), std::make_unique<TerminalConsole>(terminal.id(), terminal.amber(), m_focusLevel)).first;
+    }
+    m_console = it->second.get();
+    m_console->open(terminal.powered());
+    terminal.setPowered(true);
+    if (terminal.id() != m_lastTerminalId) m_renderer->resetTerminal();
+    m_terminalId = m_lastTerminalId = terminal.id();
+
+    // Lean in: the camera settles square in front of the screen.
+    m_terminalEye = terminal.viewPoint();
+    const glm::vec3 look = terminal.screenCenter() - m_terminalEye;
+    m_terminalYaw = yawToward(look);
+    m_terminalPitch = pitchToward(look);
+    setState(GameState::Terminal);
+}
+
+void Engine::leaveTerminal(bool powerOff) {
+    if (Terminal* t = activeTerminal()) {
+        if (powerOff) t->setPowered(false);
+    }
+    m_sound->setMonitorHum(false, glm::vec3(0.0f), *m_world);
+    if (m_state == GameState::Terminal) setState(GameState::Running);
+    // m_console stays set while the view blends back, so the screen fades out.
+}
+
+void Engine::updateTerminal(float dt) {
+    const bool seated = m_state == GameState::Terminal;
+    const float step = dt / cfg::kTerminalOpenTime;
+    m_terminalBlend = std::clamp(m_terminalBlend + (seated ? step : -step), 0.0f, 1.0f);
+    if (!m_console) return;
+    if (!seated) {
+        if (m_terminalBlend <= 0.0f) {
+            m_console = nullptr;
+            m_terminalId = 0;
+        }
+        return;
     }
 
-    m_player->update(dt, m_input, m_settings, *m_chunks, *m_physics);
-    m_chunks->update(m_player->feetPosition(), dt, m_player->bodyBox());
-    // After both updates so this frame's footstep / door events are heard, and
-    // with the renderer's clock so the tube buzz coincides with visible flicker.
-    m_sound->update(dt, m_simTime, *m_player, *m_chunks, *m_world);
+    Terminal* terminal = activeTerminal();
+    if (!terminal) { // its chunk went away (should not happen while seated)
+        leaveTerminal(false);
+        return;
+    }
+    m_console->update(dt, terminalContext());
+    const glm::vec3 at = terminal->screenCenter();
+    for (TerminalSound s : m_console->takeSounds()) {
+        switch (s) {
+        case TerminalSound::Key:
+            m_sound->playEffect(SoundId::TerminalKey, at + glm::vec3(0.0f, -0.28f, 0.0f), 0.35f, *m_world);
+            m_noises.push_back({at, cfg::kNoiseTyping, NoiseKind::Typing}); // the Wanderer hears you typing
+            break;
+        case TerminalSound::GhostKey:
+            m_sound->playEffect(SoundId::TerminalKey, at + glm::vec3(0.0f, -0.28f, 0.0f), 0.2f, *m_world);
+            break;
+        case TerminalSound::Beep:
+            m_sound->playEffect(SoundId::TerminalBeep, at, 0.22f, *m_world);
+            m_noises.push_back({at, cfg::kNoiseMachine, NoiseKind::Machine});
+            break;
+        case TerminalSound::Glitch:
+            m_sound->playEffect(SoundId::TerminalGlitch, at, 0.3f, *m_world);
+            break;
+        case TerminalSound::Boot:
+            m_sound->playEffect(SoundId::TerminalBoot, at, 0.45f, *m_world);
+            m_noises.push_back({at, cfg::kNoiseMachine, NoiseKind::Machine});
+            break;
+        case TerminalSound::PowerDown:
+            m_sound->playEffect(SoundId::TerminalOff, at, 0.4f, *m_world);
+            break;
+        }
+    }
+    m_sound->setMonitorHum(true, at, *m_world);
+    if (m_console->exitRequested()) {
+        const bool off = m_console->powerOffRequested();
+        m_console->clearRequests();
+        leaveTerminal(off);
+    }
+}
 
-    // Crosshair ring fades in when a door is within reach.
-    const bool canUse = m_chunks->findInteractableDoor(m_player->eyePosition(), m_player->lookDirection()) != nullptr;
+// ---- Noise and entities ------------------------------------------------------------------------
+
+void Engine::collectNoise() {
+    for (const PlayerEvent& e : m_player->events()) {
+        const glm::vec3 at = m_player->feetPosition();
+        switch (e.type) {
+        case PlayerEvent::Type::Footstep:
+            // Running is loud; walking carries; crouch-walking barely registers.
+            m_noises.push_back({at, cfg::kNoiseFootstepRun * std::max(0.08f, e.intensity), NoiseKind::Footstep});
+            break;
+        case PlayerEvent::Type::Jump:
+            m_noises.push_back({at, 8.0f, NoiseKind::Landing});
+            break;
+        case PlayerEvent::Type::Land:
+            m_noises.push_back({at, cfg::kNoiseLanding * (0.4f + 0.6f * e.intensity), NoiseKind::Landing});
+            break;
+        }
+    }
+    for (const DoorEvent& d : m_chunks->doorEvents()) {
+        const bool loud = (d.flags & (Door::kEventUnlatch | Door::kEventShut)) != 0;
+        m_noises.push_back({d.position, cfg::kNoiseDoor * (loud ? 1.0f : 0.6f), NoiseKind::Door});
+    }
+}
+
+void Engine::startCaught(EntityKind by) {
+    if (m_state == GameState::Terminal) leaveTerminal(false);
+    // It looms up in front of the player; the camera is wrenched to its face.
+    m_caughtFace = m_entities->confront(by, m_player->feetPosition(), m_player->lookDirection());
+    m_caughtTimer = 0.0f;
+    m_respawned = false;
+    m_sound->playSting();
+    setState(GameState::Caught);
+    std::cout << "[Engine] Caught by the " << (by == EntityKind::Stalker ? "Stalker" : "Wanderer") << "\n";
+}
+
+void Engine::updateCaught(float dt) {
+    m_caughtTimer += dt;
+    if (!m_respawned) {
+        m_fade = smooth01((m_caughtTimer - 0.7f) / 0.9f);
+        if (m_caughtTimer > 3.0f) {
+            // You wake up somewhere else. Sometimes a whole storey away.
+            rnd::Rng rng(rnd::hashCombine(m_options.seed, static_cast<uint64_t>(m_simTime * 1000.0)));
+            int level = m_focusLevel;
+            if (rng.chance(0.4f)) level += rng.chance(0.5f) ? 1 : -1;
+            const float angle = rng.range(0.0f, 2.0f * kPi);
+            const float dist = rng.range(120.0f, 220.0f);
+            const glm::vec3 near = glm::vec3(m_player->feetPosition().x + std::cos(angle) * dist, world::levelFloorY(level),
+                                             m_player->feetPosition().z + std::sin(angle) * dist);
+            teleportPlayer(near, level, rng.range(0.0f, 2.0f * kPi));
+            teleportPlayer(m_chunks->findSpawnPoint(near, level, m_player->shape(), *m_physics), level, m_player->yaw());
+            m_entities->scatter();
+            char msg[48];
+            std::snprintf(msg, sizeof(msg), "YOU WAKE UP ON LEVEL %d", level);
+            showMessage(msg, 5.0f);
+            m_respawned = true;
+        }
+        return;
+    }
+    m_fade = 1.0f - smooth01((m_caughtTimer - 3.2f) / 1.4f);
+    if (m_caughtTimer > 4.6f) {
+        m_fade = 0.0f;
+        setState(GameState::Running);
+    }
+}
+
+// ---- Simulation --------------------------------------------------------------------------------------
+
+void Engine::update(float dt) {
+    if (m_state == GameState::Paused) return;
+    m_simTime += dt;
+    m_noises.clear();
+    m_messageTimer = std::max(0.0f, m_messageTimer - dt);
+    updateDemo(dt);
+
+    m_prompt.clear();
+    bool canUse = false;
+    if (m_state == GameState::Running) {
+        driveAutopilot(m_input);
+        const Interactable target = m_chunks->findInteractable(m_player->eyePosition(), m_player->lookDirection());
+        canUse = static_cast<bool>(target);
+        if (target.kind == Interactable::Kind::Door) {
+            const bool shut = target.door->state() == Door::State::Closed || target.door->state() == Door::State::Closing;
+            m_prompt = shut ? "E  OPEN DOOR" : "E  CLOSE DOOR";
+            if (m_input.keyPressed(SDL_SCANCODE_E)) target.door->toggle(m_player->feetPosition());
+        } else if (target.kind == Interactable::Kind::Terminal) {
+            m_prompt = target.terminal->powered() ? "E  USE TERMINAL" : "E  SWITCH ON TERMINAL";
+            if (m_input.keyPressed(SDL_SCANCODE_E)) enterTerminal(*target.terminal);
+        }
+    }
+
+    // Seated or caught, the body just stands there.
+    const Input& bodyInput = m_state == GameState::Running ? m_input : m_idleInput;
+    m_player->update(dt, bodyInput, m_settings, *m_chunks, *m_physics);
+    updateFocusLevel();
+    m_chunks->update(m_player->feetPosition(), m_focusLevel, dt, m_player->bodyBox());
+    // Fell out of the world (e.g. down a shaft whose floor never loaded): start over nearby.
+    if (m_player->feetPosition().y < world::levelFloorY(m_focusLevel) - world::kLevelHeight - 2.0f) {
+        std::cerr << "[Engine] Fell out of the world, respawning\n";
+        const glm::vec3 near(m_player->feetPosition().x, world::levelFloorY(m_focusLevel), m_player->feetPosition().z);
+        teleportPlayer(m_chunks->findSpawnPoint(near, m_focusLevel, m_player->shape(), *m_physics), m_focusLevel,
+                       m_player->yaw());
+    }
+
+    updateTerminal(dt);
+    collectNoise();
+
+    // ---- Anomalies: they perceive what the player actually sees.
+    const bool blind = m_state == GameState::Terminal || (m_state == GameState::Caught && m_fade > 0.5f);
+    const float aspect = static_cast<float>(m_pixelWidth) / static_cast<float>(std::max(1, m_pixelHeight));
+    m_entities->update(dt, viewCamera(), aspect, m_player->feetPosition(), m_focusLevel, blind, *m_chunks, *m_physics,
+                       m_noises);
+    if (const auto by = m_entities->takeCatch(); by && m_state != GameState::Caught) startCaught(*by);
+    if (m_state == GameState::Caught) updateCaught(dt);
+
+    // After every update so this frame's footstep / door / entity events are
+    // heard, and with the renderer's clock so the tube buzz matches the flicker.
+    m_sound->update(dt, m_simTime, *m_player, *m_chunks, *m_world);
+    m_sound->updateEntities(dt, m_entities->audioState(), m_entities->sounds(), m_entities->fear(), *m_world);
+
+    // Crosshair ring fades in when a door or terminal is within reach.
     m_crosshairHighlight += ((canUse ? 1.0f : 0.0f) - m_crosshairHighlight) * (1.0f - std::exp(-12.0f * dt));
 }
 
-void Engine::render() {
-    m_renderer->render(m_player->camera(), *m_chunks, *m_world, m_simTime, m_crosshairHighlight);
-    m_renderer->drawHudText(m_fpsText); // drawn in-frame, so it is visible in fullscreen too
+// ---- Rendering ---------------------------------------------------------------------------------------
+
+Camera Engine::viewCamera() const {
+    Camera cam = m_player->camera();
+    if (m_terminalBlend > 0.0f) {
+        const float t = smooth01(m_terminalBlend);
+        cam.position = glm::mix(cam.position, m_terminalEye, t);
+        cam.yaw += wrapAngle(m_terminalYaw - cam.yaw) * t;
+        cam.pitch += (m_terminalPitch - cam.pitch) * t;
+        cam.fovYDegrees += (55.0f - cam.fovYDegrees) * t;
+    }
+    if (m_state == GameState::Caught && !m_respawned) {
+        // The jumpscare: the head is wrenched round to face it, and shakes.
+        const glm::vec3 d = m_caughtFace - cam.position;
+        const float t = smooth01(m_caughtTimer / 0.12f);
+        cam.yaw += wrapAngle(yawToward(d) - cam.yaw) * t;
+        cam.pitch += (pitchToward(d) - cam.pitch) * t;
+        const float shake = 0.03f * std::max(0.0f, 1.0f - m_caughtTimer);
+        cam.yaw += shake * std::sin(m_caughtTimer * 91.0f);
+        cam.pitch += shake * std::sin(m_caughtTimer * 73.0f + 1.3f);
+        cam.fovYDegrees -= 12.0f * t;
+    }
+    return cam;
+}
+
+void Engine::drawHud() {
+    TextOverlay& hud = m_renderer->hud();
+    const float s = hud.pixelScale();
+    const float w = static_cast<float>(m_pixelWidth), h = static_cast<float>(m_pixelHeight);
+    const glm::vec4 ink(1.0f, 1.0f, 0.92f, 0.9f);
+
+    hud.text(m_fpsText, w - 10.0f * s, 10.0f * s, TextOverlay::Align::Right, 1.0f, ink, true);
+    char level[32];
+    std::snprintf(level, sizeof(level), "LEVEL %d", m_focusLevel);
+    hud.text(level, 10.0f * s, 10.0f * s, TextOverlay::Align::Left, 1.0f, ink * glm::vec4(1, 1, 1, 1.0f - m_fade), true);
+
+    if (!m_prompt.empty() && m_state == GameState::Running) {
+        hud.text(m_prompt, w * 0.5f, h * 0.5f + 20.0f * s, TextOverlay::Align::Center, 1.0f,
+                 glm::vec4(1.0f, 1.0f, 0.92f, 0.75f * m_crosshairHighlight), true);
+    }
+    if (m_terminalBlend > 0.0f) {
+        hud.text("ESC  LEAVE     ENTER  RUN COMMAND     TYPE HELP FOR COMMANDS", w * 0.5f, h - 24.0f * s,
+                 TextOverlay::Align::Center, 1.0f, glm::vec4(0.8f, 0.8f, 0.75f, 0.6f * m_terminalBlend), true);
+    }
+    if (m_messageTimer > 0.0f && !m_message.empty()) {
+        const float a = std::min(1.0f, m_messageTimer / 1.0f) * std::min(1.0f, (5.0f - m_messageTimer) / 0.8f + 0.2f);
+        hud.text(m_message, w * 0.5f, h * 0.62f, TextOverlay::Align::Center, 2.0f, glm::vec4(0.95f, 0.93f, 0.85f, a));
+    }
+    if (m_debugHud) {
+        const Stalker& st = m_entities->stalker();
+        const Wanderer& wa = m_entities->wanderer();
+        char line[160];
+        std::snprintf(line, sizeof(line), "STALKER %s %s %.1fM   WANDERER %s %.1fM %.2f   FEAR %.2f",
+                      st.active() ? stalkerStateName(st.state()) : "ABSENT", st.seen() ? "SEEN" : "UNSEEN",
+                      m_entities->stalkerDistance(), wa.active() ? wandererStateName(wa.state()) : "ABSENT",
+                      m_entities->wandererDistance(), wa.agitation(), m_entities->fear());
+        hud.text(line, 10.0f * s, 24.0f * s, TextOverlay::Align::Left, 1.0f, glm::vec4(0.7f, 1.0f, 0.7f, 0.9f), true);
+    }
+}
+
+void Engine::render(float dt) {
+    const Camera cam = viewCamera();
+    m_entityDraw.clear();
+    m_entities->buildDrawList(m_entityDraw, cam);
+
+    FrameParams frame;
+    frame.camera = cam;
+    frame.time = m_simTime;
+    frame.crosshairHighlight = m_state == GameState::Running ? m_crosshairHighlight : 0.0f;
+    frame.fear = m_entities->fear();
+    frame.fade = m_fade;
+    frame.lightDisturbances = &m_entities->lightDisturbances();
+    frame.entities = &m_entityDraw;
+    m_renderer->render(frame, *m_chunks, *m_world);
+
+    if (m_console && m_terminalBlend > 0.0f) {
+        m_renderer->drawTerminal(m_console->screen(), static_cast<float>(m_simTime), dt, m_terminalBlend);
+    }
+    drawHud();
+    m_renderer->flushHud();
 }
 
 void Engine::updateTitle(float dt) {
@@ -211,13 +617,13 @@ void Engine::updateTitle(float dt) {
     m_titleDirty = false;
 
     const glm::vec3 p = m_player->feetPosition();
-    const ChunkCoord c = ChunkCoord::fromWorld(p.x, p.z);
+    const ChunkCoord c = ChunkCoord::fromWorld(p.x, p.z, m_focusLevel);
     const RenderStats& s = m_renderer->stats();
     char title[256];
     std::snprintf(title, sizeof(title),
-                  "%s | %.0f FPS | chunk (%d, %d) | %zu chunks, %zu lights | sensitivity %.2f%s%s", cfg::kWindowTitle,
-                  m_fps, c.x, c.z, m_chunks->chunkCount(), s.lights, m_settings.mouseSensitivity,
-                  m_player->mouseDriveActive() ? " | MOUSE DRIVE" : "",
+                  "%s | %.0f FPS | level %d chunk (%d, %d) | %zu chunks, %zu lights | sensitivity %.2f%s%s",
+                  cfg::kWindowTitle, m_fps, c.level, c.x, c.z, m_chunks->chunkCount(), s.lights,
+                  m_settings.mouseSensitivity, m_player->mouseDriveActive() ? " | MOUSE DRIVE" : "",
                   m_state == GameState::Paused ? " | PAUSED - press P or click to resume, Esc to quit" : "");
     SDL_SetWindowTitle(m_window, title);
 }
@@ -263,7 +669,7 @@ int Engine::run() {
         m_input.beginFrame();
         processEvents();
         update(dt);
-        render();
+        render(dt);
 
         if (m_screenshotRequested) {
             char name[64];
@@ -286,6 +692,8 @@ void Engine::shutdown() {
     // GPU resources must be released while the context is still alive.
     m_sound.reset(); // stops the audio thread before anything it reads goes away
     m_renderer.reset();
+    m_entities.reset();
+    m_consoles.clear();
     m_player.reset();
     m_chunks.reset();
     m_physics.reset();
@@ -300,4 +708,185 @@ void Engine::shutdown() {
         m_window = nullptr;
     }
     SDL_Quit();
+}
+
+// ---- Developer scenes ------------------------------------------------------------------------------
+
+void Engine::setupDemo() {
+    const std::string& demo = m_options.demo;
+    const glm::vec3 feet = m_player->feetPosition();
+    const glm::vec3 fwd = glm::normalize(glm::vec3(m_player->lookDirection().x, 0.0f, m_player->lookDirection().z));
+
+    if (demo == "stairs" || demo == "stairs-top" || demo == "climb" || demo == "descend") {
+        // Nearest stairwell rising from the start storey (spiral over chunk columns).
+        const int level = m_focusLevel;
+        const ChunkCoord home = ChunkCoord::fromWorld(feet.x, feet.z, level);
+        for (int ring = 0; ring < 12; ++ring) {
+            for (int dz = -ring; dz <= ring; ++dz) {
+                for (int dx = -ring; dx <= ring; ++dx) {
+                    if (std::max(std::abs(dx), std::abs(dz)) != ring) continue;
+                    const int cx = home.x + dx, cz = home.z + dz;
+                    const auto s = m_world->stairwell(level, cx, cz);
+                    if (!s) continue;
+                    const int gx = cx * world::kChunkCells + s->lx, gz = cz * world::kChunkCells + s->lz;
+                    const std::vector<glm::vec3> route = stairs::climbRoute(gx, gz, level, s->rotation);
+                    const glm::mat4 toWorld = stairs::cellTransform(gx, gz, level, s->rotation);
+                    std::cout << "[Demo] Stairwell at cell (" << gx << ", " << gz << ") level " << level
+                              << ", rotation " << s->rotation << "\n";
+                    if (demo == "stairs-top") {
+                        // Upper lobby, at the head of flight B, looking down the shaft.
+                        const glm::vec3 top(toWorld * glm::vec4(3.4f, world::kLevelHeight, 0.9f, 1.0f));
+                        const glm::vec3 ahead(toWorld * glm::vec4(2.4f, world::kLevelHeight, 3.5f, 1.0f));
+                        teleportPlayer(top, level + 1, yawToward(ahead - top));
+                        m_player->setViewAngles(yawToward(ahead - top), glm::radians(-42.0f));
+                    } else if (demo == "descend") {
+                        const size_t n = route.size();
+                        teleportPlayer(route[n - 1], level + 1, yawToward(route[n - 2] - route[n - 1]));
+                    } else {
+                        teleportPlayer(route[0], level, yawToward(route[1] - route[0]));
+                    }
+                    // Open the entrances on both storeys, from inside the stairwell
+                    // so they swing out of the way of the route.
+                    const int side = stairs::entranceSide(s->rotation);
+                    const int ex = gx + (side == 1 ? 1 : 0), ez = gz + (side == 3 ? 1 : 0);
+                    const world::EdgeAxis axis = side < 2 ? world::EdgeAxis::West : world::EdgeAxis::South;
+                    const glm::vec3 inside((static_cast<float>(gx) + 0.5f) * world::kCellSize, 0.0f,
+                                           (static_cast<float>(gz) + 0.5f) * world::kCellSize);
+                    for (int l : {level, level + 1}) {
+                        if (Door* d = m_chunks->doorOnEdge(l, ex, ez, axis)) {
+                            d->toggle(inside);                       // picks the outward swing...
+                            d->restoreState(d->persistentState());   // ...and snaps fully open
+                            d->takeEvents();
+                        }
+                    }
+                    if (demo == "climb") {
+                        m_autopilot.assign(route.begin() + 1, route.end());
+                        m_autopilotIndex = 0;
+                    } else if (demo == "descend") {
+                        m_autopilot.assign(route.rbegin() + 1, route.rend());
+                        m_autopilotIndex = 0;
+                    }
+                    return;
+                }
+            }
+        }
+        std::cerr << "[Demo] No stairwell found near the spawn\n";
+        return;
+    }
+
+    // Entity scenes: the first free spot along a direction from the player.
+    auto freeSpotAlong = [&](const glm::vec3& dir, float from, float to) {
+        for (float d = from; d >= to; d -= 0.5f) {
+            const glm::vec3 p = feet + dir * d;
+            if (m_physics->isFree(Physics::bodyBox(p + glm::vec3(0.0f, 0.01f, 0.0f), {0.3f, 2.2f}), *m_chunks)) return p;
+        }
+        return feet + dir * to;
+    };
+    if (demo == "stalker") {
+        const glm::vec3 p = freeSpotAlong(fwd, 5.5f, 3.0f);
+        m_entities->spawnAt(EntityKind::Stalker, p, m_focusLevel, std::atan2(-fwd.x, -fwd.z));
+    } else if (demo == "ambush" || demo == "caught") {
+        // It starts behind the player; in "ambush" the view whips round after
+        // a moment, in "caught" the player never looks.
+        const glm::vec3 p = freeSpotAlong(-fwd, 14.0f, 6.0f);
+        m_entities->spawnAt(EntityKind::Stalker, p, m_focusLevel, std::atan2(fwd.x, fwd.z), true);
+    } else if (demo == "wanderer") {
+        const glm::vec3 p = freeSpotAlong(fwd, 4.5f, 2.5f);
+        m_entities->spawnAt(EntityKind::Wanderer, p, m_focusLevel, std::atan2(-fwd.x, -fwd.z));
+    } else if (demo == "terminal") {
+        // Nearest terminal on this storey: sit down at it.
+        Terminal* best = nullptr;
+        float bestDist = 1e9f;
+        for (Chunk* chunk : m_chunks->sortedChunksMutable()) {
+            if (chunk->coord().level != m_focusLevel) continue;
+            for (Terminal& t : chunk->terminals()) {
+                const float d = glm::length(t.center() - feet);
+                if (d < bestDist) {
+                    bestDist = d;
+                    best = &t;
+                }
+            }
+        }
+        if (!best) {
+            std::cerr << "[Demo] No terminal loaded\n";
+            return;
+        }
+        glm::vec3 seat = best->viewPoint() + best->screenNormal() * 0.3f;
+        seat.y = world::levelFloorY(m_focusLevel);
+        const glm::vec3 look = best->screenCenter() - seat;
+        teleportPlayer(seat, m_focusLevel, yawToward(look));
+        // Re-find it: teleporting may have reloaded its chunk.
+        if (Terminal* t = m_chunks->terminalById(best->id())) enterTerminal(*t);
+        m_terminalBlend = 1.0f;
+    } else if (demo != "idle") { // "idle": nothing staged, entity activity is just logged
+        std::cerr << "[Demo] Unknown demo '" << demo << "'\n";
+    }
+}
+
+void Engine::updateDemo(float dt) {
+    if (m_options.demo.empty()) return;
+    m_demoTime += dt;
+    if (m_options.demo == "ambush" && m_demoStep == 0 && m_demoTime > 2.0f) {
+        m_player->setViewAngles(m_player->yaw() + kPi, 0.0f); // whip round
+        m_demoStep = 1;
+        std::cout << "[Demo] Turning round\n";
+    }
+    if (m_options.demo == "wanderer" && m_demoStep == 0 && m_demoTime > 1.0f) {
+        // Make a noise: open the nearest door. The blind thing should come for it.
+        Door* nearest = nullptr;
+        float best = 8.0f;
+        for (Chunk* chunk : m_chunks->sortedChunksMutable()) {
+            if (chunk->coord().level != m_focusLevel) continue;
+            for (Door& d : chunk->doors()) {
+                const float dist = glm::length(d.doorwayCenter() - m_player->eyePosition());
+                if (dist < best) {
+                    best = dist;
+                    nearest = &d;
+                }
+            }
+        }
+        if (nearest) {
+            nearest->toggle(m_player->feetPosition());
+            std::printf("[Demo] Opening a door %.1fm away\n", best);
+        }
+        m_demoStep = 1;
+    }
+    if (m_options.demo == "terminal" && m_demoStep == 0 && m_demoTime > 1.5f && m_console && !m_options.demoInput.empty()) {
+        m_console->type(m_options.demoInput.c_str());
+        m_console->submit(terminalContext());
+        m_demoStep = 1;
+    }
+    // Log entity state changes (scripted verification of the behaviours).
+    const Stalker& st = m_entities->stalker();
+    const Wanderer& wa = m_entities->wanderer();
+    char states[128];
+    std::snprintf(states, sizeof(states), "stalker %s%s / wanderer %s", st.active() ? stalkerStateName(st.state()) : "absent",
+                  st.active() && st.seen() ? " (seen)" : "", wa.active() ? wandererStateName(wa.state()) : "absent");
+    const bool tick = std::floor(m_demoTime * 2.0f) != std::floor((m_demoTime - dt) * 2.0f); // twice a second
+    if (states != m_lastEntityStates || (tick && (st.active() || wa.active()))) {
+        m_lastEntityStates = states;
+        std::printf("[Demo] t=%.2f %s, stalker %.1fm (stuck %.1fs), wanderer %.1fm (stuck %.1fs, agitation %.2f)\n",
+                    m_demoTime, states, m_entities->stalkerDistance(), st.stuckTime(), m_entities->wandererDistance(),
+                    wa.stuckTime(), wa.agitation());
+    }
+}
+
+void Engine::driveAutopilot(Input& input) {
+    if (m_autopilotIndex >= m_autopilot.size()) return;
+    const glm::vec3 feet = m_player->feetPosition();
+    const glm::vec3 target = m_autopilot[m_autopilotIndex];
+    glm::vec3 d = target - feet;
+    d.y = 0.0f;
+    if (glm::length(d) < 0.3f) {
+        std::printf("[Autopilot] Waypoint %zu reached at (%.2f, %.2f, %.2f), level %d\n", m_autopilotIndex, feet.x,
+                    feet.y, feet.z, m_focusLevel);
+        ++m_autopilotIndex;
+        if (m_autopilotIndex >= m_autopilot.size()) {
+            std::printf("[Autopilot] Route complete: feet height %.2f, level %d\n", feet.y, m_focusLevel);
+            input.setKeyDown(SDL_SCANCODE_W, false);
+        }
+        return;
+    }
+    m_player->setViewAngles(yawToward(d), 0.0f);
+    input.setKeyDown(SDL_SCANCODE_W, true);
 }

@@ -23,6 +23,8 @@ constexpr unsigned kUnitLightGrid = 2; // uses units 2..6
 const glm::vec3 kAmbient(0.12f, 0.11f, 0.075f);
 const glm::vec3 kAmbientDown(0.42f, 0.37f, 0.22f);
 const glm::vec3 kFogColor(0.34f, 0.30f, 0.17f);
+
+const std::vector<LightDisturbance> kNoDisturbances;
 } // namespace
 
 bool Renderer::init(int width, int height) {
@@ -37,12 +39,20 @@ bool Renderer::init(int width, int height) {
     m_lightGrid.init();
     if (!m_post.init(width, height, cfg::kMsaaSamples)) return false;
     if (!m_hud.init()) return false;
+    if (!m_entities.init()) return false;
+    if (!m_terminal.init()) {
+        std::cerr << "[Renderer] Terminal renderer initialisation failed\n";
+        return false;
+    }
 
     // Shared instanced meshes.
     for (int i = 0; i < kFurnitureTypeCount; ++i) {
         m_furnitureMeshes[static_cast<size_t>(i)].upload(Furniture::buildMesh(static_cast<FurnitureType>(i)), true);
     }
     m_doorMesh.upload(Door::buildMesh(), true);
+    for (int i = 0; i < kTerminalLookCount; ++i) {
+        m_terminalMeshes[static_cast<size_t>(i)].upload(Terminal::buildMesh(static_cast<TerminalLook>(i)), true);
+    }
 
     // Constant world shader state.
     m_worldShader.use();
@@ -54,6 +64,7 @@ bool Renderer::init(int width, int height) {
     m_worldShader.set("uArchHalfWidth", world::kArchWidth * 0.5f);
     m_worldShader.set("uDoorHalfWidth", world::kDoorOpeningWidth * 0.5f);
     m_worldShader.set("uCeilingHeight", world::kCeilingHeight);
+    m_worldShader.set("uLevelHeight", world::kLevelHeight);
     m_worldShader.set("uCeilingTile", world::kCeilingTileSize);
     m_worldShader.set("uLightRange", world::kLightRange);
     m_worldShader.set("uLightPower", cfg::kLightPower);
@@ -77,9 +88,9 @@ void Renderer::resize(int width, int height) {
     m_post.resize(m_width, m_height);
 }
 
-void Renderer::render(const Camera& camera, ChunkManager& chunks, const WorldGenerator& generator, double time,
-                      float crosshairHighlight) {
+void Renderer::render(const FrameParams& frame, ChunkManager& chunks, const WorldGenerator& generator) {
     m_stats = RenderStats{};
+    const Camera& camera = frame.camera;
 
     // ---- Keep light clustering in sync with the loaded chunk set --------------------
     std::vector<Chunk*> ordered = chunks.sortedChunksMutable();
@@ -87,7 +98,7 @@ void Renderer::render(const Camera& camera, ChunkManager& chunks, const WorldGen
         m_lightGrid.rebuild(ordered, generator);
         m_lightTopology = chunks.topologyVersion();
     }
-    m_lightGrid.updateIntensities(time);
+    m_lightGrid.updateIntensities(frame.time, frame.lightDisturbances ? *frame.lightDisturbances : kNoDisturbances);
     m_stats.lights = m_lightGrid.lightCount();
 
     // ---- Camera ---------------------------------------------------------------------
@@ -106,6 +117,7 @@ void Renderer::render(const Camera& camera, ChunkManager& chunks, const WorldGen
     m_worldShader.use();
     m_worldShader.set("uViewProj", viewProj);
     m_worldShader.set("uCameraPos", camera.position);
+    m_worldShader.set("uTime", static_cast<float>(frame.time));
     m_materials.bind(kUnitAlbedo, kUnitSurface);
     m_lightGrid.bind(m_worldShader, kUnitLightGrid);
 
@@ -118,6 +130,7 @@ void Renderer::render(const Camera& camera, ChunkManager& chunks, const WorldGen
     }
 
     for (auto& list : m_furnitureInstances) list.clear();
+    for (auto& list : m_terminalInstances) list.clear();
     m_doorInstances.clear();
 
     for (const Chunk* chunk : ordered) {
@@ -130,9 +143,12 @@ void Renderer::render(const Camera& camera, ChunkManager& chunks, const WorldGen
             m_furnitureInstances[static_cast<size_t>(f.type)].push_back(f.model);
         }
         for (const Door& d : chunk->doors()) m_doorInstances.push_back(d.modelMatrix());
+        for (const Terminal& t : chunk->terminals()) {
+            m_terminalInstances[static_cast<size_t>(t.look())].push_back(t.modelMatrix());
+        }
     }
 
-    // ---- Instanced furniture and doors ----------------------------------------------------
+    // ---- Instanced furniture, doors and terminals ------------------------------------------
     m_worldShader.set("uLightBase", 0);
     for (size_t t = 0; t < m_furnitureMeshes.size(); ++t) {
         m_furnitureMeshes[t].setInstances(m_furnitureInstances[t]);
@@ -142,13 +158,30 @@ void Renderer::render(const Camera& camera, ChunkManager& chunks, const WorldGen
     m_doorMesh.setInstances(m_doorInstances);
     m_doorMesh.drawInstanced();
     m_stats.doorsDrawn = m_doorInstances.size();
+    for (size_t t = 0; t < m_terminalMeshes.size(); ++t) {
+        m_terminalMeshes[t].setInstances(m_terminalInstances[t]);
+        m_terminalMeshes[t].drawInstanced();
+        m_stats.terminalsDrawn += m_terminalInstances[t].size();
+    }
+
+    // ---- Entities: lit bodies through the world shader, then the shadow creature ----------
+    if (frame.entities) {
+        m_entities.drawLit(*frame.entities);
+        m_entities.drawShadow(*frame.entities, viewProj, camera.position, static_cast<float>(frame.time), kFogColor,
+                              cfg::kFogDensity);
+    }
     glBindVertexArray(0);
 
     // ---- Post-processing to the back buffer -----------------------------------------------
-    m_post.present(static_cast<float>(time), cfg::kExposure, cfg::kBloomStrength, cfg::kBloomThreshold,
-                   crosshairHighlight);
+    m_post.present(static_cast<float>(frame.time), cfg::kExposure, cfg::kBloomStrength, cfg::kBloomThreshold,
+                   frame.crosshairHighlight, frame.fear, frame.fade);
+    m_hud.begin(m_width, m_height);
 }
 
-void Renderer::drawHudText(const std::string& text) {
-    m_hud.drawTopRight(text, m_width, m_height);
+void Renderer::drawTerminal(const TerminalScreen& screen, float time, float dt, float openAmount) {
+    m_terminal.draw(screen, time, dt, openAmount, m_width, m_height);
 }
+
+void Renderer::resetTerminal() { m_terminal.reset(); }
+
+void Renderer::flushHud() { m_hud.flush(); }

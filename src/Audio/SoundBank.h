@@ -8,6 +8,7 @@
 
 #include <array>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 enum class SoundId : uint8_t {
@@ -30,6 +31,24 @@ enum class SoundId : uint8_t {
     DistantPounding,
     DistantFootsteps,
     DistantMachinery,
+    // The Wanderer.
+    WandererMutter,   ///< Broken, half-whispered phrases ("help me", "where are you"...) - formant speech.
+    WandererCry,      ///< The same voice agitated: louder, stuttering, doubled an octave down.
+    WandererStep,     ///< Heavy bare footfall with a dragging scuff.
+    // The Stalker.
+    StalkerSkitter,   ///< Claws scrabbling on carpet in galloping bursts.
+    StalkerHiss,      ///< Sharp, whispered exhale as it darts away.
+    StalkerBreath,    ///< Seamless loop: slow, wet, rasping breathing.
+    // Dread.
+    Heartbeat,        ///< Seamless loop: "lub-dub" at 60 bpm (tempo follows playback rate).
+    CatchSting,       ///< Dissonant screech and boom when an entity reaches the player.
+    // Terminals.
+    TerminalKey,      ///< Mechanical keyswitch press + release.
+    TerminalBeep,     ///< PC-speaker square-wave beeps.
+    TerminalGlitch,   ///< Bit-crushed digital interference (the anomaly breaking through).
+    TerminalBoot,     ///< POST beep, hard disk spin-up and seek chatter.
+    TerminalOff,      ///< CRT power-down zap.
+    CrtHum,           ///< Seamless loop: flyback whine and mains hum of a running monitor.
     Count
 };
 
@@ -48,6 +67,10 @@ public:
 
     int variantCount(SoundId id) const { return static_cast<int>(m_sounds[static_cast<size_t>(id)].size()); }
     const Sound& get(SoundId id, int variant) const;
+
+    /// Writes every variant as a 16-bit mono WAV into `directory` (for
+    /// auditioning the synthesis) and prints its peak / RMS level.
+    void writeWavFiles(const std::string& directory) const;
 
 private:
     std::array<std::vector<Sound>, kSoundIdCount> m_sounds;

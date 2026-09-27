@@ -342,6 +342,78 @@ void generateFabric(Canvas& c) {
     });
 }
 
+// ----- Concrete -----------------------------------------------------------------
+// Bare cast concrete: large mottling, exposed aggregate, air pores, form
+// seams and grimy run-off stains (stairwell flights and slab edges).
+void generateConcrete(Canvas& c) {
+    const glm::vec3 base(0.50f, 0.49f, 0.46f);
+    forEachTexel(c, [&](int x, int y, float u, float v) {
+        const float mottle = noise::fbm(u * 4.0f, v * 4.0f, 4, 4, 5, 0xC0C1u);
+        const float fine   = noise::fbm(u * 140.0f, v * 140.0f, 140, 140, 2, 0xC0C2u);
+        const noise::Cellular agg = noise::worley(u * 70.0f, v * 70.0f, 70, 70, 0xC0C3u);
+        const float stone  = (1.0f - smooth(0.10f, 0.35f, agg.f1)) * ((agg.cellId & 7u) < 3u ? 1.0f : 0.0f);
+        const noise::Cellular air = noise::worley(u * 110.0f, v * 110.0f, 110, 110, 0xC0C4u);
+        const float pore   = (1.0f - smooth(0.02f, 0.09f, air.f1)) * ((air.cellId & 15u) == 0u ? 1.0f : 0.0f);
+        const float stain  = smooth(0.25f, 0.75f, noise::fbm(u * 2.0f, v * 6.0f, 2, 6, 4, 0xC0C5u));
+        const float seam   = gauss(fract(v * 2.0f), 0.5f, 0.004f); // formwork joint
+
+        glm::vec3 col = base * (0.90f + 0.12f * mottle + 0.05f * fine);
+        col = glm::mix(col, glm::vec3(0.62f, 0.60f, 0.56f), stone * 0.35f);
+        col = glm::mix(col, col * glm::vec3(0.80f, 0.77f, 0.70f), stain * 0.45f);
+        col *= (1.0f - 0.45f * pore) * (1.0f - 0.08f * seam);
+
+        const float height = 0.5f + 0.12f * fine + 0.10f * stone - 0.45f * pore - 0.2f * seam;
+        c.put(x, y, col, height, 0.18f + 0.15f * stain, 0.0f);
+    });
+}
+
+// ----- Beige plastic ------------------------------------------------------------
+// Textured ABS computer housing, unevenly yellowed by decades of fluorescent
+// light, with ingrained grime.
+void generateBeigePlastic(Canvas& c) {
+    forEachTexel(c, [&](int x, int y, float u, float v) {
+        const noise::Cellular stipple = noise::worley(u * 180.0f, v * 180.0f, 180, 180, 0xBE16u);
+        const float bump    = 1.0f - smooth(0.0f, 0.8f, stipple.f1);
+        const float yellow  = smooth(0.2f, 0.8f, noise::fbm(u * 3.0f, v * 3.0f, 3, 3, 4, 0xBE17u));
+        const float grime   = smooth(0.45f, 0.9f, noise::fbm(u * 9.0f, v * 9.0f, 9, 9, 4, 0xBE18u));
+        glm::vec3 col = glm::mix(glm::vec3(0.80f, 0.76f, 0.65f), glm::vec3(0.78f, 0.68f, 0.47f), yellow * 0.7f);
+        col *= (0.97f + 0.04f * bump) * (1.0f - 0.2f * grime);
+        c.put(x, y, col, 0.4f + 0.3f * bump, 0.45f - 0.3f * grime, 0.0f);
+    });
+}
+
+// ----- CRT screen -------------------------------------------------------------------
+// Mapped once per screen (0..1). Dark smoked glass; the emissive mask is the
+// visible raster area (rounded corners, soft edge) the shader draws text into.
+void generateCrtScreen(Canvas& c) {
+    forEachTexel(c, [&](int x, int y, float u, float v) {
+        const glm::vec2 q(std::fabs(u - 0.5f) * 2.0f, std::fabs(v - 0.5f) * 2.0f);
+        // Rounded-rectangle raster (superellipse) inset from the bezel.
+        const float r = std::pow(std::pow(q.x / 0.92f, 6.0f) + std::pow(q.y / 0.90f, 6.0f), 1.0f / 6.0f);
+        const float raster = 1.0f - smooth(0.93f, 1.0f, r);
+        const float smudge = smooth(0.4f, 0.9f, noise::fbm(u * 5.0f, v * 5.0f, 5, 5, 4, 0xC47Au));
+        const glm::vec3 col = glm::vec3(0.030f, 0.036f, 0.033f) * (1.0f + 0.4f * smudge);
+        c.put(x, y, col, 0.5f, 1.0f - 0.5f * smudge, raster);
+    });
+}
+
+// ----- Flesh ------------------------------------------------------------------------
+// Pale, bloodless skin: blotchy discolouration, a web of blue-grey veins,
+// wrinkles and a clammy sheen.
+void generateFlesh(Canvas& c) {
+    forEachTexel(c, [&](int x, int y, float u, float v) {
+        const float blotch  = smooth(0.1f, 0.8f, noise::fbm(u * 5.0f, v * 5.0f, 5, 5, 5, 0xF1E5u));
+        const float veins   = smooth(0.82f, 0.95f, noise::ridged(u * 7.0f, v * 7.0f, 7, 7, 4, 0xF1E6u));
+        const float wrinkle = noise::fbm(u * 60.0f, v * 18.0f, 60, 18, 3, 0xF1E7u);
+        const float pores   = noise::white(x, y, 0xF1E8u);
+        glm::vec3 col = glm::vec3(0.74f, 0.71f, 0.67f);
+        col = glm::mix(col, glm::vec3(0.66f, 0.54f, 0.56f), blotch * 0.35f);
+        col = glm::mix(col, glm::vec3(0.40f, 0.47f, 0.58f), veins * 0.55f);
+        col *= 0.94f + 0.06f * wrinkle - 0.04f * pores;
+        c.put(x, y, col, 0.5f + 0.25f * wrinkle - 0.2f * veins, 0.55f + 0.3f * blotch, 0.0f);
+    });
+}
+
 } // namespace
 
 bool MaterialLibrary::build(int size) {
@@ -352,6 +424,7 @@ bool MaterialLibrary::build(int size) {
     const Generator generators[kMaterialCount] = {
         generateWallpaper, generateCarpet, generateCeiling, generateWood,
         generateMetal,     generateLightPanel, generatePlastic, generateFabric,
+        generateConcrete,  generateBeigePlastic, generateCrtScreen, generateFlesh,
     };
 
     // Synthesise every layer concurrently: each generator is independent and

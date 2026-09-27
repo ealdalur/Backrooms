@@ -18,7 +18,9 @@ inline constexpr const char* kWindowTitle  = "Backrooms";
 // ----- World ----------------------------------------------------------------
 inline constexpr uint64_t kDefaultWorldSeed = 0x0B4C'4000'1CEBull; // "Level 0"
 inline constexpr int      kChunkLoadRadius  = 3;  // Chebyshev radius, in chunks
+inline constexpr int      kChunkAdjacentRadius = 1; // Radius loaded on the storeys above and below
 inline constexpr int      kChunkBuildBudget = 2;  // Max new chunks built per frame
+inline constexpr float    kLevelSwitchBand  = 0.6f; // Fraction of a storey climbed before the focus storey changes
 
 // ----- Rendering ------------------------------------------------------------
 inline constexpr float kFieldOfViewDeg   = 70.0f;  // Vertical FOV when walking
@@ -75,6 +77,35 @@ inline constexpr float kBobLateralAmp         = 0.035f;  // One sway per stride 
 // ----- Interaction --------------------------------------------------------------
 inline constexpr float kDoorInteractDistance = 2.2f;
 inline constexpr float kDoorSwingDuration    = 0.85f;  // Seconds for a full open/close
+inline constexpr float kTerminalOpenTime     = 0.45f;  // Seconds to lean in to / away from a screen
+
+// ----- Entities -------------------------------------------------------------------
+// The Stalker: moves only while unobserved, hunts through the dark.
+inline constexpr float kStalkerFirstSpawn    = 45.0f;  // Seconds of play before it first appears
+inline constexpr float kStalkerSpeed         = 6.8f;   // Unseen approach (faster than the player's run)
+inline constexpr float kStalkerCreepSpeed    = 1.6f;   // Closing in on the player...
+inline constexpr float kStalkerProwlDist     = 9.0f;   // ...within this distance
+inline constexpr float kStalkerDartSpeed     = 11.0f;  // Dash to cover once stared at
+inline constexpr float kStalkerLungeSpeed    = 8.5f;   // Final rush
+inline constexpr float kStalkerLungeRange    = 2.4f;
+inline constexpr float kStalkerExposureLimit = 1.8f;   // Seconds of being watched before it darts away
+inline constexpr float kStalkerDarkLevel     = 0.18f;  // Below this light level it cannot be made out...
+inline constexpr float kStalkerDarkSightDist = 7.0f;   // ...beyond this distance
+inline constexpr float kStalkerDrainRadius   = 7.5f;   // Lights within this radius sag and stutter
+// The Wanderer: blind, hunts by sound, never stops talking.
+inline constexpr float kWandererFirstSpawn   = 20.0f;
+inline constexpr float kWandererRoamSpeed    = 1.0f;
+inline constexpr float kWandererSearchSpeed  = 1.9f;
+inline constexpr float kWandererHuntSpeed    = 3.3f;   // Faster than walking, slower than running
+// Both.
+inline constexpr float kCatchDistance        = 0.85f;
+inline constexpr float kEntityRelocateDist   = 70.0f;  // Farther than this: it resurfaces nearer
+// Audible radius (m) of player-made noise; walls halve it.
+inline constexpr float kNoiseFootstepRun     = 22.0f;  // Scaled by footstep intensity
+inline constexpr float kNoiseLanding         = 18.0f;
+inline constexpr float kNoiseDoor            = 16.0f;
+inline constexpr float kNoiseTyping          = 7.0f;
+inline constexpr float kNoiseMachine         = 10.0f;
 
 } // namespace cfg
 

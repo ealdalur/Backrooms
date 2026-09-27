@@ -12,19 +12,31 @@ add_executable(${PROJECT_NAME})
 set(BACKROOMS_SOURCES
   Main.cpp
 
+  src/AI/Agent.cpp
+  src/AI/EntityDirector.cpp
+  src/AI/NavGrid.cpp
+  src/AI/Stalker.cpp
+  src/AI/Wanderer.cpp
+
   src/Audio/AudioEngine.cpp
   src/Audio/SoundBank.cpp
   src/Audio/Soundscape.cpp
+  src/Audio/SpeechSynth.cpp
 
   src/Core/Engine.cpp
   src/Core/GpuSelection.cpp
   src/Core/Input.cpp
 
+  src/Gameplay/TerminalConsole.cpp
+  src/Gameplay/TerminalText.cpp
+
   src/Math/Noise.cpp
 
   src/Physics/Physics.cpp
 
+  src/Render/BitmapFont.cpp
   src/Render/Camera.cpp
+  src/Render/EntityRenderer.cpp
   src/Render/Frustum.cpp
   src/Render/LightGrid.cpp
   src/Render/MaterialLibrary.cpp
@@ -34,29 +46,45 @@ set(BACKROOMS_SOURCES
   src/Render/Renderer.cpp
   src/Render/Shader.cpp
   src/Render/ShaderSources.cpp
+  src/Render/TerminalRenderer.cpp
   src/Render/TextOverlay.cpp
   src/Render/Texture.cpp
 
   src/World/Chunk.cpp
   src/World/ChunkManager.cpp
   src/World/LightFixture.cpp
+  src/World/Stairwell.cpp
   src/World/WorldGenerator.cpp
 
+  src/Actors/CreatureRig.cpp
   src/Actors/Door.cpp
   src/Actors/Furniture.cpp
   src/Actors/Player.cpp
+  src/Actors/Terminal.cpp
 )
 
 set(BACKROOMS_HEADERS
+  src/AI/Agent.h
+  src/AI/EntityDirector.h
+  src/AI/NavGrid.h
+  src/AI/NoiseEvent.h
+  src/AI/Perception.h
+  src/AI/Stalker.h
+  src/AI/Wanderer.h
+
   src/Audio/AudioEngine.h
   src/Audio/Dsp.h
   src/Audio/SoundBank.h
   src/Audio/Soundscape.h
+  src/Audio/SpeechSynth.h
 
   src/Core/Config.h
   src/Core/Engine.h
   src/Core/GpuSelection.h
   src/Core/Input.h
+
+  src/Gameplay/TerminalConsole.h
+  src/Gameplay/TerminalText.h
 
   src/Math/Noise.h
   src/Math/Random.h
@@ -64,7 +92,9 @@ set(BACKROOMS_HEADERS
   src/Physics/AABB.h
   src/Physics/Physics.h
 
+  src/Render/BitmapFont.h
   src/Render/Camera.h
+  src/Render/EntityRenderer.h
   src/Render/Frustum.h
   src/Render/LightGrid.h
   src/Render/MaterialLibrary.h
@@ -75,6 +105,7 @@ set(BACKROOMS_HEADERS
   src/Render/Renderer.h
   src/Render/Shader.h
   src/Render/ShaderSources.h
+  src/Render/TerminalRenderer.h
   src/Render/TextOverlay.h
   src/Render/Texture.h
 
@@ -82,12 +113,15 @@ set(BACKROOMS_HEADERS
   src/World/ChunkCoord.h
   src/World/ChunkManager.h
   src/World/LightFixture.h
+  src/World/Stairwell.h
   src/World/WorldConstants.h
   src/World/WorldGenerator.h
 
+  src/Actors/CreatureRig.h
   src/Actors/Door.h
   src/Actors/Furniture.h
   src/Actors/Player.h
+  src/Actors/Terminal.h
 )
 
 target_sources(${PROJECT_NAME} PRIVATE

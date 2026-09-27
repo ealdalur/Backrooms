@@ -53,4 +53,11 @@ void addBox(MeshData& mesh, const BoxDesc& desc);
 void addCylinder(MeshData& mesh, const glm::mat4& transform, float radius, float y0, float y1,
                  int segments, MaterialId material, bool caps = true);
 
+/// Appends an organic limb segment from `a` to `b`: a cone frustum with
+/// radii ra / rb closed by hemispherical caps (so chained segments form
+/// smooth joints). Built directly in the target space with exact normals;
+/// used for the procedurally posed creatures.
+void addLimb(MeshData& mesh, const glm::vec3& a, const glm::vec3& b, float ra, float rb, MaterialId material,
+             int sides = 10, int capRings = 3);
+
 } // namespace mesh

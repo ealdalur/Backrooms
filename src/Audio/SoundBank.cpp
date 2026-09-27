@@ -7,19 +7,27 @@
 //   * Glottal pulse source + formant band-passes for the vocal grunt.
 //   * Stick-slip impulse trains into a resonator bank for hinge creaks.
 //   * Offline low-pass + reverb baking for distant, muffled events.
+//   * Formant speech synthesis (SpeechSynth) for the Wanderer's voice, then
+//     broken up with tape wobble, dropouts, an octave-down double and drive.
+//   * Sample-and-hold bit crushing, square waves and motor models for the
+//     terminals.
 // All generation is deterministic (fixed seeds per sound and variant).
 // ---------------------------------------------------------------------------
 #include "Audio/SoundBank.h"
 
 #include "Audio/Dsp.h"
+#include "Audio/SpeechSynth.h"
 #include "Math/Noise.h"
 #include "Math/Random.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <fstream>
 #include <future>
 #include <iostream>
+#include <string>
 
 namespace {
 
@@ -737,6 +745,407 @@ std::vector<Sound> makeDistantMachinery(uint64_t seed) {
     return out;
 }
 
+// ============================================================================
+// The Wanderer
+// ============================================================================
+
+/// Resamples with a slow, irregular speed wobble (worn tape / a failing voice).
+Buffer tapeWow(const Buffer& b, float depth, float rateHz, uint64_t seed) {
+    Buffer out;
+    out.reserve(b.size() + b.size() / 10);
+    double pos = 0.0;
+    while (pos < static_cast<double>(b.size() - 1)) {
+        const size_t i = static_cast<size_t>(pos);
+        const float frac = static_cast<float>(pos - static_cast<double>(i));
+        out.push_back(b[i] + (b[i + 1] - b[i]) * frac);
+        const float t = static_cast<float>(out.size()) / kRate;
+        pos += 1.0 + depth * (0.6f * std::sin(dsp::kTwoPi * rateHz * t) + 0.4f * (noise::value1D(t * 3.0, seed) * 2.0f - 1.0f));
+    }
+    return out;
+}
+
+/// Punches short holes into a phrase: the voice keeps breaking up.
+void dropouts(Buffer& b, rnd::Rng& rng, int count) {
+    const size_t fade = samplesFor(0.004f);
+    for (int k = 0; k < count; ++k) {
+        const size_t len = samplesFor(rng.range(0.02f, 0.07f));
+        if (b.size() < len + 4 * fade) return;
+        const size_t start = static_cast<size_t>(rng.range(0.15f, 0.85f) * static_cast<float>(b.size() - len));
+        for (size_t i = 0; i < len; ++i) {
+            const float edge = std::min(1.0f, static_cast<float>(std::min(i, len - 1 - i)) / static_cast<float>(fade));
+            b[start + i] *= 1.0f - edge;
+        }
+    }
+}
+
+std::vector<Sound> makeWandererMutter(uint64_t seed) {
+    static const char* const kPhrases[] = {
+        "HH EH L P | M IY",               // help me
+        "W EH R | AA R | Y UW",           // where are you
+        "AY | K AE N | HH IY R | Y UW",   // i can hear you
+        "K AH M | B AE K",                // come back
+        "D OW N T | L IY V | M IY",       // don't leave me
+        "HH UW Z | DH EH R",              // who's there
+        "L EH T | M IY | AW T",           // let me out
+        "HH AH L OW || HH AH L OW",       // hello... hello
+        "IH T S | S OW | D AA R K",       // it's so dark
+        "S T EY | W IH DH | M IY",        // stay with me
+    };
+    std::vector<Sound> out;
+    int v = 0;
+    for (const char* phrase : kPhrases) {
+        rnd::Rng rng(rnd::hashCombine(seed, static_cast<uint64_t>(v++)));
+        speech::Voice voice;
+        voice.seed = rng.next();
+        voice.pitchStart = rng.range(78.0f, 90.0f);
+        voice.pitchEnd = voice.pitchStart * rng.range(0.72f, 0.82f);
+        voice.whisper = rng.range(0.35f, 0.75f);
+        voice.breathiness = 0.4f;
+        voice.tempo = rng.range(1.25f, 1.6f);
+        voice.tract = rng.range(0.88f, 0.95f);
+        voice.jitter = 0.035f;
+        voice.tremor = 0.6f;
+        Buffer b = tapeWow(speech::say(phrase, voice), 0.025f, rng.range(0.4f, 0.9f), rng.next());
+        dropouts(b, rng, rng.rangeInt(0, 2));
+        applyFilter(b, Biquad::lowpass(4200.0f));
+        fadeEdges(b, 0.005f, 0.08f);
+        normalize(b, 0.9f);
+        out.push_back({std::move(b), false});
+    }
+    return out;
+}
+
+std::vector<Sound> makeWandererCry(uint64_t seed) {
+    static const char* const kPhrases[] = {
+        "~HH EH L P | M IY",              // h- h- help me
+        "W EH R | AA R | Y UW",           // WHERE ARE YOU
+        "AY | F AW N D | Y UW",           // i found you
+        "AY | HH IY R | Y UW",            // i hear you
+        "~K AH M | B AE K",               // c- c- come back
+        "D OW N T | L IY V | M IY",       // don't leave me
+    };
+    std::vector<Sound> out;
+    int v = 0;
+    for (const char* phrase : kPhrases) {
+        rnd::Rng rng(rnd::hashCombine(seed, static_cast<uint64_t>(v++)));
+        speech::Voice voice;
+        voice.seed = rng.next();
+        voice.pitchStart = rng.range(92.0f, 108.0f);
+        voice.pitchEnd = voice.pitchStart * rng.range(0.7f, 0.8f);
+        voice.whisper = rng.range(0.05f, 0.2f);
+        voice.breathiness = 0.25f;
+        voice.tempo = rng.range(1.0f, 1.15f);
+        voice.tract = rng.range(0.9f, 0.96f);
+        voice.jitter = 0.05f;
+        voice.tremor = 1.0f;
+        Buffer b = speech::say(phrase, voice);
+        // A second voice an octave down, speaking in lockstep (timing does not
+        // depend on pitch): something else is talking through it.
+        speech::Voice low = voice;
+        low.pitchStart *= 0.5f;
+        low.pitchEnd *= 0.5f;
+        low.tract *= 0.9f;
+        const Buffer under = speech::say(phrase, low);
+        for (size_t i = 0; i < b.size() && i < under.size(); ++i) b[i] = b[i] + 0.65f * under[i];
+        b = tapeWow(b, 0.03f, rng.range(0.6f, 1.2f), rng.next());
+        dropouts(b, rng, rng.rangeInt(1, 3));
+        const float drive = 2.2f; // strained, overdriven
+        for (float& s : b) s = std::tanh(drive * s) / std::tanh(drive);
+        applyFilter(b, Biquad::lowpass(5000.0f));
+        fadeEdges(b, 0.005f, 0.08f);
+        normalize(b, 0.9f);
+        out.push_back({std::move(b), false});
+    }
+    return out;
+}
+
+std::vector<Sound> makeWandererStep(uint64_t seed) {
+    std::vector<Sound> out;
+    for (int v = 0; v < 4; ++v) {
+        rnd::Rng rng(rnd::hashCombine(seed, static_cast<uint64_t>(v)));
+        Noise noise(rng.next());
+        Buffer b = silence(0.55f);
+        addThump(b, 0.0f, rng.range(65.0f, 80.0f), 38.0f, 0.055f, 1.0f);                        // heel
+        addNoiseBurst(b, 0.0f, 0.002f, 0.02f, Biquad::bandpass(1100.0f, 0.9f), 0.35f, noise);   // wet skin slap
+        addNoiseBurst(b, rng.range(0.1f, 0.16f), 0.08f, 0.09f, Biquad::bandpass(rng.range(1500.0f, 2200.0f), 0.8f),
+                      0.14f, noise, 0.8f);                                                      // the dragging toes
+        applyFilter(b, Biquad::lowpass(3000.0f));
+        applyFilter(b, Biquad::highpass(35.0f));
+        fadeEdges(b, 0.0005f, 0.06f);
+        normalize(b, 0.9f);
+        out.push_back({std::move(b), false});
+    }
+    return out;
+}
+
+// ============================================================================
+// The Stalker
+// ============================================================================
+
+std::vector<Sound> makeStalkerSkitter(uint64_t seed) {
+    const Mode claw[] = {{2800, 0.004f, 1.0f}, {4600, 0.003f, 0.6f}, {7100, 0.002f, 0.35f}};
+    std::vector<Sound> out;
+    for (int v = 0; v < 4; ++v) {
+        rnd::Rng rng(rnd::hashCombine(seed, static_cast<uint64_t>(v)));
+        Noise noise(rng.next());
+        const float dur = rng.range(0.45f, 0.7f);
+        Buffer b = silence(dur + 0.1f);
+        // Four-beat gallops of claw clicks with carpet swishes.
+        for (float t = 0.0f; t < dur - 0.05f; t += rng.range(0.1f, 0.16f)) {
+            for (int k = 0; k < 4; ++k) {
+                const float at = t + static_cast<float>(k) * rng.range(0.012f, 0.028f);
+                addModes(b, at, claw, 3, rng.range(0.3f, 1.0f), 0.15f, rng);
+            }
+            addNoiseBurst(b, t, 0.01f, 0.03f, Biquad::bandpass(rng.range(2500.0f, 3500.0f), 0.8f), 0.25f, noise, 0.7f);
+        }
+        applyFilter(b, Biquad::lowpass(9000.0f));
+        applyFilter(b, Biquad::highpass(400.0f));
+        fadeEdges(b, 0.001f, 0.04f);
+        normalize(b, 0.8f);
+        out.push_back({std::move(b), false});
+    }
+    return out;
+}
+
+std::vector<Sound> makeStalkerHiss(uint64_t seed) {
+    std::vector<Sound> out;
+    for (int v = 0; v < 3; ++v) {
+        rnd::Rng rng(rnd::hashCombine(seed, static_cast<uint64_t>(v)));
+        Noise noise(rng.next());
+        const float dur = 0.7f;
+        Buffer b = silence(dur);
+        Biquad band = Biquad::bandpass(3500.0f, 2.0f);
+        const float from = rng.range(3200.0f, 4200.0f), to = rng.range(1200.0f, 1700.0f);
+        for (size_t i = 0; i < b.size(); ++i) {
+            const float t = timeOf(i);
+            if (i % 64 == 0) band.configure(Biquad::Type::Bandpass, from + (to - from) * smooth01(0.0f, dur, t), 2.0f);
+            const float env = smooth01(0.0f, 0.012f, t) * std::exp(-t / 0.22f);
+            b[i] = band.process(noise()) * env;
+        }
+        // A throaty whispered undertone.
+        speech::Voice voice;
+        voice.seed = rng.next();
+        voice.whisper = 1.0f;
+        voice.tract = 0.7f;
+        voice.tempo = 0.8f;
+        const Buffer throat = speech::say("HH AA", voice);
+        for (size_t i = 0; i < b.size() && i < throat.size(); ++i) b[i] += 0.35f * throat[i];
+        fadeEdges(b, 0.001f, 0.1f);
+        normalize(b, 0.85f);
+        out.push_back({std::move(b), false});
+    }
+    return out;
+}
+
+std::vector<Sound> makeStalkerBreath(uint64_t seed) {
+    // Two slow breaths in 4 s: a thin inhale through the teeth, then a long,
+    // wet, rattling exhale. Crossfaded into a seamless loop.
+    const float loop = 4.0f, cf = 0.5f;
+    Buffer b = silence(loop + cf);
+    Noise noise(seed);
+    Biquad in1 = Biquad::bandpass(2400.0f, 3.0f), out1 = Biquad::bandpass(700.0f, 2.0f), out2 = Biquad::bandpass(1250.0f, 4.0f);
+    for (size_t i = 0; i < b.size(); ++i) {
+        const float t = timeOf(i);
+        const float p = std::fmod(t, 2.0f);
+        const float inhale = smooth01(0.0f, 0.25f, p) * (1.0f - smooth01(0.5f, 0.75f, p));
+        const float exhale = smooth01(0.8f, 0.95f, p) * (1.0f - smooth01(1.4f, 1.95f, p));
+        const float rattle = 0.55f + 0.45f * std::sin(dsp::kTwoPi * 27.0f * t) * std::sin(dsp::kTwoPi * 3.0f * t);
+        const float n = noise();
+        b[i] = 0.5f * in1.process(n) * inhale + (out1.process(n) + 0.6f * out2.process(n)) * exhale * rattle;
+    }
+    Sound s{makeSeamless(b, cf), true};
+    applyFilter(s.samples, Biquad::highpass(120.0f));
+    normalize(s.samples, 0.8f);
+    return {s};
+}
+
+// ============================================================================
+// Dread
+// ============================================================================
+
+std::vector<Sound> makeHeartbeat(uint64_t) {
+    // Exactly one beat per second: silence at both ends makes it loop cleanly,
+    // and the playback rate sets the tempo.
+    Buffer b = silence(1.0f);
+    addThump(b, 0.02f, 62.0f, 34.0f, 0.055f, 1.0f); // lub
+    addThump(b, 0.30f, 58.0f, 36.0f, 0.045f, 0.7f); // dub
+    applyFilter(b, Biquad::lowpass(220.0f));
+    fadeEdges(b, 0.005f, 0.2f);
+    normalize(b, 0.9f);
+    return {{std::move(b), true}};
+}
+
+std::vector<Sound> makeCatchSting(uint64_t seed) {
+    std::vector<Sound> out;
+    for (int v = 0; v < 2; ++v) {
+        rnd::Rng rng(rnd::hashCombine(seed, static_cast<uint64_t>(v)));
+        Noise noise(rng.next());
+        const float dur = 2.8f;
+        Buffer b = silence(dur);
+        // A cluster of detuned, bowed-sounding saws that scream upwards.
+        const float cluster[6] = {220.0f, 233.1f, 311.1f, 329.6f, 466.2f, 493.9f};
+        float phases[6] = {};
+        for (size_t i = 0; i < b.size(); ++i) {
+            const float t = timeOf(i);
+            const float glide = 1.0f + 0.35f * smooth01(0.0f, 0.45f, t);
+            const float env = smooth01(0.0f, 0.02f, t) * std::exp(-t / 1.1f);
+            float s = 0.0f;
+            for (int k = 0; k < 6; ++k) {
+                const float vib = 1.0f + 0.012f * std::sin(dsp::kTwoPi * (5.5f + 0.4f * static_cast<float>(k)) * t);
+                phases[k] += cluster[k] * rng.range(0.998f, 1.002f) * glide * vib / kRate;
+                phases[k] -= std::floor(phases[k]);
+                s += (2.0f * phases[k] - 1.0f) * (k < 2 ? 0.8f : 0.5f);
+            }
+            b[i] = s * env * 0.25f;
+        }
+        addThump(b, 0.0f, 55.0f, 28.0f, 0.3f, 1.4f);                                        // the boom
+        addNoiseBurst(b, 0.0f, 0.003f, 0.12f, Biquad::highpass(1500.0f), 0.5f, noise);        // the crack
+        for (float& s : b) s = std::tanh(1.8f * s);
+        applyFilter(b, Biquad::lowpass(8000.0f));
+        fadeEdges(b, 0.001f, 0.3f);
+        normalize(b, 0.95f);
+        out.push_back({std::move(b), false});
+    }
+    return out;
+}
+
+// ============================================================================
+// Terminals
+// ============================================================================
+
+std::vector<Sound> makeTerminalKey(uint64_t seed) {
+    const Mode click[] = {{3200, 0.006f, 1.0f}, {5100, 0.004f, 0.6f}, {1400, 0.01f, 0.4f}};
+    std::vector<Sound> out;
+    for (int v = 0; v < 6; ++v) {
+        rnd::Rng rng(rnd::hashCombine(seed, static_cast<uint64_t>(v)));
+        Buffer b = silence(0.14f);
+        addModes(b, 0.001f, click, 3, 1.0f, 0.12f, rng);                   // switch actuates
+        addThump(b, 0.002f, rng.range(380.0f, 460.0f), 280.0f, 0.008f, 0.5f); // keycap bottoms out
+        addModes(b, rng.range(0.05f, 0.08f), click, 3, 0.4f, 0.12f, rng);  // release
+        applyFilter(b, Biquad::highpass(150.0f));
+        fadeEdges(b, 0.0005f, 0.02f);
+        normalize(b, 0.8f);
+        out.push_back({std::move(b), false});
+    }
+    return out;
+}
+
+std::vector<Sound> makeTerminalBeep(uint64_t) {
+    auto square = [](Buffer& b, float at, float len, float hz) {
+        const size_t s0 = samplesFor(at), n = samplesFor(len);
+        for (size_t i = 0; i < n && s0 + i < b.size(); ++i) {
+            const float t = timeOf(i);
+            const float edge = smooth01(0.0f, 0.002f, t) * (1.0f - smooth01(len - 0.002f, len, t));
+            b[s0 + i] += (std::sin(dsp::kTwoPi * hz * t) >= 0.0f ? 1.0f : -1.0f) * edge;
+        }
+    };
+    Buffer ok = silence(0.16f);
+    square(ok, 0.0f, 0.12f, 880.0f);
+    Buffer error = silence(0.3f);
+    square(error, 0.0f, 0.1f, 440.0f);
+    square(error, 0.16f, 0.1f, 440.0f);
+    std::vector<Sound> out;
+    for (Buffer* b : {&ok, &error}) {
+        applyFilter(*b, Biquad::lowpass(5000.0f));
+        normalize(*b, 0.5f);
+        out.push_back({std::move(*b), false});
+    }
+    return out;
+}
+
+std::vector<Sound> makeTerminalGlitch(uint64_t seed) {
+    std::vector<Sound> out;
+    for (int v = 0; v < 3; ++v) {
+        rnd::Rng rng(rnd::hashCombine(seed, static_cast<uint64_t>(v)));
+        Noise noise(rng.next());
+        Buffer b = silence(rng.range(0.35f, 0.6f));
+        // Sample-and-hold noise at a jumping "sample rate", gated in stutters,
+        // with a stuck tone underneath.
+        size_t hold = 8, held = 0;
+        float value = 0.0f, gate = 1.0f;
+        const float tone = rng.range(900.0f, 2800.0f);
+        for (size_t i = 0; i < b.size(); ++i) {
+            if (i % samplesFor(0.02f) == 0) {
+                hold = static_cast<size_t>(rng.rangeInt(3, 40));
+                gate = rng.chance(0.7f) ? 1.0f : 0.0f;
+            }
+            if (held++ >= hold) {
+                held = 0;
+                value = std::round(noise() * 4.0f) / 4.0f; // 3-bit
+            }
+            b[i] = gate * (0.7f * value + 0.25f * (std::sin(dsp::kTwoPi * tone * timeOf(i)) >= 0.0f ? 1.0f : -1.0f));
+        }
+        applyFilter(b, Biquad::lowpass(7000.0f));
+        fadeEdges(b, 0.002f, 0.05f);
+        normalize(b, 0.8f);
+        out.push_back({std::move(b), false});
+    }
+    return out;
+}
+
+std::vector<Sound> makeTerminalBoot(uint64_t seed) {
+    rnd::Rng rng(seed);
+    Noise noise(rng.next());
+    const float dur = 3.0f;
+    Buffer b = silence(dur);
+    // POST beep.
+    for (size_t i = 0; i < samplesFor(0.12f); ++i) {
+        const float t = timeOf(i);
+        b[samplesFor(0.05f) + i] += 0.5f * (std::sin(dsp::kTwoPi * 1000.0f * t) >= 0.0f ? 1.0f : -1.0f) *
+                                     smooth01(0.0f, 0.002f, t) * (1.0f - smooth01(0.118f, 0.12f, t));
+    }
+    // Spindle motor spinning up to 5400 rpm (90 Hz) with a rising bearing whine.
+    float phase = 0.0f, whine = 0.0f;
+    Biquad air = Biquad::lowpass(600.0f);
+    for (size_t i = 0; i < b.size(); ++i) {
+        const float t = timeOf(i);
+        const float spin = smooth01(0.3f, 2.2f, t);
+        phase += (15.0f + 75.0f * spin) / kRate;
+        whine += (400.0f + 3200.0f * spin) / kRate;
+        const float motor = std::sin(dsp::kTwoPi * phase) + 0.4f * std::sin(dsp::kTwoPi * 2.0f * phase);
+        b[i] += smooth01(0.25f, 0.5f, t) * (0.25f * motor + 0.05f * std::sin(dsp::kTwoPi * whine) + 0.2f * air.process(noise()) * spin);
+    }
+    // Head seeks: dry mechanical ticks.
+    const Mode seek[] = {{1800, 0.006f, 1.0f}, {3100, 0.004f, 0.5f}};
+    for (int k = 0; k < 30; ++k) addModes(b, rng.range(1.3f, 2.8f), seek, 2, rng.range(0.2f, 0.6f), 0.1f, rng);
+    applyFilter(b, Biquad::highpass(40.0f));
+    fadeEdges(b, 0.002f, 0.2f);
+    normalize(b, 0.8f);
+    return {{std::move(b), false}};
+}
+
+std::vector<Sound> makeTerminalOff(uint64_t seed) {
+    Noise noise(seed);
+    Buffer b = silence(0.8f);
+    float phase = 0.0f;
+    for (size_t i = 0; i < b.size(); ++i) {
+        const float t = timeOf(i);
+        phase += (9000.0f * std::exp(-t / 0.08f) + 60.0f) / kRate; // the flyback collapsing
+        b[i] = 0.3f * std::sin(dsp::kTwoPi * phase) * std::exp(-t / 0.25f);
+    }
+    addThump(b, 0.0f, 90.0f, 45.0f, 0.05f, 0.8f); // relay
+    addNoiseBurst(b, 0.0f, 0.001f, 0.05f, Biquad::highpass(3000.0f), 0.3f, noise); // static discharge
+    fadeEdges(b, 0.0005f, 0.1f);
+    normalize(b, 0.8f);
+    return {{std::move(b), false}};
+}
+
+std::vector<Sound> makeCrtHum(uint64_t seed) {
+    // 2 s holds whole cycles of 60 Hz and of the 15.734 kHz line frequency.
+    const float loop = 2.0f, cf = 0.25f;
+    Buffer b = silence(loop + cf);
+    Noise noise(seed);
+    Biquad staticHp = Biquad::highpass(4000.0f);
+    for (size_t i = 0; i < b.size(); ++i) {
+        const float t = timeOf(i);
+        b[i] = 0.12f * std::sin(dsp::kTwoPi * 15734.0f * t) + 0.5f * std::sin(dsp::kTwoPi * 60.0f * t) +
+               0.2f * std::sin(dsp::kTwoPi * 120.0f * t) + 0.04f * staticHp.process(noise());
+    }
+    Sound s{makeSeamless(b, cf), true};
+    normalize(s.samples, 0.6f);
+    return {s};
+}
+
 } // namespace
 
 void SoundBank::build() {
@@ -748,6 +1157,10 @@ void SoundBank::build() {
         makeFootCarpet,   makeFootHard,    makeLandCarpet,  makeLandHard,  makeGrunt,
         makeDoorHandle,   makeDoorCreak,   makeDoorShut,
         makeDistantBang,  makeDistantPounding, makeDistantFootsteps, makeDistantMachinery,
+        makeWandererMutter, makeWandererCry, makeWandererStep,
+        makeStalkerSkitter, makeStalkerHiss, makeStalkerBreath,
+        makeHeartbeat,    makeCatchSting,
+        makeTerminalKey,  makeTerminalBeep, makeTerminalGlitch, makeTerminalBoot, makeTerminalOff, makeCrtHum,
     };
 
     // Every sound is independent: synthesise them all concurrently.
@@ -766,6 +1179,58 @@ void SoundBank::build() {
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
     std::cout << "[Audio] Synthesised " << kSoundIdCount << " sounds (" << static_cast<int>(totalSamples / kRate)
               << " s of audio) in " << static_cast<int>(ms) << " ms\n";
+}
+
+void SoundBank::writeWavFiles(const std::string& directory) const {
+    static const char* const kNames[] = {
+        "hum", "flicker_buzz", "drone", "foot_carpet", "foot_hard", "land_carpet", "land_hard", "grunt",
+        "door_handle", "door_creak", "door_shut", "distant_bang", "distant_pounding", "distant_footsteps",
+        "distant_machinery", "wanderer_mutter", "wanderer_cry", "wanderer_step", "stalker_skitter", "stalker_hiss",
+        "stalker_breath", "heartbeat", "catch_sting", "terminal_key", "terminal_beep", "terminal_glitch",
+        "terminal_boot", "terminal_off", "crt_hum",
+    };
+    static_assert(sizeof(kNames) / sizeof(kNames[0]) == kSoundIdCount, "one file name per SoundId");
+    auto put16 = [](std::ofstream& f, uint16_t v) { f.put(static_cast<char>(v & 0xFF)).put(static_cast<char>(v >> 8)); };
+    auto put32 = [](std::ofstream& f, uint32_t v) {
+        for (int i = 0; i < 4; ++i) f.put(static_cast<char>((v >> (8 * i)) & 0xFF));
+    };
+    for (int id = 0; id < kSoundIdCount; ++id) {
+        const std::vector<Sound>& variants = m_sounds[static_cast<size_t>(id)];
+        for (size_t v = 0; v < variants.size(); ++v) {
+            const Buffer& b = variants[v].samples;
+            double sum = 0.0;
+            float peak = 0.0f;
+            bool finite = true;
+            for (float s : b) {
+                finite = finite && std::isfinite(s);
+                peak = std::max(peak, std::fabs(s));
+                sum += static_cast<double>(s) * s;
+            }
+            const std::string path = directory + "/" + kNames[id] + "_" + std::to_string(v) + ".wav";
+            std::ofstream f(path, std::ios::binary);
+            if (!f) {
+                std::cerr << "[Audio] Cannot write " << path << "\n";
+                return;
+            }
+            const uint32_t bytes = static_cast<uint32_t>(b.size() * 2);
+            f.write("RIFF", 4);
+            put32(f, 36 + bytes);
+            f.write("WAVEfmt ", 8);
+            put32(f, 16);
+            put16(f, 1);                                    // PCM
+            put16(f, 1);                                    // mono
+            put32(f, static_cast<uint32_t>(dsp::kSampleRate));
+            put32(f, static_cast<uint32_t>(dsp::kSampleRate) * 2);
+            put16(f, 2);
+            put16(f, 16);
+            f.write("data", 4);
+            put32(f, bytes);
+            for (float s : b) put16(f, static_cast<uint16_t>(static_cast<int16_t>(std::clamp(s, -1.0f, 1.0f) * 32767.0f)));
+            std::printf("[Audio] %-24s %5.2fs  peak %.2f  rms %.3f%s\n", (std::string(kNames[id]) + "_" + std::to_string(v)).c_str(),
+                        static_cast<float>(b.size()) / kRate, peak, std::sqrt(sum / std::max<size_t>(1, b.size())),
+                        finite ? "" : "  NON-FINITE SAMPLES");
+        }
+    }
 }
 
 const Sound& SoundBank::get(SoundId id, int variant) const {

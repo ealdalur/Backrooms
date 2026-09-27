@@ -89,11 +89,11 @@ MeshData Door::buildMesh() {
     return m;
 }
 
-void Door::toggle(const glm::vec3& playerPos) {
+void Door::toggle(const glm::vec3& userPos) {
     if (m_progress <= 0.0f && !m_opening) {
-        // Swing away from the player: pick the side the player is NOT on.
+        // Swing away from the user: pick the side they are NOT on.
         const glm::vec3 closedCenter = m_hinge + m_axis * (world::kDoorPanelWidth * 0.5f);
-        const float facing = glm::dot(m_normal, closedCenter - playerPos);
+        const float facing = glm::dot(m_normal, closedCenter - userPos);
         m_side = facing >= 0.0f ? 1 : -1;
         m_opening = true;
         m_events |= kEventUnlatch | kEventSwing;

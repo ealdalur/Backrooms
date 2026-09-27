@@ -3,10 +3,11 @@
 // ---------------------------------------------------------------------------
 #include "Render/TextOverlay.h"
 
+#include "Render/BitmapFont.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <vector>
 
 namespace {
 
@@ -30,53 +31,6 @@ out vec4 oColor;
 void main() { oColor = vColor; }
 )GLSL";
 
-constexpr int kGlyphW = 5;
-constexpr int kGlyphH = 7;
-
-/// 5x7 glyphs, one byte per row, bit 4 = leftmost column.
-struct Glyph {
-    char    c;
-    uint8_t rows[kGlyphH];
-};
-const Glyph kFont[] = {
-    {'0', {0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E}},
-    {'1', {0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E}},
-    {'2', {0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F}},
-    {'3', {0x1F, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0E}},
-    {'4', {0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02}},
-    {'5', {0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E}},
-    {'6', {0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E}},
-    {'7', {0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08}},
-    {'8', {0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E}},
-    {'9', {0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C}},
-    {'F', {0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x10}},
-    {'P', {0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10}},
-    {'S', {0x0F, 0x10, 0x10, 0x0E, 0x01, 0x01, 0x1E}},
-    {'m', {0x00, 0x00, 0x1A, 0x15, 0x15, 0x11, 0x11}},
-    {'s', {0x00, 0x00, 0x0E, 0x10, 0x0E, 0x01, 0x1E}},
-    {'.', {0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x0C}},
-    {'-', {0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00}},
-};
-
-/// Glyph bitmap for a character; unknown characters (and space) are blank.
-const uint8_t* glyphRows(char c) {
-    for (const Glyph& g : kFont) {
-        if (g.c == c) return g.rows;
-    }
-    return nullptr;
-}
-
-struct OverlayVertex {
-    float x, y;
-    float r, g, b, a;
-};
-
-void pushRect(std::vector<OverlayVertex>& v, float x0, float y0, float x1, float y1, float r, float g, float b, float a) {
-    const OverlayVertex q[6] = {{x0, y0, r, g, b, a}, {x1, y0, r, g, b, a}, {x1, y1, r, g, b, a},
-                                {x0, y0, r, g, b, a}, {x1, y1, r, g, b, a}, {x0, y1, r, g, b, a}};
-    v.insert(v.end(), q, q + 6);
-}
-
 } // namespace
 
 TextOverlay::~TextOverlay() {
@@ -91,78 +45,86 @@ bool TextOverlay::init() {
     glBindVertexArray(m_vao);
     glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(OverlayVertex), reinterpret_cast<void*>(0));
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void*>(0));
     glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(OverlayVertex),
-                          reinterpret_cast<void*>(2 * sizeof(float)));
+    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void*>(2 * sizeof(float)));
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     return true;
 }
 
-void TextOverlay::rebuild(const std::string& text, int width, int height) {
-    // Integer pixel scale: 1x at 1080p, 2x at 2160p, never below 1x (the
-    // smallest size at which the 5x7 font stays crisp).
-    const float s = static_cast<float>(std::max(1, static_cast<int>(std::lround(height / 1080.0))));
-    const float advance = (kGlyphW + 1) * s;
-    const float margin = 10.0f * s;
-    const float pad = 3.0f * s;
+void TextOverlay::begin(int width, int height) {
+    m_width = std::max(1, width);
+    m_height = std::max(1, height);
+    m_scale = static_cast<float>(std::max(1, static_cast<int>(std::lround(m_height / 1080.0))));
+    m_vertices.clear();
+}
 
+void TextOverlay::pushRect(float x0, float y0, float x1, float y1, const glm::vec4& c) {
+    const Vertex q[6] = {{x0, y0, c.r, c.g, c.b, c.a}, {x1, y0, c.r, c.g, c.b, c.a}, {x1, y1, c.r, c.g, c.b, c.a},
+                         {x0, y0, c.r, c.g, c.b, c.a}, {x1, y1, c.r, c.g, c.b, c.a}, {x0, y1, c.r, c.g, c.b, c.a}};
+    m_vertices.insert(m_vertices.end(), q, q + 6);
+}
+
+void TextOverlay::text(const std::string& text, float x, float y, Align align, float sizeMul, const glm::vec4& color,
+                       bool backing) {
+    if (text.empty() || color.a <= 0.0f) return;
+    const float s = std::max(1.0f, std::round(m_scale * sizeMul));
+    const float advance = (font::kGlyphW + 1) * s;
     const float textW = static_cast<float>(text.size()) * advance - s;
-    const float x0 = static_cast<float>(width) - margin - textW;
-    const float y0 = margin;
+    float x0 = x;
+    if (align == Align::Center) x0 = std::round(x - textW * 0.5f);
+    else if (align == Align::Right) x0 = x - textW;
+    const float y0 = std::round(y);
 
-    std::vector<OverlayVertex> verts;
-    verts.reserve(text.size() * kGlyphW * kGlyphH * 12 + 6);
-    pushRect(verts, x0 - pad, y0 - pad, x0 + textW + pad, y0 + kGlyphH * s + pad, 0.0f, 0.0f, 0.0f, 0.45f);
+    if (backing) {
+        const float pad = 3.0f * s;
+        pushRect(x0 - pad, y0 - pad, x0 + textW + pad, y0 + font::kGlyphH * s + pad, glm::vec4(0.0f, 0.0f, 0.0f, 0.45f * color.a));
+    }
 
     // Two passes: 1-pixel drop shadow, then the text itself.
     for (int pass = 0; pass < 2; ++pass) {
         const float off = pass == 0 ? s : 0.0f;
-        const float shade = pass == 0 ? 0.0f : 1.0f;
+        const glm::vec4 c = pass == 0 ? glm::vec4(0.0f, 0.0f, 0.0f, color.a * 0.8f) : color;
         for (size_t i = 0; i < text.size(); ++i) {
-            const uint8_t* rows = glyphRows(text[i]);
+            const uint8_t* rows = font::glyph(text[i]);
             if (!rows) continue;
             const float gx = x0 + static_cast<float>(i) * advance + off;
-            for (int row = 0; row < kGlyphH; ++row) {
-                for (int col = 0; col < kGlyphW; ++col) {
+            for (int row = 0; row < font::kGlyphH; ++row) {
+                for (int col = 0; col < font::kGlyphW; ++col) {
                     if (!(rows[row] & (0x10 >> col))) continue;
                     const float px = gx + static_cast<float>(col) * s;
                     const float py = y0 + static_cast<float>(row) * s + off;
-                    pushRect(verts, px, py, px + s, py + s, shade, shade, shade * 0.92f, 0.9f);
+                    pushRect(px, py, px + s, py + s, c);
                 }
             }
         }
     }
-
-    glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
-    glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(verts.size() * sizeof(OverlayVertex)), verts.data(),
-                 GL_DYNAMIC_DRAW);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-    m_vertexCount = static_cast<GLsizei>(verts.size());
-    m_cachedText = text;
-    m_cachedWidth = width;
-    m_cachedHeight = height;
 }
 
-void TextOverlay::drawTopRight(const std::string& text, int width, int height) {
-    if (!m_vao || text.empty()) return;
-    if (text != m_cachedText || width != m_cachedWidth || height != m_cachedHeight) rebuild(text, width, height);
+void TextOverlay::flush() {
+    if (!m_vao || m_vertices.empty()) return;
+
+    glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
+    glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(m_vertices.size() * sizeof(Vertex)), m_vertices.data(),
+                 GL_STREAM_DRAW);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glViewport(0, 0, width, height);
+    glViewport(0, 0, m_width, m_height);
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_CULL_FACE);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     m_shader.use();
-    m_shader.set("uScreen", glm::vec2(static_cast<float>(width), static_cast<float>(height)));
+    m_shader.set("uScreen", glm::vec2(static_cast<float>(m_width), static_cast<float>(m_height)));
     glBindVertexArray(m_vao);
-    glDrawArrays(GL_TRIANGLES, 0, m_vertexCount);
+    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(m_vertices.size()));
     glBindVertexArray(0);
 
     glDisable(GL_BLEND);
     glEnable(GL_CULL_FACE);
     glEnable(GL_DEPTH_TEST);
+    m_vertices.clear();
 }

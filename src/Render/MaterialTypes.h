@@ -18,8 +18,15 @@ enum class MaterialId : uint8_t {
     LightPanel,    ///< Fluorescent troffer diffuser (emissive).
     DarkPlastic,   ///< Black/dark rubber & plastic parts.
     Fabric,        ///< Woven office upholstery (chairs, cubicle partitions).
+    Concrete,      ///< Bare cast concrete (stairwell flights, slab edges).
+    BeigePlastic,  ///< Sun-yellowed ABS of a 1980s computer case.
+    CrtScreen,     ///< Curved CRT glass; the shader draws live scrolling text on it.
+    Flesh,         ///< Pale, clammy, veined skin (the Wanderer).
     Count
 };
+
+/// Upper bound baked into the world shader's material parameter array.
+inline constexpr int kMaxMaterials = 16;
 
 inline constexpr int kMaterialCount = static_cast<int>(MaterialId::Count);
 
@@ -47,7 +54,12 @@ inline const MaterialInfo& materialInfo(MaterialId id) {
         {"LightPanel",    1.00f, 0.30f,  32.0f, 0.0008f, 7.5f},
         {"DarkPlastic",   0.50f, 0.30f,  28.0f, 0.0006f, 0.0f},
         {"Fabric",        0.40f, 0.04f,   8.0f, 0.0012f, 0.0f},
+        {"Concrete",      2.50f, 0.08f,  10.0f, 0.0025f, 0.0f},
+        {"BeigePlastic",  0.50f, 0.30f,  24.0f, 0.0004f, 0.0f},
+        {"CrtScreen",     1.00f, 0.90f, 120.0f, 0.0000f, 2.6f},
+        {"Flesh",         0.50f, 0.35f,  20.0f, 0.0015f, 0.0f},
     };
+    static_assert(kMaterialCount <= kMaxMaterials, "raise kMaxMaterials and the shader array");
     return kTable[static_cast<int>(id)];
 }
 

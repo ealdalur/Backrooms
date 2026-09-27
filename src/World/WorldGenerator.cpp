@@ -6,11 +6,14 @@
 #include "Math/Random.h"
 #include "Render/MeshBuilder.h"
 
+#include <glm/gtc/matrix_transform.hpp>
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <numeric>
 #include <vector>
 
+using world::CellRole;
 using world::EdgeAxis;
 using world::EdgeType;
 
@@ -25,6 +28,9 @@ constexpr uint64_t kSaltPillar        = 0x9111'0005ull;
 constexpr uint64_t kSaltDoor          = 0xD00B'0006ull;
 constexpr uint64_t kSaltLights        = 0x7167'0007ull;
 constexpr uint64_t kSaltFurniture     = 0xF0E1'0008ull;
+constexpr uint64_t kSaltLevel         = 0x1E7E'0009ull;
+constexpr uint64_t kSaltStairwell     = 0x57A1'000Aull;
+constexpr uint64_t kSaltTerminal      = 0x7E41'000Bull;
 
 constexpr float S  = world::kCellSize;
 constexpr float H  = world::kCeilingHeight;
@@ -78,14 +84,31 @@ void addSolid(ChunkBlueprint& bp, const glm::vec3& origin, const AABB& box, Mate
     if (collide) bp.colliders.push_back(box);
 }
 
+/// Splits rectangle `r` (x0, z0, x1, z1) around an optional hole into up to
+/// four rectangles that cover r minus the hole.
+std::vector<glm::vec4> subtractHole(const glm::vec4& r, const std::optional<glm::vec4>& hole) {
+    if (!hole) return {r};
+    const glm::vec4 h(std::max(hole->x, r.x), std::max(hole->y, r.y), std::min(hole->z, r.z), std::min(hole->w, r.w));
+    if (h.x >= h.z || h.y >= h.w) return {r};
+    std::vector<glm::vec4> out;
+    if (h.y > r.y) out.emplace_back(r.x, r.y, r.z, h.y); // south strip
+    if (h.w < r.w) out.emplace_back(r.x, h.w, r.z, r.w); // north strip
+    if (h.x > r.x) out.emplace_back(r.x, h.y, h.x, h.w); // west piece
+    if (h.z < r.z) out.emplace_back(h.z, h.y, r.z, h.w); // east piece
+    return out;
+}
+
 /// Geometry helper describing one edge in world space.
 struct EdgeFrame {
     EdgeAxis  axis;
     glm::vec2 start; ///< World x/z of the edge's first vertex.
+    float     baseY; ///< Floor height of the storey.
 
-    /// Box spanning [s0, s1] along the edge, [y0, y1] vertically and
+    /// Box spanning [s0, s1] along the edge, [y0, y1] above the floor and
     /// +-halfDepth across it.
     AABB box(float s0, float s1, float y0, float y1, float halfDepth) const {
+        y0 += baseY;
+        y1 += baseY;
         if (axis == EdgeAxis::South) { // runs along +X at z = start.y
             return {glm::vec3(start.x + s0, y0, start.y - halfDepth), glm::vec3(start.x + s1, y1, start.y + halfDepth)};
         }
@@ -96,7 +119,7 @@ struct EdgeFrame {
     uint8_t startCap() const { return axis == EdgeAxis::South ? mesh::FaceNegX : mesh::FaceNegZ; }
     uint8_t endCap() const { return axis == EdgeAxis::South ? mesh::FacePosX : mesh::FacePosZ; }
     glm::vec3 alongDir() const { return axis == EdgeAxis::South ? glm::vec3(1, 0, 0) : glm::vec3(0, 0, 1); }
-    glm::vec3 point(float s) const { return glm::vec3(start.x, 0.0f, start.y) + alongDir() * s; }
+    glm::vec3 point(float s) const { return glm::vec3(start.x, baseY, start.y) + alongDir() * s; }
 };
 
 /// Whether light can pass an edge at position `along` (0..cell size).
@@ -114,8 +137,30 @@ bool edgeBlocksLight(EdgeType type, float along) {
 
 WorldGenerator::WorldGenerator(uint64_t worldSeed) : m_seed(worldSeed) {}
 
+uint64_t WorldGenerator::levelSeed(int level) const {
+    if (level == 0) return m_seed;
+    return rnd::hashCombine(rnd::splitmix64(m_seed ^ kSaltLevel), static_cast<uint64_t>(static_cast<uint32_t>(level)));
+}
+
 uint64_t WorldGenerator::chunkSeed(const ChunkCoord& c) const {
-    return rnd::hashCoords(m_seed, c.x, c.z, kSaltChunk);
+    return rnd::hashCoords(levelSeed(c.level), c.x, c.z, kSaltChunk);
+}
+
+std::optional<stairs::Placement> WorldGenerator::stairwell(int lowerLevel, int cx, int cz) const {
+    rnd::Rng rng(rnd::hashCombine(rnd::hashCoords(m_seed, cx, cz, kSaltStairwell),
+                                  static_cast<uint64_t>(static_cast<uint32_t>(lowerLevel))));
+    if (!rng.chance(world::kStairwellChance)) return std::nullopt;
+    stairs::Placement p;
+    // Stairwells rising from odd and even storeys use different columns, so
+    // one storey's "up" and "down" stairwells can never share a cell. Rows
+    // and columns 1..3 keep the cell and its entrance neighbour inside the
+    // chunk, away from the chunk-boundary edges.
+    p.lx = (lowerLevel & 1) ? 3 : 1;
+    p.lz = rng.rangeInt(1, 3);
+    p.rotation = rng.rangeInt(0, 3);
+    p.lowerEntrance = rng.chance(0.6f) ? EdgeType::Door : EdgeType::Archway;
+    p.upperEntrance = rng.chance(0.6f) ? EdgeType::Door : EdgeType::Archway;
+    return p;
 }
 
 // ----- Layout -----------------------------------------------------------------
@@ -134,14 +179,34 @@ WorldGenerator::ChunkLayout WorldGenerator::buildLayout(const ChunkCoord& c) con
     ChunkLayout L;
     L.west.fill(EdgeType::Wall);
     L.south.fill(EdgeType::Wall);
+    L.roles.fill(CellRole::Room);
 
-    rnd::Rng rng(rnd::hashCoords(m_seed, c.x, c.z, kSaltLayout));
+    auto idx = [](int lx, int lz) { return lz * kN + lx; };
+
+    // Stairwell cells on this storey: the bottom of one rising from here and
+    // the top of one arriving from below.
+    struct Special {
+        int      cell;
+        int      side;
+        EdgeType entrance;
+    };
+    std::vector<Special> specials;
+    if (const auto up = stairwell(c.level, c.x, c.z)) {
+        L.roles[static_cast<size_t>(idx(up->lx, up->lz))] = CellRole::StairsLower;
+        specials.push_back({idx(up->lx, up->lz), stairs::entranceSide(up->rotation), up->lowerEntrance});
+    }
+    if (const auto down = stairwell(c.level - 1, c.x, c.z)) {
+        L.roles[static_cast<size_t>(idx(down->lx, down->lz))] = CellRole::StairsUpper;
+        specials.push_back({idx(down->lx, down->lz), stairs::entranceSide(down->rotation), down->upperEntrance});
+    }
+    auto isSpecial = [&L](int cell) { return L.roles[static_cast<size_t>(cell)] != CellRole::Room; };
+
+    const uint64_t seed = levelSeed(c.level);
+    rnd::Rng rng(rnd::hashCoords(seed, c.x, c.z, kSaltLayout));
     // Per-chunk character: from maze-like corridors to cavernous open halls.
     const float openness = rng.range(0.20f, 0.85f);
     const float archBias = rng.range(0.15f, 0.40f);
     const float doorBias = rng.range(0.10f, 0.30f);
-
-    auto idx = [](int lx, int lz) { return lz * kN + lx; };
 
     // Interior edges: randomised Kruskal guarantees a spanning tree of
     // passable edges; the remaining edges open up with probability `openness`.
@@ -164,6 +229,9 @@ WorldGenerator::ChunkLayout WorldGenerator::buildLayout(const ChunkCoord& c) con
     }
     DisjointSet sets(kN * kN);
     for (const Candidate& e : edges) {
+        // Stairwell cells stay out of the tree: removing a cell that is not on
+        // the chunk border leaves the rest of the grid connected.
+        if (isSpecial(e.a) || isSpecial(e.b)) continue;
         const bool treeEdge = sets.unite(e.a, e.b);
         const EdgeType t = (treeEdge || rng.chance(openness)) ? pickPassable(rng, doorBias, archBias) : EdgeType::Wall;
         (e.west ? L.west : L.south)[static_cast<size_t>(idx(e.lx, e.lz))] = t;
@@ -172,7 +240,7 @@ WorldGenerator::ChunkLayout WorldGenerator::buildLayout(const ChunkCoord& c) con
     // Boundary edges (owned by this chunk: its west and south borders). Each
     // border has one guaranteed passable edge so neighbouring chunks connect.
     {
-        rnd::Rng b(rnd::hashCoords(m_seed, c.x, c.z, kSaltWestBoundary));
+        rnd::Rng b(rnd::hashCoords(seed, c.x, c.z, kSaltWestBoundary));
         const int guaranteed = b.rangeInt(0, kN - 1);
         for (int lz = 0; lz < kN; ++lz) {
             const bool open = lz == guaranteed || b.chance(0.5f);
@@ -180,18 +248,27 @@ WorldGenerator::ChunkLayout WorldGenerator::buildLayout(const ChunkCoord& c) con
         }
     }
     {
-        rnd::Rng b(rnd::hashCoords(m_seed, c.x, c.z, kSaltSouthBoundary));
+        rnd::Rng b(rnd::hashCoords(seed, c.x, c.z, kSaltSouthBoundary));
         const int guaranteed = b.rangeInt(0, kN - 1);
         for (int lx = 0; lx < kN; ++lx) {
             const bool open = lx == guaranteed || b.chance(0.5f);
             L.south[static_cast<size_t>(idx(lx, 0))] = open ? pickPassable(b, 0.2f, 0.3f) : EdgeType::Wall;
         }
     }
+
+    // Stairwells: walled on every side but the entrance, which makes each a
+    // leaf hanging off its (connected) neighbour.
+    for (const Special& s : specials) {
+        const int lx = s.cell % kN, lz = s.cell / kN;
+        EdgeType* sides[4] = {&L.west[static_cast<size_t>(idx(lx, lz))], &L.west[static_cast<size_t>(idx(lx + 1, lz))],
+                              &L.south[static_cast<size_t>(idx(lx, lz))], &L.south[static_cast<size_t>(idx(lx, lz + 1))]};
+        for (int i = 0; i < 4; ++i) *sides[i] = i == s.side ? s.entrance : EdgeType::Wall;
+    }
     return L;
 }
 
-EdgeType WorldGenerator::edge(int gx, int gz, EdgeAxis axis) const {
-    const ChunkCoord c{world::floorDiv(gx, kN), world::floorDiv(gz, kN)};
+EdgeType WorldGenerator::edge(int level, int gx, int gz, EdgeAxis axis) const {
+    const ChunkCoord c{world::floorDiv(gx, kN), world::floorDiv(gz, kN), level};
     const int lx = world::floorMod(gx, kN);
     const int lz = world::floorMod(gz, kN);
     const ChunkLayout& L = layout(c);
@@ -199,19 +276,24 @@ EdgeType WorldGenerator::edge(int gx, int gz, EdgeAxis axis) const {
     return axis == EdgeAxis::West ? L.west[i] : L.south[i];
 }
 
-bool WorldGenerator::vertexHasWall(int gx, int gz) const {
-    return edge(gx, gz, EdgeAxis::South) != EdgeType::Open ||     // +X
-           edge(gx - 1, gz, EdgeAxis::South) != EdgeType::Open || // -X
-           edge(gx, gz, EdgeAxis::West) != EdgeType::Open ||      // +Z
-           edge(gx, gz - 1, EdgeAxis::West) != EdgeType::Open;    // -Z
+CellRole WorldGenerator::cellRole(int level, int gx, int gz) const {
+    const ChunkCoord c{world::floorDiv(gx, kN), world::floorDiv(gz, kN), level};
+    return layout(c).roles[static_cast<size_t>(world::floorMod(gz, kN) * kN + world::floorMod(gx, kN))];
 }
 
-bool WorldGenerator::vertexHasPillar(int gx, int gz) const {
-    if (vertexHasWall(gx, gz)) return false;
-    return rnd::toUnit(rnd::hashCoords(m_seed, gx, gz, kSaltPillar)) < world::kPillarChance;
+bool WorldGenerator::vertexHasWall(int level, int gx, int gz) const {
+    return edge(level, gx, gz, EdgeAxis::South) != EdgeType::Open ||     // +X
+           edge(level, gx - 1, gz, EdgeAxis::South) != EdgeType::Open || // -X
+           edge(level, gx, gz, EdgeAxis::West) != EdgeType::Open ||      // +Z
+           edge(level, gx, gz - 1, EdgeAxis::West) != EdgeType::Open;    // -Z
 }
 
-bool WorldGenerator::isLightBlocked(const glm::vec2& a, const glm::vec2& b) const {
+bool WorldGenerator::vertexHasPillar(int level, int gx, int gz) const {
+    if (vertexHasWall(level, gx, gz)) return false;
+    return rnd::toUnit(rnd::hashCoords(levelSeed(level), gx, gz, kSaltPillar)) < world::kPillarChance;
+}
+
+bool WorldGenerator::isLightBlocked(int level, const glm::vec2& a, const glm::vec2& b) const {
     // Crossings of vertical grid lines x = k*S (west edges).
     if (a.x != b.x) {
         const float lo = std::min(a.x, b.x), hi = std::max(a.x, b.x);
@@ -221,7 +303,7 @@ bool WorldGenerator::isLightBlocked(const glm::vec2& a, const glm::vec2& b) cons
             const float t = (x - a.x) / (b.x - a.x);
             const float z = a.y + t * (b.y - a.y);
             const int gz = static_cast<int>(std::floor(z / S));
-            if (edgeBlocksLight(edge(k, gz, EdgeAxis::West), z - static_cast<float>(gz) * S)) return true;
+            if (edgeBlocksLight(edge(level, k, gz, EdgeAxis::West), z - static_cast<float>(gz) * S)) return true;
         }
     }
     // Crossings of horizontal grid lines z = k*S (south edges).
@@ -233,7 +315,7 @@ bool WorldGenerator::isLightBlocked(const glm::vec2& a, const glm::vec2& b) cons
             const float t = (z - a.y) / (b.y - a.y);
             const float x = a.x + t * (b.x - a.x);
             const int gx = static_cast<int>(std::floor(x / S));
-            if (edgeBlocksLight(edge(gx, k, EdgeAxis::South), x - static_cast<float>(gx) * S)) return true;
+            if (edgeBlocksLight(edge(level, gx, k, EdgeAxis::South), x - static_cast<float>(gx) * S)) return true;
         }
     }
     return false;
@@ -247,7 +329,7 @@ ChunkBlueprint WorldGenerator::generate(const ChunkCoord& c) const {
     ChunkBlueprint bp;
     bp.coord = c;
     bp.seed = chunkSeed(c);
-    const glm::vec3 origin(c.originX(), 0.0f, c.originZ());
+    const glm::vec3 origin(c.originX(), c.originY(), c.originZ());
 
     buildShell(bp, origin);
     for (int lz = 0; lz < kN; ++lz) {
@@ -259,30 +341,56 @@ ChunkBlueprint WorldGenerator::generate(const ChunkCoord& c) const {
             buildVertex(bp, origin, gx, gz);
         }
     }
+    // The stair itself belongs to the storey it rises from.
+    if (const auto up = stairwell(c.level, c.x, c.z)) {
+        stairs::build(bp.staticMesh, bp.colliders, c.x * kN + up->lx, c.z * kN + up->lz, c.level, up->rotation);
+    }
     placeLights(bp, origin);
     placeFurniture(bp, origin);
 
-    // Bounds include a margin for doors swinging into neighbouring chunks.
-    bp.bounds = AABB(origin + glm::vec3(-1.0f, 0.0f, -1.0f),
-                     origin + glm::vec3(world::kChunkSize + 1.0f, H, world::kChunkSize + 1.0f));
+    // Bounds include a margin for doors swinging into neighbouring chunks and
+    // reach up to the next storey's ceiling for stairwell geometry.
+    bp.bounds = AABB(origin + glm::vec3(-1.0f, -world::kSlabThickness, -1.0f),
+                     origin + glm::vec3(world::kChunkSize + 1.0f, world::kLevelHeight + H, world::kChunkSize + 1.0f));
     return bp;
 }
 
 void WorldGenerator::buildShell(ChunkBlueprint& bp, const glm::vec3& origin) const {
-    const glm::vec3 far = origin + glm::vec3(world::kChunkSize, 0.0f, world::kChunkSize);
-    // Carpet floor: the top face of a slab below y = 0 (collision is analytic).
-    addSolid(bp, origin, AABB(glm::vec3(origin.x, -0.1f, origin.z), glm::vec3(far.x, 0.0f, far.z)),
-             MaterialId::Carpet, mesh::FacePosY, false);
-    // Acoustic tile ceiling: the bottom face of a slab above the ceiling height.
-    addSolid(bp, origin, AABB(glm::vec3(origin.x, H, origin.z), glm::vec3(far.x, H + 0.1f, far.z)),
-             MaterialId::CeilingTile, mesh::FaceNegY, false);
+    const ChunkCoord& c = bp.coord;
+    const glm::vec4 chunkRect(origin.x, origin.z, origin.x + world::kChunkSize, origin.z + world::kChunkSize);
+
+    // Stairwell shafts pierce the floor (arriving from below) and the
+    // ceiling (rising from here).
+    std::optional<glm::vec4> floorHole, ceilingHole;
+    if (const auto down = stairwell(c.level - 1, c.x, c.z)) {
+        floorHole = stairs::holeRect(c.x * kN + down->lx, c.z * kN + down->lz, down->rotation);
+    }
+    if (const auto up = stairwell(c.level, c.x, c.z)) {
+        ceilingHole = stairs::holeRect(c.x * kN + up->lx, c.z * kN + up->lz, up->rotation);
+    }
+
+    const float y = origin.y;
+    for (const glm::vec4& r : subtractHole(chunkRect, floorHole)) {
+        // Carpet: the top face of a thin slab below the floor; the collider is
+        // the full slab thickness so nothing can tunnel through.
+        addSolid(bp, origin, AABB(glm::vec3(r.x, y - 0.1f, r.y), glm::vec3(r.z, y, r.w)), MaterialId::Carpet,
+                 mesh::FacePosY, false);
+        bp.colliders.emplace_back(glm::vec3(r.x, y - world::kSlabThickness, r.y), glm::vec3(r.z, y, r.w));
+    }
+    for (const glm::vec4& r : subtractHole(chunkRect, ceilingHole)) {
+        // Acoustic tile ceiling: the bottom face of a slab above the ceiling height.
+        addSolid(bp, origin, AABB(glm::vec3(r.x, y + H, r.y), glm::vec3(r.z, y + H + 0.1f, r.w)),
+                 MaterialId::CeilingTile, mesh::FaceNegY, false);
+        bp.colliders.emplace_back(glm::vec3(r.x, y + H, r.y), glm::vec3(r.z, y + world::kLevelHeight, r.w));
+    }
 }
 
 void WorldGenerator::buildEdge(ChunkBlueprint& bp, const glm::vec3& origin, int gx, int gz, EdgeAxis axis) const {
-    const EdgeType type = edge(gx, gz, axis);
+    const int level = bp.coord.level;
+    const EdgeType type = edge(level, gx, gz, axis);
     if (type == EdgeType::Open) return;
 
-    const EdgeFrame f{axis, glm::vec2(static_cast<float>(gx) * S, static_cast<float>(gz) * S)};
+    const EdgeFrame f{axis, glm::vec2(static_cast<float>(gx) * S, static_cast<float>(gz) * S), origin.y};
     const float s0 = HT;          // wall runs between the corner posts
     const float s1 = S - HT;
     const float mid = S * 0.5f;
@@ -321,10 +429,13 @@ void WorldGenerator::buildEdge(ChunkBlueprint& bp, const glm::vec3& origin, int 
              f.longFaces() | mesh::FaceNegY);
 
     // Door leaf: hinge side chosen deterministically from the edge hash.
-    const uint64_t id = rnd::hashCoords(m_seed, gx, gz, kSaltDoor + static_cast<uint64_t>(axis));
+    const uint64_t id = rnd::hashCoords(levelSeed(level), gx, gz, kSaltDoor + static_cast<uint64_t>(axis));
     const bool hingeAtStart = (id & 1u) == 0u;
     DoorPlacement door;
     door.id = id;
+    door.gx = gx;
+    door.gz = gz;
+    door.axis = axis;
     if (hingeAtStart) {
         door.hinge = f.point(mid - hw + jw);
         door.closedDir = f.alongDir();
@@ -336,12 +447,13 @@ void WorldGenerator::buildEdge(ChunkBlueprint& bp, const glm::vec3& origin, int 
 }
 
 void WorldGenerator::buildVertex(ChunkBlueprint& bp, const glm::vec3& origin, int gx, int gz) const {
-    const glm::vec3 p(static_cast<float>(gx) * S, 0.0f, static_cast<float>(gz) * S);
+    const int level = bp.coord.level;
+    const glm::vec3 p(static_cast<float>(gx) * S, origin.y, static_cast<float>(gz) * S);
 
-    const bool px = edge(gx, gz, EdgeAxis::South) != EdgeType::Open;
-    const bool nx = edge(gx - 1, gz, EdgeAxis::South) != EdgeType::Open;
-    const bool pz = edge(gx, gz, EdgeAxis::West) != EdgeType::Open;
-    const bool nz = edge(gx, gz - 1, EdgeAxis::West) != EdgeType::Open;
+    const bool px = edge(level, gx, gz, EdgeAxis::South) != EdgeType::Open;
+    const bool nx = edge(level, gx - 1, gz, EdgeAxis::South) != EdgeType::Open;
+    const bool pz = edge(level, gx, gz, EdgeAxis::West) != EdgeType::Open;
+    const bool nz = edge(level, gx, gz - 1, EdgeAxis::West) != EdgeType::Open;
 
     if (px || nx || pz || nz) {
         // Corner post joining the walls; faces hidden against walls are skipped.
@@ -362,23 +474,75 @@ void WorldGenerator::buildVertex(ChunkBlueprint& bp, const glm::vec3& origin, in
         return;
     }
 
-    if (vertexHasPillar(gx, gz)) {
+    if (vertexHasPillar(level, gx, gz)) {
         const float h = world::kPillarSize * 0.5f;
         addSolid(bp, origin, AABB(p + glm::vec3(-h, 0.0f, -h), p + glm::vec3(h, H, h)), MaterialId::Wallpaper,
                  mesh::FaceSides);
     }
 }
 
+void WorldGenerator::addFixture(ChunkBlueprint& bp, const glm::vec3& origin, const glm::vec2& centre, bool alongX,
+                                int& lightIndex, float unrest, const glm::ivec2* shaftCell) const {
+    const glm::vec2 half = alongX ? glm::vec2(world::kFixtureLength, world::kFixtureWidth) * 0.5f
+                                  : glm::vec2(world::kFixtureWidth, world::kFixtureLength) * 0.5f;
+    const float x0w = centre.x - half.x, x1w = centre.x + half.x;
+    const float z0w = centre.y - half.y, z1w = centre.y + half.y;
+    const float yc = origin.y + H;
+    const float yb = yc - world::kFixtureDepth;
+
+    // Housing sides (metal).
+    mesh::BoxDesc housing;
+    housing.min = glm::vec3(x0w, yb, z0w);
+    housing.max = glm::vec3(x1w, yc, z1w);
+    housing.material = MaterialId::GrayMetal;
+    housing.faces = mesh::FaceSides;
+    housing.uvOrigin = origin;
+    mesh::addBox(bp.staticMesh, housing);
+
+    // Emissive diffuser facing down, UV (0..1) across the fixture:
+    // u across the short side, v along the long side (tube direction).
+    const glm::vec3 corners[4] = {{x0w, yb, z0w}, {x1w, yb, z0w}, {x1w, yb, z1w}, {x0w, yb, z1w}};
+    const glm::vec2 uvZ[4] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+    const glm::vec2 uvX[4] = {{0, 0}, {0, 1}, {1, 1}, {1, 0}};
+    mesh::addQuad(bp.staticMesh, corners, glm::vec3(0, -1, 0), alongX ? uvX : uvZ, MaterialId::LightPanel,
+                  static_cast<float>(lightIndex));
+
+    LightFixture light(glm::vec3(centre.x, yb - 0.005f, centre.y), half,
+                       rnd::hashCombine(bp.seed, static_cast<uint64_t>(lightIndex)), unrest);
+    computeLightVisibility(light, bp.coord.level, shaftCell);
+    bp.lights.push_back(std::move(light));
+    ++lightIndex;
+}
+
 void WorldGenerator::placeLights(ChunkBlueprint& bp, const glm::vec3& origin) const {
     const float tile = world::kCeilingTileSize;
-    const float depth = world::kFixtureDepth;
-    // Chunk-wide electrical "unrest" (squared -> most chunks are calm).
+    const int level = bp.coord.level;
+    // Chunk-wide electrical "unrest" (squared -> most chunks are calm). The
+    // farther from level 0, the worse the wiring: deeper storeys are darker.
     rnd::Rng chunkRng(rnd::hashCombine(bp.seed, kSaltLights));
-    const float unrest = chunkRng.nextFloat() * chunkRng.nextFloat();
+    float unrest = chunkRng.nextFloat() * chunkRng.nextFloat();
+    unrest = std::min(1.0f, unrest + std::min(0.45f, 0.06f * static_cast<float>(std::abs(level))));
 
     int lightIndex = 0;
     for (int lz = 0; lz < kN; ++lz) {
         for (int lx = 0; lx < kN; ++lx) {
+            const int gx = bp.coord.x * kN + lx;
+            const int gz = bp.coord.z * kN + lz;
+            const CellRole role = cellRole(level, gx, gz);
+            if (role == CellRole::StairsLower) {
+                const auto up = stairwell(level, bp.coord.x, bp.coord.z);
+                const stairs::FixtureSpot spot = stairs::lobbyFixture(gx, gz, up->rotation);
+                addFixture(bp, origin, spot.center, spot.alongX, lightIndex, unrest, nullptr);
+                continue;
+            }
+            if (role == CellRole::StairsUpper) {
+                const auto down = stairwell(level - 1, bp.coord.x, bp.coord.z);
+                const stairs::FixtureSpot spot = stairs::shaftFixture(gx, gz, down->rotation);
+                const glm::ivec2 cell(gx, gz);
+                addFixture(bp, origin, spot.center, spot.alongX, lightIndex, unrest, &cell);
+                continue;
+            }
+
             rnd::Rng rng(rnd::hashCoords(bp.seed, lx, lz, kSaltLights));
             const float roll = rng.nextFloat();
             if (roll < 0.07f) continue; // occasional cell with no fixture at all
@@ -398,44 +562,16 @@ void WorldGenerator::placeLights(ChunkBlueprint& bp, const glm::vec3& origin) co
             }
             const bool alongX = rng.chance(0.5f);
 
-            const glm::vec3 cellMin = origin + glm::vec3(static_cast<float>(lx) * S, 0.0f, static_cast<float>(lz) * S);
+            const glm::vec2 cellMin(origin.x + static_cast<float>(lx) * S, origin.z + static_cast<float>(lz) * S);
             for (const glm::vec2& lc : centres) {
                 const glm::vec2 local = alongX ? glm::vec2(lc.y, lc.x) : lc;
-                const glm::vec2 half = alongX ? glm::vec2(world::kFixtureLength, world::kFixtureWidth) * 0.5f
-                                              : glm::vec2(world::kFixtureWidth, world::kFixtureLength) * 0.5f;
-                const glm::vec3 c = cellMin + glm::vec3(local.x, 0.0f, local.y);
-                const float x0w = c.x - half.x, x1w = c.x + half.x;
-                const float z0w = c.z - half.y, z1w = c.z + half.y;
-                const float yb = H - depth;
-
-                // Housing sides (metal).
-                mesh::BoxDesc housing;
-                housing.min = glm::vec3(x0w, yb, z0w);
-                housing.max = glm::vec3(x1w, H, z1w);
-                housing.material = MaterialId::GrayMetal;
-                housing.faces = mesh::FaceSides;
-                housing.uvOrigin = origin;
-                mesh::addBox(bp.staticMesh, housing);
-
-                // Emissive diffuser facing down, UV (0..1) across the fixture:
-                // u across the short side, v along the long side (tube direction).
-                const glm::vec3 corners[4] = {{x0w, yb, z0w}, {x1w, yb, z0w}, {x1w, yb, z1w}, {x0w, yb, z1w}};
-                const glm::vec2 uvZ[4] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
-                const glm::vec2 uvX[4] = {{0, 0}, {0, 1}, {1, 1}, {1, 0}};
-                mesh::addQuad(bp.staticMesh, corners, glm::vec3(0, -1, 0), alongX ? uvX : uvZ,
-                              MaterialId::LightPanel, static_cast<float>(lightIndex));
-
-                LightFixture light(glm::vec3(c.x, yb - 0.005f, c.z), half,
-                                   rnd::hashCombine(bp.seed, static_cast<uint64_t>(lightIndex)), unrest);
-                computeLightVisibility(light);
-                bp.lights.push_back(std::move(light));
-                ++lightIndex;
+                addFixture(bp, origin, cellMin + local, alongX, lightIndex, unrest, nullptr);
             }
         }
     }
 }
 
-void WorldGenerator::computeLightVisibility(LightFixture& light) const {
+void WorldGenerator::computeLightVisibility(LightFixture& light, int level, const glm::ivec2* shaftCell) const {
     const float gs = world::kLightGridCell;
     const float R = world::kLightRange;
     const glm::vec2 c(light.center().x, light.center().z);
@@ -445,7 +581,7 @@ void WorldGenerator::computeLightVisibility(LightFixture& light) const {
     const int gz1 = static_cast<int>(std::floor((c.y + R) / gs));
     const float inset = 0.25f;
 
-    std::vector<glm::ivec2>& cells = light.visibleCells();
+    std::vector<glm::ivec3>& cells = light.visibleCells();
     cells.clear();
     for (int gz = gz0; gz <= gz1; ++gz) {
         for (int gx = gx0; gx <= gx1; ++gx) {
@@ -461,28 +597,44 @@ void WorldGenerator::computeLightVisibility(LightFixture& light) const {
                                           {mn.x + inset, mn.y + inset}, {mx.x - inset, mn.y + inset},
                                           {mx.x - inset, mx.y - inset}, {mn.x + inset, mx.y - inset}};
             for (int i = 0; i < 5 && !visible; ++i) {
-                visible = !isLightBlocked(c, samples[i]);
+                visible = !isLightBlocked(level, c, samples[i]);
             }
-            if (visible) cells.emplace_back(gx, gz);
+            if (visible) cells.emplace_back(gx, gz, level);
+        }
+    }
+
+    // A fixture over a stairwell shaft shines down it: the light-grid cells of
+    // the shaft on the storey below see it too.
+    if (shaftCell) {
+        const int perCell = static_cast<int>(S / gs + 0.5f);
+        for (int dz = 0; dz < perCell; ++dz) {
+            for (int dx = 0; dx < perCell; ++dx) {
+                cells.emplace_back(shaftCell->x * perCell + dx, shaftCell->y * perCell + dz, level - 1);
+            }
         }
     }
 }
 
 void WorldGenerator::placeFurniture(ChunkBlueprint& bp, const glm::vec3& origin) const {
     const float T = world::kWallThickness;
+    const int level = bp.coord.level;
 
     for (int lz = 0; lz < kN; ++lz) {
         for (int lx = 0; lx < kN; ++lx) {
             const int gx = bp.coord.x * kN + lx;
             const int gz = bp.coord.z * kN + lz;
+            if (cellRole(level, gx, gz) != CellRole::Room) continue; // stairwells stay clear
             rnd::Rng rng(rnd::hashCoords(bp.seed, lx, lz, kSaltFurniture));
+            // Terminals use their own stream so furniture layouts are unaffected.
+            rnd::Rng terminalRng(rnd::hashCoords(bp.seed, lx, lz, kSaltTerminal));
+            int deskCount = 0;
 
             const glm::vec3 cellMin = origin + glm::vec3(static_cast<float>(lx) * S, 0.0f, static_cast<float>(lz) * S);
             const glm::vec3 cellCenter = cellMin + glm::vec3(S * 0.5f, 0.0f, S * 0.5f);
 
             // Solid walls of this cell: 0 = west, 1 = east, 2 = south, 3 = north.
-            const EdgeType sides[4] = {edge(gx, gz, EdgeAxis::West), edge(gx + 1, gz, EdgeAxis::West),
-                                       edge(gx, gz, EdgeAxis::South), edge(gx, gz + 1, EdgeAxis::South)};
+            const EdgeType sides[4] = {edge(level, gx, gz, EdgeAxis::West), edge(level, gx + 1, gz, EdgeAxis::West),
+                                       edge(level, gx, gz, EdgeAxis::South), edge(level, gx, gz + 1, EdgeAxis::South)};
             const glm::vec3 inward[4] = {{1, 0, 0}, {-1, 0, 0}, {0, 0, 1}, {0, 0, -1}};
             std::vector<int> walls;
             for (int i = 0; i < 4; ++i) {
@@ -503,6 +655,15 @@ void WorldGenerator::placeFurniture(ChunkBlueprint& bp, const glm::vec3& origin)
                 face = cellCenter - n * (S * 0.5f - T * 0.5f);
             };
 
+            // Occasionally a desk carries a retro computer, facing the chair.
+            auto maybeTerminal = [&]() {
+                if (!terminalRng.chance(world::kTerminalChance)) return;
+                const glm::mat4 model =
+                    glm::translate(bp.furniture.back().model, glm::vec3(-0.2f, 0.75f, -0.04f)); // on the desk top
+                const uint64_t id = rnd::hashCoords(levelSeed(level), gx, gz, kSaltTerminal + static_cast<uint64_t>(deskCount));
+                bp.terminals.push_back({id, model, terminalRng.chance(0.85f)});
+            };
+
             // A desk against the wall, a chair pulled up to it, optional
             // partitions and a filing cabinet: a classic cubicle.
             auto cubicle = [&](int side, bool partitions) {
@@ -510,6 +671,8 @@ void WorldGenerator::placeFurniture(ChunkBlueprint& bp, const glm::vec3& origin)
                 wallFrame(side, face, n, r);
                 const glm::vec3 base = face + r * rng.range(-0.5f, 0.5f);
                 add(FurnitureType::Desk, base + n * (0.375f + 0.03f), yawFacing(n));
+                maybeTerminal();
+                ++deskCount;
                 add(FurnitureType::Chair,
                     base + n * (0.78f + rng.range(0.25f, 0.55f)) + r * rng.range(-0.3f, 0.3f),
                     yawFacing(-n) + rng.range(-0.6f, 0.6f));

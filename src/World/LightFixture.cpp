@@ -85,6 +85,16 @@ bool LightFixture::isMalfunctioning(double t) const {
     }
 }
 
+float LightFixture::averageIntensity() const {
+    switch (m_mode) {
+    case FlickerMode::Dead:         return 0.0f;
+    case FlickerMode::Failing:      return 0.3f + 0.4f * m_dimLevel;
+    case FlickerMode::Intermittent: return 1.0f - (1.0f - m_dimLevel) * m_burstChance * m_burstDuration / m_burstPeriod * 0.5f;
+    case FlickerMode::Steady:
+    default:                        return 1.0f;
+    }
+}
+
 float LightFixture::failing(double t) const {
     const double local = t + m_phase;
     // Slowly varying "health": phases where the tube struggles more.

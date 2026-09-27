@@ -29,7 +29,10 @@ public:
     void beginScene(const glm::vec3& clearColor);
 
     /// Resolves, blooms and composites into the default framebuffer.
-    void present(float time, float exposure, float bloomStrength, float bloomThreshold, float crosshairHighlight);
+    /// @param fear  0..1 dread effects (aberration, desaturation, closing vignette).
+    /// @param fade  0..1 fade to black.
+    void present(float time, float exposure, float bloomStrength, float bloomThreshold, float crosshairHighlight,
+                 float fear, float fade);
 
 private:
     struct BloomMip {

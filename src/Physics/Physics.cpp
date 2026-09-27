@@ -13,8 +13,7 @@ constexpr float kMaxSubstep   = 0.20f; ///< Max displacement per sub-step (< bod
 constexpr float kMinStepGain  = 1e-4f; ///< Minimum extra progress needed to accept a step-up.
 } // namespace
 
-Physics::Physics(float floorY, float ceilingY, float stepHeight)
-    : m_floorY(floorY), m_ceilingY(ceilingY), m_stepHeight(stepHeight) {}
+Physics::Physics(float stepHeight) : m_stepHeight(stepHeight) {}
 
 AABB Physics::bodyBox(const glm::vec3& feet, const BodyShape& shape) {
     return {glm::vec3(feet.x - shape.halfWidth, feet.y, feet.z - shape.halfWidth),
@@ -47,18 +46,6 @@ bool Physics::sweepAxis(glm::vec3& feet, const BodyShape& shape, int axis, float
             feet[axis] = std::max(feet[axis], c.max[axis] - minOffset + kSkin);
         }
         hit = true;
-    }
-
-    // The analytic floor and ceiling planes bound vertical motion everywhere.
-    if (axis == 1) {
-        if (feet.y < m_floorY) {
-            feet.y = m_floorY;
-            hit = hit || delta < 0.0f;
-        }
-        if (feet.y + shape.height > m_ceilingY) {
-            feet.y = m_ceilingY - shape.height;
-            hit = hit || delta > 0.0f;
-        }
     }
     return hit;
 }
@@ -134,7 +121,6 @@ MoveResult Physics::move(glm::vec3& feet, const BodyShape& shape, const glm::vec
 }
 
 bool Physics::isFree(const AABB& box, const ICollisionWorld& world) const {
-    if (box.min.y < m_floorY - kSkin || box.max.y > m_ceilingY + kSkin) return false;
     m_scratch.clear();
     world.gatherColliders(box, m_scratch);
     for (const AABB& c : m_scratch) {

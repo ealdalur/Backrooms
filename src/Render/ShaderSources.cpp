@@ -24,6 +24,7 @@ out vec3 vNormal;
 out vec2 vUV;
 flat out int vMaterial;
 flat out int vLightIndex;
+flat out vec3 vInstanceOrigin;          // per-object seed (e.g. desynchronises terminal screens)
 
 void main() {
     vec4 world  = aModel * vec4(aPosition, 1.0);
@@ -33,6 +34,7 @@ void main() {
     vUV         = aUV;
     vMaterial   = int(aMatInfo.x + 0.5);
     vLightIndex = aMatInfo.y < -0.5 ? -1 : uLightBase + int(aMatInfo.y + 0.5);
+    vInstanceOrigin = aModel[3].xyz;
     gl_Position = uViewProj * world;
 }
 )GLSL";
@@ -47,29 +49,34 @@ in vec3 vNormal;
 in vec2 vUV;
 flat in int vMaterial;
 flat in int vLightIndex;
+flat in vec3 vInstanceOrigin;
 
 layout(location = 0) out vec4 oColor;
 
 // ---- Materials -------------------------------------------------------------
 uniform sampler2DArray uAlbedo;          // rgb = albedo (sRGB decoded by hardware)
 uniform sampler2DArray uSurface;         // r = height, g = specular mask, b = emissive mask
-uniform vec4  uMaterialParams[8];        // x = spec, y = shininess, z = bump (m), w = emissive gain
+uniform vec4  uMaterialParams[16];       // x = spec, y = shininess, z = bump (m), w = emissive gain
+uniform float uTime;                     // simulation clock (animated terminal screens)
 
-// ---- Clustered lights --------------------------------------------------------
+// ---- Clustered lights (one 2D slice per loaded storey) ---------------------------
 uniform samplerBuffer  uLightData;       // 2 texels per light: (center.xyz, halfX), (halfZ, color.rgb)
 uniform samplerBuffer  uLightIntensity;  // 1 texel per light: current flicker output
-uniform usamplerBuffer uGridCells;       // per grid cell: (first index, count)
+uniform usamplerBuffer uGridCells;       // per grid cell: (first index, count), slice-major
 uniform usamplerBuffer uGridIndices;     // flattened light index lists
 uniform vec2  uGridOrigin;
 uniform float uGridCellSize;
-uniform ivec2 uGridDims;
+uniform ivec2 uGridDims;                 // cells per slice
+uniform int   uGridMinLevel;             // storey of slice 0
+uniform int   uGridLevels;               // number of slices
+uniform float uLevelHeight;              // floor-to-floor height
 uniform float uLightRange;
 uniform float uLightPower;
 
 // ---- Architecture (edge map for analytic ambient occlusion) --------------------
-uniform usampler2D uEdgeMap;             // per world cell: (west edge type, south edge type)
+uniform usampler2D uEdgeMap;             // per world cell: (west edge type, south edge type); slices stacked in rows
 uniform vec2  uEdgeOrigin;
-uniform ivec2 uEdgeDims;
+uniform ivec2 uEdgeDims;                 // texels per slice
 uniform float uCellSize;
 uniform float uWallHalf;
 uniform float uArchHalfWidth;
@@ -87,6 +94,7 @@ uniform float uFogDensity;
 const int MAT_WALLPAPER = 0;
 const int MAT_CARPET    = 1;
 const int MAT_CEILING   = 2;
+const int MAT_CRT       = 10;
 
 const uint EDGE_OPEN = 0u;
 const uint EDGE_WALL = 1u;
@@ -167,22 +175,30 @@ float edgeOcclusion(uint type, float perp, float along, bool vertical, float nPe
     return mix(0.42, 1.0, smoothstep(0.0, 0.65, d));
 }
 
+// Storey containing height y (bias keeps floor surfaces on their own storey).
+int levelOf(float y) { return int(floor((y + 0.05) / uLevelHeight)); }
+
 float ambientOcclusion(vec3 P, vec3 N) {
     bool vertical = abs(N.y) < 0.5;
+    int   level  = levelOf(P.y);
+    float localY = P.y - float(level) * uLevelHeight;
     float ao = 1.0;
     // Wall-to-floor and wall-to-ceiling junctions.
     if (vertical) {
-        ao *= mix(0.55, 1.0, smoothstep(0.0, 0.45, P.y));
-        ao *= mix(0.78, 1.0, smoothstep(0.0, 0.35, uCeilingHeight - P.y));
+        ao *= mix(0.55, 1.0, smoothstep(0.0, 0.45, localY));
+        ao *= mix(0.78, 1.0, smoothstep(0.0, 0.35, uCeilingHeight - localY));
     }
+    int slice = level - uGridMinLevel;
+    if (slice < 0 || slice >= uGridLevels) return ao;
     vec2 rel = (P.xz - uEdgeOrigin) / uCellSize;
     ivec2 cell = ivec2(floor(rel));
     if (any(lessThan(cell, ivec2(0))) || any(greaterThanEqual(cell + 1, uEdgeDims))) return ao;
 
     vec2  local = P.xz - (uEdgeOrigin + vec2(cell) * uCellSize);
-    uvec2 here  = texelFetch(uEdgeMap, cell, 0).rg;
-    uint  east  = texelFetch(uEdgeMap, cell + ivec2(1, 0), 0).r;
-    uint  north = texelFetch(uEdgeMap, cell + ivec2(0, 1), 0).g;
+    ivec2 texel = cell + ivec2(0, slice * uEdgeDims.y);
+    uvec2 here  = texelFetch(uEdgeMap, texel, 0).rg;
+    uint  east  = texelFetch(uEdgeMap, texel + ivec2(1, 0), 0).r;
+    uint  north = texelFetch(uEdgeMap, texel + ivec2(0, 1), 0).g;
 
     ao *= edgeOcclusion(here.r, local.x,              local.y, vertical, N.x); // west  (x = 0)
     ao *= edgeOcclusion(east,   local.x - uCellSize,  local.y, vertical, N.x); // east  (x = S)
@@ -198,8 +214,10 @@ float ambientOcclusion(vec3 P, vec3 N) {
 vec3 evaluateLights(vec3 P, vec3 N, vec3 V, vec3 albedo, float specIntensity, float shininess) {
     ivec2 gc = ivec2(floor((P.xz - uGridOrigin) / uGridCellSize));
     if (any(lessThan(gc, ivec2(0))) || any(greaterThanEqual(gc, uGridDims))) return vec3(0.0);
+    int slice = levelOf(P.y) - uGridMinLevel;
+    if (slice < 0 || slice >= uGridLevels) return vec3(0.0);
 
-    uvec2 cellInfo = texelFetch(uGridCells, gc.y * uGridDims.x + gc.x).rg;
+    uvec2 cellInfo = texelFetch(uGridCells, (slice * uGridDims.y + gc.y) * uGridDims.x + gc.x).rg;
     uint  count = min(cellInfo.y, MAX_LIGHTS_PER_CELL);
     vec3  R = reflect(-V, N);
     float specNorm = (shininess + 8.0) / (8.0 * PI);
@@ -247,6 +265,41 @@ vec3 evaluateLights(vec3 P, vec3 N, vec3 V, vec3 albedo, float specIntensity, fl
     return sum * uLightPower;
 }
 
+// ---- Live terminal screens ----------------------------------------------------------
+// Scrolling rows of pseudo-glyphs (3x5 dot patterns hashed per character),
+// scanlines and a faint raster glow, so every powered terminal in the world
+// visibly churns out text. The amber variant's UVs are offset by +2 in u.
+vec3 crtEmission(vec2 uv, vec3 seedPos, float rasterMask) {
+    bool amber = uv.x > 1.5;
+    if (amber) uv.x -= 2.0;
+    float seed = hash13(floor(seedPos * 3.7) + 0.5);
+
+    const float rows = 16.0, cols = 34.0;
+    float y   = (1.0 - uv.y) * rows + uTime * (1.5 + 2.5 * seed); // rows crawl upward
+    float row = floor(y);
+    float x   = uv.x * cols;
+    float col = floor(x);
+    vec2  sub = floor(vec2(fract(x) * 4.0, fract(y) * 7.0));       // 4x7 dot cell: 3x5 glyph + spacing
+
+    float lineLen = cols * (0.2 + 0.75 * hash13(vec3(row, seed * 57.0, 3.1)));
+    if (hash13(vec3(row, seed * 91.0, 1.7)) < 0.15) lineLen = 0.0;  // blank line
+    float inLine = step(1.0, col) * step(col, lineLen);
+    float lit = 0.0;
+    if (inLine > 0.5 && sub.x < 3.0 && sub.y > 0.5 && sub.y < 6.0 &&
+        hash13(vec3(col, row, seed * 5.0)) > 0.12) {               // some characters are spaces
+        lit = step(0.45, hash13(vec3(col + sub.x * 0.13, row + sub.y * 0.31, seed * 13.0)));
+    }
+    // Far away the dots alias: fade to their average coverage.
+    float aa = clamp(fwidth(x * 4.0) - 0.5, 0.0, 1.0);
+    lit = mix(lit, inLine * 0.28, aa);
+
+    vec3 phosphor = amber ? vec3(1.0, 0.55, 0.12) : vec3(0.25, 1.0, 0.45);
+    if (hash13(vec3(row, seed * 19.0, 7.3)) > 0.97) phosphor = vec3(1.0, 0.30, 0.25); // an anomalous line
+    float scan = 0.72 + 0.28 * sin(uv.y * 520.0);
+    float flicker = 0.94 + 0.06 * sin(uTime * 57.0 + seed * 40.0);
+    return phosphor * (lit * scan * flicker + 0.05) * rasterMask;
+}
+
 void main() {
     float layer = float(vMaterial);
     vec4  params = uMaterialParams[vMaterial];
@@ -265,7 +318,8 @@ void main() {
     if (vMaterial == MAT_WALLPAPER) {
         float g = fbm(vWorldPos * vec3(0.55, 0.3, 0.55));
         albedo *= mix(0.80, 1.05, g);
-        float lowGrime = 1.0 - smoothstep(0.0, 0.7, vWorldPos.y + (g - 0.5) * 0.5);
+        float localY = vWorldPos.y - float(levelOf(vWorldPos.y)) * uLevelHeight;
+        float lowGrime = 1.0 - smoothstep(0.0, 0.7, localY + (g - 0.5) * 0.5);
         albedo *= 1.0 - 0.18 * lowGrime;
         // Non-repeating water stains with a darker tide line at their edge.
         float s = fbm(vWorldPos * vec3(0.3, 0.42, 0.3) + vec3(3.1, 0.0, 7.7));
@@ -314,12 +368,112 @@ void main() {
     if (vLightIndex >= 0) {
         color += albedo * emissiveMask * params.w * texelFetch(uLightIntensity, vLightIndex).r;
     }
+    // Powered terminal screens glow with their own scrolling text.
+    if (vMaterial == MAT_CRT) {
+        color += crtEmission(vUV, vInstanceOrigin, emissiveMask) * params.w;
+    }
 
     // Humid, yellowish squared-exponential haze.
     float fog = 1.0 - exp(-pow(camDist * uFogDensity, 2.0));
     color = mix(color, uFogColor, fog);
 
     oColor = vec4(color, 1.0);
+}
+)GLSL";
+
+// ============================================================================
+// The Stalker (shadow creature)
+// ============================================================================
+const char* const kShadowVertex = R"GLSL(
+#version 330 core
+layout(location = 0) in vec3 aPosition;  // world space
+layout(location = 1) in vec3 aNormal;
+layout(location = 2) in vec2 aUV;        // sprites: quad corner in [-1, 1]
+layout(location = 3) in vec2 aMatInfo;   // x = kind (0 body, 1 smoke, 2 eye), y = sprite opacity
+
+uniform mat4 uViewProj;
+
+out vec3 vWorldPos;
+out vec3 vNormal;
+out vec2 vUV;
+flat out int vKind;
+out float vParam;
+
+void main() {
+    vWorldPos = aPosition;
+    vNormal   = aNormal;
+    vUV       = aUV;
+    vKind     = int(aMatInfo.x + 0.5);
+    vParam    = aMatInfo.y;
+    gl_Position = uViewProj * vec4(aPosition, 1.0);
+}
+)GLSL";
+
+const char* const kShadowFragment = R"GLSL(
+#version 330 core
+in vec3 vWorldPos;
+in vec3 vNormal;
+in vec2 vUV;
+flat in int vKind;
+in float vParam;
+
+layout(location = 0) out vec4 oColor;
+
+uniform vec3  uCameraPos;
+uniform float uTime;
+uniform vec3  uFogColor;
+uniform float uFogDensity;
+
+float hash13(vec3 p3) {
+    p3 = fract(p3 * 0.1031);
+    p3 += dot(p3, p3.zyx + 31.32);
+    return fract((p3.x + p3.y) * p3.z);
+}
+float valueNoise(vec3 p) {
+    vec3 i = floor(p);
+    vec3 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(mix(hash13(i), hash13(i + vec3(1, 0, 0)), f.x), mix(hash13(i + vec3(0, 1, 0)), hash13(i + vec3(1, 1, 0)), f.x), f.y),
+               mix(mix(hash13(i + vec3(0, 0, 1)), hash13(i + vec3(1, 0, 1)), f.x), mix(hash13(i + vec3(0, 1, 1)), hash13(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+}
+// Interleaved gradient noise: a stable per-pixel threshold for dithered
+// ("screen door") transparency, which needs no sorting or blending.
+float dither() {
+    vec2 p = gl_FragCoord.xy + vec2(fract(uTime * 13.0) * 47.0, fract(uTime * 7.0) * 17.0);
+    return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
+}
+
+void main() {
+    float camDist = length(uCameraPos - vWorldPos);
+    float fog = 1.0 - exp(-pow(camDist * uFogDensity, 2.0));
+
+    if (vKind == 2) {
+        // Eye: a tiny, cold pinprick that blooms.
+        float r = length(vUV);
+        if (r > 1.0) discard;
+        vec3 c = vec3(0.95, 0.9, 0.8) * 5.0 * (1.0 - r * r);
+        oColor = vec4(mix(c, uFogColor, fog), 1.0);
+        return;
+    }
+    if (vKind == 1) {
+        // Soot mote shed by the body.
+        float a = (1.0 - smoothstep(0.15, 1.0, length(vUV))) * vParam;
+        if (a < dither()) discard;
+        oColor = vec4(mix(vec3(0.004), uFogColor, fog), 1.0);
+        return;
+    }
+
+    // Body: pitch black, with a silhouette that boils away into smoke. The
+    // dissolve grows towards grazing angles, so the outline is never crisp.
+    vec3  N = normalize(vNormal);
+    vec3  V = normalize(uCameraPos - vWorldPos);
+    float rim = 1.0 - abs(dot(N, V));
+    float boil = 0.6 * valueNoise(vWorldPos * 7.0 + vec3(0.0, uTime * 2.3, 0.0)) +
+                 0.4 * valueNoise(vWorldPos * 19.0 - vec3(0.0, uTime * 3.7, 0.0));
+    float solid = 1.0 - smoothstep(0.30, 1.0, rim) * (0.35 + 1.1 * boil);
+    if (solid < dither()) discard;
+    vec3 col = vec3(0.0035, 0.003, 0.004) + vec3(0.018, 0.004, 0.012) * pow(rim, 5.0); // faint oily sheen
+    oColor = vec4(mix(col, uFogColor, fog), 1.0);
 }
 )GLSL";
 
@@ -401,7 +555,9 @@ uniform float uExposure;
 uniform float uBloomStrength;
 uniform float uTime;
 uniform vec2  uResolution;
-uniform float uCrosshairHighlight;  // 0..1, ring shown when a door is interactable
+uniform float uCrosshairHighlight;  // 0..1, ring shown when something is interactable
+uniform float uFear;                // 0..1, an entity is near / being watched
+uniform float uFade;                // 0..1, fade to black
 
 // ACES filmic curve (Narkowicz 2015 fit).
 vec3 aces(vec3 x) {
@@ -414,25 +570,33 @@ float grainNoise(vec2 p) {
 }
 
 void main() {
-    vec3 hdr = texture(uScene, vUV).rgb + texture(uBloom, vUV).rgb * uBloomStrength;
+    // Dread: the image splits into its colour channels towards the edges.
+    vec2  fromCentre = vUV - 0.5;
+    vec2  split = fromCentre * (0.012 * uFear * length(fromCentre));
+    vec3  hdr = vec3(texture(uScene, vUV + split).r, texture(uScene, vUV).g, texture(uScene, vUV - split).b);
+    hdr += texture(uBloom, vUV).rgb * uBloomStrength;
     vec3 c = aces(hdr * uExposure);
 
-    // Soft optical vignette.
-    vec2 q = vUV - 0.5;
+    // Soft optical vignette, closing in (and throbbing with the pulse) with fear.
+    vec2 q = fromCentre;
     q.x *= uResolution.x / uResolution.y;
-    c *= mix(0.70, 1.0, smoothstep(0.95, 0.25, length(q)));
+    float pulse = pow(0.5 + 0.5 * sin(uTime * 6.2831853 * (1.1 + 0.9 * uFear)), 6.0);
+    float inner = mix(0.25, 0.05, uFear) - 0.04 * pulse * uFear;
+    c *= mix(mix(0.70, 0.25, uFear), 1.0, smoothstep(0.95 - 0.3 * uFear, inner, length(q)));
+    c = mix(c, vec3(dot(c, vec3(0.299, 0.587, 0.114))), 0.5 * uFear);
 
     c = pow(c, vec3(1.0 / 2.2));
 
-    // Animated film grain (applied in display space).
+    // Animated film grain (applied in display space), heavier when afraid.
     float n = grainNoise(gl_FragCoord.xy + fract(uTime * 7.31) * vec2(113.1, 71.7));
-    c += (n - 0.5) * 0.035;
+    c += (n - 0.5) * (0.035 + 0.06 * uFear);
+    c *= 1.0 - uFade;
 
-    // Minimal crosshair: centre dot plus a ring when a door can be used.
+    // Minimal crosshair: centre dot plus a ring when something can be used.
     float r = length(gl_FragCoord.xy - uResolution * 0.5);
     float dotMask = 1.0 - smoothstep(1.5, 2.5, r);
     float ringMask = uCrosshairHighlight * (1.0 - smoothstep(0.8, 1.6, abs(r - 7.0)));
-    c = mix(c, vec3(1.0), max(dotMask * 0.7, ringMask * 0.85));
+    c = mix(c, vec3(1.0), max(dotMask * 0.7, ringMask * 0.85) * (1.0 - uFade));
 
     oColor = vec4(clamp(c, 0.0, 1.0), 1.0);
 }

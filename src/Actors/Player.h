@@ -38,6 +38,12 @@ public:
     void update(float dt, const Input& input, const Settings& settings, const ICollisionWorld& world,
                 const Physics& physics);
 
+    /// Moves the body instantly (respawns, scripted tests) and resets motion.
+    void teleport(const glm::vec3& feet, float yaw);
+
+    /// Sets the view direction directly (yaw / pitch in radians).
+    void setViewAngles(float yaw, float pitch);
+
     const Camera& camera() const { return m_camera; }
     const glm::vec3& feetPosition() const { return m_feet; }
     glm::vec3 eyePosition() const { return m_camera.position; }
@@ -47,6 +53,9 @@ public:
     bool grounded() const { return m_grounded; }
     float horizontalSpeed() const { return glm::length(glm::vec2(m_velocity.x, m_velocity.z)); }
     bool mouseDriveActive() const { return m_mouseDriveActive; }
+    float yaw() const { return m_yaw; }
+    /// 0 = standing, 1 = fully crouched.
+    float crouchAmount() const { return crouchFactor(); }
 
     /// Events raised during the last update().
     const std::vector<PlayerEvent>& events() const { return m_events; }
@@ -56,7 +65,7 @@ private:
     void updateCrouch(float dt, const Input& input, const ICollisionWorld& world, const Physics& physics);
     void updateMovement(float dt, const Input& input, const Settings& settings, const ICollisionWorld& world,
                         const Physics& physics);
-    void updateCamera(float dt, const Physics& physics);
+    void updateCamera(float dt);
     float crouchFactor() const;
 
     Camera    m_camera;

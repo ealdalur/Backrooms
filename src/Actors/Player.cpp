@@ -4,6 +4,7 @@
 #include "Actors/Player.h"
 
 #include "Core/Input.h"
+#include "World/WorldConstants.h"
 
 #include <algorithm>
 #include <cmath>
@@ -14,11 +15,16 @@ constexpr float kTwoPi = 6.28318530718f;
 /// Bob phase at which a foot strikes: the bottom of the vertical dip,
 /// where sin(2 * phase) = -1, i.e. 3pi/4 (+ k * pi for alternate feet).
 constexpr float kFootStrikePhase = 0.75f * kPi;
-/// Standing on furniture rather than the carpet.
+/// Standing on furniture or stairs rather than the carpet.
 constexpr float kElevatedHeight = 0.02f;
 
 /// Frame-rate independent exponential approach factor.
 inline float approachFactor(float rate, float dt) { return 1.0f - std::exp(-rate * dt); }
+
+/// Whether feet at `feet` stand above their storey's carpet (furniture, stair treads).
+inline bool isElevated(const glm::vec3& feet) {
+    return feet.y - world::levelFloorY(world::levelOf(feet.y)) > kElevatedHeight;
+}
 } // namespace
 
 Player::Player(const glm::vec3& spawnFeet, float yaw) : m_feet(spawnFeet), m_yaw(yaw) {
@@ -27,6 +33,24 @@ Player::Player(const glm::vec3& spawnFeet, float yaw) : m_feet(spawnFeet), m_yaw
     m_camera.nearPlane = cfg::kNearPlane;
     m_camera.farPlane = cfg::kFarPlane;
     m_camera.position = m_feet + glm::vec3(0.0f, m_height - cfg::kEyeBelowTop, 0.0f);
+}
+
+void Player::teleport(const glm::vec3& feet, float yaw) {
+    m_feet = feet;
+    m_velocity = glm::vec3(0.0f);
+    m_grounded = false;
+    m_stepOffset = m_landOffset = m_landVelocity = 0.0f;
+    m_keyLook = m_mouseDrive = glm::vec2(0.0f);
+    setViewAngles(yaw, 0.0f);
+    m_camera.position = m_feet + glm::vec3(0.0f, m_height - cfg::kEyeBelowTop, 0.0f);
+    m_events.clear();
+}
+
+void Player::setViewAngles(float yaw, float pitch) {
+    m_yaw = yaw;
+    m_pitch = std::clamp(pitch, -glm::radians(cfg::kMaxPitchDeg), glm::radians(cfg::kMaxPitchDeg));
+    m_camera.yaw = m_yaw;
+    m_camera.pitch = m_pitch;
 }
 
 float Player::crouchFactor() const {
@@ -40,7 +64,7 @@ void Player::update(float dt, const Input& input, const Settings& settings, cons
     updateLook(dt, input, settings);
     updateCrouch(dt, input, world, physics);
     updateMovement(dt, input, settings, world, physics);
-    updateCamera(dt, physics);
+    updateCamera(dt);
 }
 
 void Player::updateLook(float dt, const Input& input, const Settings& settings) {
@@ -138,7 +162,7 @@ void Player::updateMovement(float dt, const Input& input, const Settings& settin
     m_coyoteTimer = m_grounded ? cfg::kCoyoteTime : std::max(0.0f, m_coyoteTimer - dt);
     m_jumpBuffer = input.keyPressed(SDL_SCANCODE_SPACE) ? cfg::kJumpBufferTime : std::max(0.0f, m_jumpBuffer - dt);
     if (m_jumpBuffer > 0.0f && m_coyoteTimer > 0.0f) {
-        m_events.push_back({PlayerEvent::Type::Jump, 1.0f, m_feet.y > kElevatedHeight, 0});
+        m_events.push_back({PlayerEvent::Type::Jump, 1.0f, isElevated(m_feet), 0});
         m_velocity.y = cfg::kJumpVelocity; // initial vertical impulse
         m_jumpBuffer = 0.0f;
         m_coyoteTimer = 0.0f;
@@ -170,7 +194,7 @@ void Player::updateMovement(float dt, const Input& input, const Settings& settin
         }
         if (!wasGrounded && preVy < -1.5f) {
             m_events.push_back({PlayerEvent::Type::Land, std::clamp(-preVy / 8.0f, 0.0f, 1.0f),
-                                m_feet.y > kElevatedHeight, 0});
+                                isElevated(m_feet), 0});
             // The next footstep follows about half a step after touching down.
             m_bobPhase = kFootStrikePhase + 0.5f * kPi;
         }
@@ -187,7 +211,7 @@ void Player::updateMovement(float dt, const Input& input, const Settings& settin
     m_runBlend += ((running ? 1.0f : 0.0f) - m_runBlend) * approachFactor(6.0f, dt);
 }
 
-void Player::updateCamera(float dt, const Physics& physics) {
+void Player::updateCamera(float dt) {
     const float speed = horizontalSpeed();
     const float crouch = crouchFactor();
 
@@ -204,7 +228,7 @@ void Player::updateCamera(float dt, const Physics& physics) {
         const int after = static_cast<int>(std::floor((advanced - kFootStrikePhase) / kPi));
         if (after > before && speed > 0.4f) {
             const float intensity = std::clamp(speed / cfg::kRunSpeed, 0.0f, 1.0f) * glm::mix(1.0f, 0.45f, crouch);
-            m_events.push_back({PlayerEvent::Type::Footstep, intensity, m_feet.y > kElevatedHeight,
+            m_events.push_back({PlayerEvent::Type::Footstep, intensity, isElevated(m_feet),
                                 (after & 1) ? 1 : -1});
         }
         m_bobPhase = std::fmod(advanced, kTwoPi);
@@ -232,7 +256,9 @@ void Player::updateCamera(float dt, const Physics& physics) {
     glm::vec3 eye = m_feet;
     eye.y += m_height - cfg::kEyeBelowTop + bobY + m_landOffset + m_stepOffset;
     eye += m_camera.right() * bobX;
-    eye.y = std::min(eye.y, physics.ceilingY() - 0.06f);
+    // The body never passes the ceiling, so keeping the eye inside the body
+    // keeps it out of the ceiling slab too.
+    eye.y = std::min(eye.y, m_feet.y + m_height - 0.04f);
 
     m_camera.position = eye;
     m_camera.yaw = m_yaw;
