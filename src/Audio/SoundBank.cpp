@@ -1014,17 +1014,28 @@ std::vector<Sound> makeCatchSting(uint64_t seed) {
 // ============================================================================
 
 std::vector<Sound> makeTerminalKey(uint64_t seed) {
-    const Mode click[] = {{3200, 0.006f, 1.0f}, {5100, 0.004f, 0.6f}, {1400, 0.01f, 0.4f}};
+    // A chunky 1980s keyboard: "tack" as the keycap bottoms out, "tick" as it
+    // springs back. Like the door sounds, every layer is enveloped white noise
+    // through non-resonant filters (Butterworth high / low passes), so the
+    // clicks are percussive and pitchless rather than bell-like.
     std::vector<Sound> out;
     for (int v = 0; v < 6; ++v) {
         rnd::Rng rng(rnd::hashCombine(seed, static_cast<uint64_t>(v)));
+        Noise noise(rng.next());
         Buffer b = silence(0.14f);
-        addModes(b, 0.001f, click, 3, 1.0f, 0.12f, rng);                   // switch actuates
-        addThump(b, 0.002f, rng.range(380.0f, 460.0f), 280.0f, 0.008f, 0.5f); // keycap bottoms out
-        addModes(b, rng.range(0.05f, 0.08f), click, 3, 0.4f, 0.12f, rng);  // release
-        applyFilter(b, Biquad::highpass(150.0f));
-        fadeEdges(b, 0.0005f, 0.02f);
-        normalize(b, 0.8f);
+        // Press: a sharp, bright transient over the dull body of a thick
+        // plastic keycap, and a deep knock from the case beneath it.
+        addNoiseBurst(b, 0.0005f, 0.0002f, rng.range(0.0012f, 0.0020f), Biquad::highpass(rng.range(2400.0f, 3400.0f)),
+                      rng.range(0.8f, 1.0f), noise);                                                       // tack
+        addNoiseThunk(b, noise, 0.0005f, 1.0f, rng.range(1000.0f, 1500.0f), 0.0006f, rng.range(0.005f, 0.009f));  // chunk
+        addNoiseThunk(b, noise, 0.001f, rng.range(0.45f, 0.65f), rng.range(300.0f, 420.0f), 0.001f, 0.011f);       // thock
+        // Release: the switch returns - lighter and brighter.
+        const float release = rng.range(0.055f, 0.09f);
+        addNoiseBurst(b, release, 0.0002f, 0.0012f, Biquad::highpass(3200.0f), rng.range(0.25f, 0.4f), noise);
+        addNoiseThunk(b, noise, release, 0.3f, rng.range(1600.0f, 2200.0f), 0.0005f, 0.004f);
+        applyFilter(b, Biquad::highpass(120.0f));
+        fadeEdges(b, 0.0003f, 0.02f);
+        normalize(b, 0.85f);
         out.push_back({std::move(b), false});
     }
     return out;
@@ -1105,9 +1116,18 @@ std::vector<Sound> makeTerminalBoot(uint64_t seed) {
         const float motor = std::sin(dsp::kTwoPi * phase) + 0.4f * std::sin(dsp::kTwoPi * 2.0f * phase);
         b[i] += smooth01(0.25f, 0.5f, t) * (0.25f * motor + 0.05f * std::sin(dsp::kTwoPi * whine) + 0.2f * air.process(noise()) * spin);
     }
-    // Head seeks: dry mechanical ticks.
-    const Mode seek[] = {{1800, 0.006f, 1.0f}, {3100, 0.004f, 0.5f}};
-    for (int k = 0; k < 30; ++k) addModes(b, rng.range(1.3f, 2.8f), seek, 2, rng.range(0.2f, 0.6f), 0.1f, rng);
+    // Head seeks: dry, pitchless ticks (enveloped noise, like the key clicks
+    // but smaller) in irregular bursts as the drive reads its boot sectors.
+    for (float t = 1.3f; t < 2.8f;) {
+        const int burst = rng.rangeInt(2, 5);
+        for (int k = 0; k < burst && t < 2.8f; ++k) {
+            const float level = rng.range(0.2f, 0.5f);
+            addNoiseBurst(b, t, 0.0002f, rng.range(0.0006f, 0.0012f), Biquad::highpass(rng.range(2200.0f, 3200.0f)), level, noise);
+            addNoiseThunk(b, noise, t, 0.6f * level, rng.range(700.0f, 1100.0f), 0.0004f, rng.range(0.002f, 0.004f));
+            t += rng.range(0.015f, 0.045f);
+        }
+        t += rng.range(0.08f, 0.3f);
+    }
     applyFilter(b, Biquad::highpass(40.0f));
     fadeEdges(b, 0.002f, 0.2f);
     normalize(b, 0.8f);
