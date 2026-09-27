@@ -74,8 +74,8 @@ void main() {
     // Position in units of the viewport height, centred.
     vec2  p     = (gl_FragCoord.xy - 0.5 * uResolution) / uResolution.y;
     float open  = uOpen * uOpen * (3.0 - 2.0 * uOpen);
-    vec2  half  = vec2(0.62, 0.39) * mix(0.55, 1.0, open);  // tube half-size (16:10 raster)
-    vec2  q     = p / half;
+    vec2  tubeHalfSize = vec2(0.62, 0.39) * mix(0.55, 1.0, open);  // tube half-size (16:10 raster)
+    vec2  q     = p / tubeHalfSize;
     vec2  qd    = q * (1.0 + 0.045 * dot(q, q));            // bulging tube face
     float tube  = sdRoundBox(qd, vec2(1.0), 0.12);           // < 0 on the glass
     float bezel = sdRoundBox(q, vec2(1.13, 1.20), 0.18);     // < 0 on the monitor
