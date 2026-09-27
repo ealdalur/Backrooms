@@ -27,9 +27,12 @@ constexpr float kGruntGain       = 0.30f;
 constexpr float kHandleGain      = 0.21f;   ///< Lever "chunk-chunk", clearly audible over the creak.
 constexpr float kCreakGain       = 0.20f;   ///< Creaks are meant to be subtle.
 constexpr float kShutGain        = 0.425f;  ///< Closing "thunk" (energy is mostly below ~400 Hz).
-constexpr float kMutterGain      = 0.55f;   ///< The Wanderer murmuring to itself...
-constexpr float kCryGain         = 0.85f;   ///< ...and crying out when it has heard you.
-constexpr float kVoiceRefDistance = 4.0f;   ///< Its voice carries: audible from far away.
+// The Wanderer's voice is at full level within kVoiceRefDistance and falls off
+// with 1/distance beyond it. Loudness from afar depends on gain x reference
+// distance; the close-range level on gain alone, so the two are tuned together.
+constexpr float kMutterGain      = 0.41f;   ///< The Wanderer murmuring to itself...
+constexpr float kCryGain         = 0.64f;   ///< ...and crying out when it has heard you.
+constexpr float kVoiceRefDistance = 5.33f;  ///< Its voice carries: audible from far away.
 constexpr float kWandererStepGain = 0.45f;
 constexpr float kSkitterGain     = 0.5f;
 constexpr float kHissGain        = 0.55f;
