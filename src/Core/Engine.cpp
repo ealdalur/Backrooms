@@ -42,7 +42,7 @@ inline float smooth01(float x) {
     return x * x * (3.0f - 2.0f * x);
 }
 
-/// DOOM's controls from the real keyboard and mouse (classic and WASD layouts).
+/// DOOM's controls from the real keyboard and mouse (WASD or arrows; E or click fires, Space uses).
 doom::Controls doomControls(const Input& in, float sensitivity) {
     doom::Controls c;
     c.forward = in.keyDown(SDL_SCANCODE_W) || in.keyDown(SDL_SCANCODE_UP);
@@ -52,8 +52,8 @@ doom::Controls doomControls(const Input& in, float sensitivity) {
     c.turnLeft = in.keyDown(SDL_SCANCODE_LEFT);
     c.turnRight = in.keyDown(SDL_SCANCODE_RIGHT);
     c.run = in.keyDown(SDL_SCANCODE_LSHIFT) || in.keyDown(SDL_SCANCODE_RSHIFT);
-    c.fire = in.keyDown(SDL_SCANCODE_LCTRL) || in.keyDown(SDL_SCANCODE_RCTRL) || in.mouseDown(SDL_BUTTON_LEFT);
-    c.use = in.keyDown(SDL_SCANCODE_SPACE) || in.keyDown(SDL_SCANCODE_E);
+    c.fire = in.keyDown(SDL_SCANCODE_E) || in.mouseDown(SDL_BUTTON_LEFT);
+    c.use = in.keyDown(SDL_SCANCODE_SPACE);
     c.turn = in.mouseDelta().x * cfg::kLookRadiansPerPixel * sensitivity;
     if (in.keyPressed(SDL_SCANCODE_1) || in.keyPressed(SDL_SCANCODE_2)) c.weapon = 2;
     if (in.keyPressed(SDL_SCANCODE_3)) c.weapon = 3;
@@ -624,7 +624,7 @@ void Engine::drawHud() {
     }
     if (m_terminalBlend > 0.0f && m_console) {
         // The terminal's key guide, at twice the size of the other HUD text.
-        const char* hint = m_console->doomActive() ? "<ESC> Quit  <W><A><S><D> Move  MOUSE Turn  <CTRL>/CLICK Fire  <SPACE> Use  <2> <3> Weapons"
+        const char* hint = m_console->doomActive() ? "<ESC> Quit  <W><A><S><D> Move  MOUSE Turn  <E>/CLICK Fire  <SPACE> Use  <2> <3> Weapons"
                            : m_console->commandMode() ? "<ESC> Leave     <ENTER> Run Command     Type HELP for Commands"
                                                       : "<ESC> Leave     <ENTER> Command Prompt";
         hud.text(hint, w * 0.5f, h - 40.0f * s, TextOverlay::Align::Center, 2.0f,
