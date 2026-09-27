@@ -3,13 +3,18 @@
 // TerminalConsole.h
 // The interactive session on one retro terminal.
 //
-// Output model: every line of text is queued and "typed" onto the screen at
-// its own speed (system output bursts out instantly, the trapped voice types
-// slowly, hesitating). While idle the console streams endless system output;
-// interspersed within it - more often the longer the player stays - the
-// anomaly injects distressed messages, with a screen glitch and a sound.
-// It also reacts to the world: if the Stalker creeps up behind the player,
-// or the Wanderer is close enough to hear typing, the voice warns them.
+// Two views:
+//   * The live log (what a terminal shows when the player sits down): an
+//     endless stream of system output. Woven into it - more often the longer
+//     the player stays - the anomaly injects distressed messages, with a
+//     screen glitch and a sound.
+//   * The command prompt (Enter, or simply start typing): the log is
+//     suspended so command output is never interrupted, but the voice still
+//     speaks up now and then. STREAM goes back to the live log.
+// Every line is queued and "typed" onto the screen at its own speed (system
+// output bursts out, the trapped voice types slowly, hesitating). The console
+// also reacts to the world: if the Stalker creeps up behind the player, or
+// the Wanderer is close enough to hear typing, the voice warns them.
 //
 // Input model: a prompt line with editing and history. Submitted text is
 // matched against a registry of commands (name, aliases, help text and a
@@ -65,6 +70,8 @@ public:
     void clearRequests() { m_exitRequested = m_powerOffRequested = false; }
 
     const TerminalScreen& screen() const { return m_screen; }
+    /// True at the command prompt, false while watching the live log.
+    bool commandMode() const { return m_commandMode; }
     uint64_t terminalId() const { return m_id; }
 
     /// Returns and clears the sounds requested since the last call.
@@ -101,6 +108,8 @@ private:
     void printAnomaly(const std::string& text, float delay, bool urgent = false);
     void advanceTyping(float dt);
     void streamBurst(const TerminalContext& ctx);
+    /// Switches from the live log to a clean prompt.
+    void enterCommandMode();
     void compose();
     void sound(TerminalSound s) { m_sounds.push_back(s); }
 
@@ -135,7 +144,8 @@ private:
     int                      m_historyPos = 0;
 
     bool  m_ready = false;           ///< Booted and accepting commands.
-    bool  m_streaming = true;
+    bool  m_commandMode = false;    ///< At the prompt (live log suspended) rather than watching the log.
+    float m_anomalyTimer = 0.0f;    ///< At the prompt: countdown to the voice's next message.
     termtext::StreamMode m_mode = termtext::StreamMode::All;
     float m_streamTimer = 0.0f;
     double m_uptime = 0.0;           ///< Seconds since boot (kernel timestamps).

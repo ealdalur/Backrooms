@@ -10,8 +10,12 @@
 #include <cmath>
 
 namespace {
-constexpr float kArriveRadius = 0.35f;   ///< Waypoint reached within this horizontal distance.
-constexpr float kDoorApproach = 0.7f;    ///< Waypoints either side of narrow openings.
+// A doorway is 0.9 m clear between the jambs. Arriving within 0.25 m of a
+// point 0.9 m out, a body heading for the matching point on the far side is
+// at most ~0.13 m off-centre in the opening, so even the widest agent
+// (0.56 m) clears both jambs.
+constexpr float kArriveRadius = 0.25f;   ///< Waypoint reached within this horizontal distance.
+constexpr float kDoorApproach = 0.9f;    ///< Waypoints either side of narrow openings.
 constexpr float kPi = 3.14159265f;
 
 inline glm::vec2 xz(const glm::vec3& v) { return {v.x, v.z}; }
@@ -56,22 +60,36 @@ bool Agent::planTo(const NavGrid& nav, const glm::vec3& goal, const NavProfile& 
     return !m_path.empty();
 }
 
+bool Agent::clearRun(const NavGrid& nav, const glm::vec3& to) const {
+    const glm::vec2 a = xz(m_feet), b = xz(to);
+    const glm::vec2 d = b - a;
+    const float len = glm::length(d);
+    if (len < 1e-3f) return true;
+    const glm::vec2 side = glm::vec2(-d.y, d.x) / len * (m_halfWidth * 1.3f);
+    return nav.lineOfSight(m_level, a, b) && nav.lineOfSight(m_level, a + side, b + side) &&
+           nav.lineOfSight(m_level, a - side, b - side);
+}
+
 glm::vec3 Agent::steerTarget(const NavGrid& nav) {
-    // String pulling: skip ahead while the next waypoint is directly
-    // reachable (clear sight lines along both flanks of the body).
-    auto clear = [&](const glm::vec3& to) {
-        const glm::vec2 a = xz(m_feet), b = xz(to);
-        const glm::vec2 d = b - a;
-        const float len = glm::length(d);
-        if (len < 1e-3f) return true;
-        const glm::vec2 side = glm::vec2(-d.y, d.x) / len * (m_halfWidth * 1.3f);
-        return nav.lineOfSight(m_level, a, b) && nav.lineOfSight(m_level, a + side, b + side) &&
-               nav.lineOfSight(m_level, a - side, b - side);
-    };
+    // String pulling: skip ahead while the next waypoint is directly reachable.
     if (m_noShortcuts <= 0.0f) {
-        while (m_pathIndex + 1 < m_path.size() && clear(m_path[m_pathIndex + 1])) ++m_pathIndex;
+        while (m_pathIndex + 1 < m_path.size() && clearRun(nav, m_path[m_pathIndex + 1])) ++m_pathIndex;
     }
     return m_path[m_pathIndex];
+}
+
+bool Agent::reachedWaypoint() const {
+    const glm::vec2 p = xz(m_feet), t = xz(m_path[m_pathIndex]);
+    if (glm::length(p - t) < kArriveRadius) return true;
+    if (m_pathIndex + 1 >= m_path.size()) return false;
+    // Already past it and close to the line on to the next one: carry on
+    // rather than circling back (a small arrival radius could otherwise orbit).
+    glm::vec2 seg = xz(m_path[m_pathIndex + 1]) - t;
+    const float len = glm::length(seg);
+    if (len < 1e-4f) return true;
+    seg /= len;
+    const glm::vec2 rel = p - t;
+    return glm::dot(rel, seg) > 0.0f && std::fabs(rel.x * seg.y - rel.y * seg.x) < 0.3f;
 }
 
 bool Agent::nextCrossing(glm::ivec2& from, glm::ivec2& to) const {
@@ -95,7 +113,7 @@ bool Agent::followPath(float dt, float speed, float accel, const NavGrid& nav, c
     glm::vec3 target = steerTarget(nav);
     glm::vec3 d = target - m_feet;
     d.y = 0.0f;
-    if (glm::length(d) < kArriveRadius) {
+    if (reachedWaypoint()) {
         ++m_pathIndex;
         if (!hasPath()) {
             integrate(dt, glm::vec3(0.0f), accel, world, physics);

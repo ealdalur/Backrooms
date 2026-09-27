@@ -209,7 +209,7 @@ bool Stalker::update(float dt, const PlayerView& player, const NavGrid& nav, con
             break;
         }
         m_replan -= dt;
-        if (m_replan <= 0.0f) {
+        if (m_replan <= 0.0f || m_stuck > 1.0f) {
             planTo(nav, player.feet, huntProfile(player, nav));
             m_replan = 0.4f;
         }
@@ -218,7 +218,9 @@ bool Stalker::update(float dt, const PlayerView& player, const NavGrid& nav, con
             const float prowl = std::clamp((dist - 3.0f) / (cfg::kStalkerProwlDist - 3.0f), 0.0f, 1.0f);
             followPath(dt, glm::mix(cfg::kStalkerCreepSpeed, cfg::kStalkerSpeed, prowl), 9.0f, nav, world, physics);
         }
-        if (sameLevel && dist < cfg::kStalkerLungeRange && nav.lineOfSight(m_level, xz(m_feet), xz(player.feet))) {
+        // The rush goes straight at the player, so it needs a straight run for
+        // the whole body, not just a sight line through a doorway.
+        if (sameLevel && dist < cfg::kStalkerLungeRange && clearRun(nav, player.feet)) {
             m_state = State::Lunging;
         }
         break;
@@ -264,8 +266,12 @@ bool Stalker::update(float dt, const PlayerView& player, const NavGrid& nav, con
             freeze(); // turned round just in time
         } else if (sameLevel && dist < cfg::kCatchDistance && std::fabs(toPlayer.y) < 1.2f) {
             caught = true;
-        } else if (dist > cfg::kStalkerLungeRange * 2.0f) {
+        } else if (dist > cfg::kStalkerLungeRange * 2.0f || m_stuck > 0.25f ||
+                   (dist > cfg::kCatchDistance && !clearRun(nav, player.feet))) {
+            // Lost the straight run (the player stepped behind a wall or door
+            // frame): back to the path, which goes round through the opening.
             m_state = State::Stalking;
+            m_replan = 0.0f;
         }
         break;
     }

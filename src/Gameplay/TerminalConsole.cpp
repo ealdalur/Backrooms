@@ -54,7 +54,7 @@ const std::vector<TerminalConsole::Command>& TerminalConsole::commands() {
         {"help",     "? commands", "HELP",              "LIST COMMANDS",                       &TerminalConsole::cmdHelp},
         {"clear",    "cls",        "CLEAR",             "CLEAR THE SCREEN",                    &TerminalConsole::cmdClear},
         {"diag",     "test",       "DIAG",              "RUN HARDWARE DIAGNOSTICS",            &TerminalConsole::cmdDiag},
-        {"stream",   "logs",       "STREAM [ON|OFF]",   "TOGGLE THE LIVE SYSTEM LOG",          &TerminalConsole::cmdStream},
+        {"stream",   "logs log monitor", "STREAM",      "BACK TO THE LIVE SYSTEM LOG",         &TerminalConsole::cmdStream},
         {"mode",     "",           "MODE <SOURCE>",     "LOG: ALL KERNEL DIAG NET HEX",        &TerminalConsole::cmdMode},
         {"status",   "info",       "STATUS",            "NODE STATUS",                         &TerminalConsole::cmdStatus},
         {"whoami",   "",           "WHOAMI",            "SHOW CURRENT USER",                   &TerminalConsole::cmdWhoami},
@@ -98,13 +98,29 @@ void TerminalConsole::open(bool powered) {
         std::snprintf(header, sizeof(header), "FACILITY MONITOR 2.3 - NODE %04X - LEVEL %d",
                       static_cast<unsigned>(m_id & 0xFFFF), m_level);
         print(header, TerminalScreen::Bright);
-        print("TYPE HELP FOR COMMANDS.", TerminalScreen::Dim);
+        print("PRESS ENTER FOR A COMMAND PROMPT.", TerminalScreen::Dim);
         print("");
     } else {
         print("", TerminalScreen::Normal);
         print("SESSION RESUMED.", TerminalScreen::Dim);
     }
     m_ready = false; // until the queue drains
+}
+
+void TerminalConsole::enterCommandMode() {
+    m_commandMode = true;
+    // Routine output still waiting to be typed is dropped; whatever the voice
+    // is saying stays queued (and restarts on the clean screen).
+    m_queue.erase(std::remove_if(m_queue.begin(), m_queue.end(), [](const Pending& p) { return !p.anomaly; }),
+                  m_queue.end());
+    m_lines.clear();
+    m_typingLine = false;
+    m_typedChars = 0;
+    m_typeAccum = 0.0f;
+    m_delay = 0.0f;
+    print("COMMAND PROMPT. TYPE HELP FOR COMMANDS, STREAM TO WATCH THE LOG.", TerminalScreen::Dim);
+    print("");
+    m_anomalyTimer = m_rng.range(10.0f, 25.0f);
 }
 
 void TerminalConsole::update(float dt, const TerminalContext& ctx) {
@@ -136,9 +152,19 @@ void TerminalConsole::update(float dt, const TerminalContext& ctx) {
             printAnomaly(m_rng.chance(0.5f) ? "shhh. it can hear you typing." : "stop typing. it's listening.", 0.3f, true);
             m_hushCooldown = 40.0f;
         }
-        if (m_streaming && m_queue.empty() && !m_typingLine) {
+        const bool idle = m_queue.empty() && !m_typingLine;
+        if (!m_commandMode) {
+            // Watching the live log: system output with the anomaly woven through it.
             m_streamTimer -= dt;
-            if (m_streamTimer <= 0.0f) streamBurst(ctx);
+            if (idle && m_streamTimer <= 0.0f) streamBurst(ctx);
+        } else {
+            // At the prompt the log is silent - but the voice is not.
+            m_anomalyTimer -= dt;
+            if (idle && m_anomalyTimer <= 0.0f) {
+                const float desperation = std::min(1.0f, m_session / kDesperationTime);
+                printAnomaly(termtext::anomalyMessage(m_rng, desperation), 0.0f);
+                m_anomalyTimer = m_rng.range(15.0f, 35.0f) * (1.0f - 0.5f * desperation);
+            }
         }
     }
     advanceTyping(dt);
@@ -154,7 +180,8 @@ std::vector<TerminalSound> TerminalConsole::takeSounds() {
 // ---- Keyboard ---------------------------------------------------------------------------------
 
 void TerminalConsole::type(const char* text) {
-    if (m_powerOffTimer >= 0.0f) return;
+    if (m_powerOffTimer >= 0.0f || !m_ready) return;
+    if (!m_commandMode) enterCommandMode(); // typing opens the prompt
     for (const char* c = text; *c; ++c) {
         if (*c < 32 || *c > 126) continue; // printable ASCII only (the font's range)
         if (m_input.size() >= 120) break;
@@ -187,6 +214,10 @@ void TerminalConsole::submit(const TerminalContext& ctx) {
         sound(TerminalSound::Beep);
         return;
     }
+    if (!m_commandMode) { // Enter on the live log opens the prompt
+        enterCommandMode();
+        return;
+    }
     const std::string raw = m_input;
     m_input.clear();
     print("> " + raw, TerminalScreen::Input);
@@ -195,8 +226,6 @@ void TerminalConsole::submit(const TerminalContext& ctx) {
     if (m_history.empty() || m_history.back() != raw) m_history.push_back(raw);
     m_historyPos = static_cast<int>(m_history.size());
 
-    // Give the reader a moment before the live log scrolls the answer away.
-    m_streamTimer = std::max(m_streamTimer, 6.0f);
     if (const Command* c = findCommand(words[0])) {
         const Args args(words.begin() + 1, words.end());
         (this->*c->handler)(args, ctx);
@@ -347,9 +376,17 @@ void TerminalConsole::compose() {
         }
     }
 
-    // Prompt line (scrolled so the end of long input stays visible).
+    // Prompt line (scrolled so the end of long input stays visible). On the
+    // live log it only says how to get a prompt.
     const int promptRow = TerminalScreen::kRows - 1;
-    m_screen.cursorVisible = m_ready && m_powerOffTimer < 0.0f;
+    const bool usable = m_ready && m_powerOffTimer < 0.0f;
+    m_screen.cursorVisible = usable && m_commandMode;
+    if (usable && !m_commandMode) {
+        const std::string hint = "PRESS ENTER FOR A COMMAND PROMPT";
+        for (int col = 0; col < static_cast<int>(hint.size()); ++col) {
+            m_screen.at(col, promptRow) = {hint[static_cast<size_t>(col)], TerminalScreen::Dim};
+        }
+    }
     if (m_screen.cursorVisible) {
         const int room = TerminalScreen::kCols - 3;
         const std::string shownInput =
@@ -396,28 +433,27 @@ void TerminalConsole::cmdDiag(const Args&, const TerminalContext& ctx) {
     print("DIAGNOSTICS COMPLETE: 1 OCCUPANT UNACCOUNTED FOR.", TerminalScreen::Bright, 50.0f, 0.4f);
 }
 
-void TerminalConsole::cmdStream(const Args& args, const TerminalContext&) {
-    if (!args.empty() && (args[0] == "on" || args[0] == "off")) m_streaming = args[0] == "on";
-    else m_streaming = !m_streaming;
-    print(m_streaming ? "LIVE LOG: ON" : "LIVE LOG: OFF (SOME MESSAGES MAY STILL ARRIVE)", TerminalScreen::Dim);
+void TerminalConsole::cmdStream(const Args&, const TerminalContext&) {
+    m_commandMode = false;
+    m_streamTimer = 0.6f;
+    print(std::string("RESUMING LIVE LOG (") + termtext::modeName(m_mode) + "). PRESS ENTER FOR THE PROMPT.", TerminalScreen::Dim);
 }
 
 void TerminalConsole::cmdMode(const Args& args, const TerminalContext&) {
     termtext::StreamMode mode;
     if (args.empty() || !termtext::parseMode(args[0], mode)) {
-        print(std::string("MODE IS ") + termtext::modeName(m_mode) + ". USAGE: MODE <ALL|KERNEL|DIAG|NET|HEX>");
+        print(std::string("SOURCE IS ") + termtext::modeName(m_mode) + ". USAGE: MODE <ALL|KERNEL|DIAG|NET|HEX>");
         return;
     }
     m_mode = mode;
-    m_streaming = true;
-    print(std::string("LOG SOURCE: ") + termtext::modeName(m_mode), TerminalScreen::Dim);
+    print(std::string("LOG SOURCE: ") + termtext::modeName(m_mode) + ". TYPE STREAM TO WATCH IT.", TerminalScreen::Dim);
 }
 
 void TerminalConsole::cmdStatus(const Args&, const TerminalContext& ctx) {
     char line[80];
     std::snprintf(line, sizeof(line), "NODE %04X   LEVEL %d   UPTIME %.0fS", static_cast<unsigned>(m_id & 0xFFFF), ctx.level, m_uptime);
     print(line, TerminalScreen::Bright);
-    std::snprintf(line, sizeof(line), "LOG: %s (%s)", m_streaming ? "ON" : "OFF", termtext::modeName(m_mode));
+    std::snprintf(line, sizeof(line), "LOG SOURCE: %s", termtext::modeName(m_mode));
     print(line);
     print("POWER: MAINS   LIGHTING: DEGRADED   EXITS: 0");
     print(ctx.stalkerDistance >= 0.0f || ctx.wandererDistance >= 0.0f ? "OCCUPANTS: 1 (+2 UNREGISTERED)" : "OCCUPANTS: 1 (+1 UNREGISTERED)");
@@ -506,6 +542,7 @@ void TerminalConsole::cmdEcho(const Args& args, const TerminalContext&) {
 }
 
 void TerminalConsole::cmdReboot(const Args&, const TerminalContext&) {
+    m_commandMode = false; // it boots to the live log
     m_lines.clear();
     m_queue.clear();
     m_typingLine = false;

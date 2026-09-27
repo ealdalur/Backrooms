@@ -58,14 +58,17 @@ inline int levelOf(float y) { return static_cast<int>(std::floor((y + 0.05f) / k
 // A stairwell is one enclosed cell holding a switchback stair from level L to
 // L + 1: two flights of ten risers either side of a divider wall, joined by a
 // half-way landing. It is entered through one edge on both storeys.
-inline constexpr float kStairwellChance = 0.40f;                      ///< Per chunk and level pair.
+/// Roll per chunk and storey pair; on top of it, every storey of every chunk
+/// is guaranteed at least one stairwell (see WorldGenerator::stairwell). At
+/// 0.5 that averages 1.5 stairwells per chunk - the fewest the guarantee allows.
+inline constexpr float kStairwellChance = 0.50f;
 inline constexpr int   kStairRisers     = 20;                         ///< Per storey (2 x 10).
 inline constexpr float kStairRise       = kLevelHeight / kStairRisers; ///< 0.17 m: well under the step-up height.
 inline constexpr float kStairTread      = 0.28f;
 inline constexpr float kStairLobbyDepth = 1.3f; ///< Floor strip inside the entrance before the flights start.
 
 // Terminals ---------------------------------------------------------------------
-inline constexpr float kTerminalChance = 0.11f; ///< Probability that a placed desk carries a retro computer.
+inline constexpr float kTerminalChance = 0.20f; ///< Probability that a placed desk carries a retro computer.
 
 /// Wall-edge classification shared by generation, collision and the shader.
 enum class EdgeType : uint8_t {

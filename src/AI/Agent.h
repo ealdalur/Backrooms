@@ -46,6 +46,11 @@ protected:
     bool hasPath() const { return m_pathIndex < m_path.size(); }
     /// The waypoint currently steered at (after string pulling).
     glm::vec3 steerTarget(const NavGrid& nav);
+    /// True if the current waypoint has been reached (or cleanly passed).
+    bool reachedWaypoint() const;
+    /// True if the whole body width could move straight to `to` without
+    /// meeting a wall, a closed door or the solid part of an opening.
+    bool clearRun(const NavGrid& nav, const glm::vec3& to) const;
     /// The next cell crossing still ahead on the path (for door handling).
     bool nextCrossing(glm::ivec2& from, glm::ivec2& to) const;
 

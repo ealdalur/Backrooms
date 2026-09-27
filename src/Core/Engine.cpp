@@ -558,9 +558,11 @@ void Engine::drawHud() {
         hud.text(m_prompt, w * 0.5f, h * 0.5f + 20.0f * s, TextOverlay::Align::Center, 1.0f,
                  glm::vec4(1.0f, 1.0f, 0.92f, 0.75f * m_crosshairHighlight), true);
     }
-    if (m_terminalBlend > 0.0f) {
-        hud.text("ESC  LEAVE     ENTER  RUN COMMAND     TYPE HELP FOR COMMANDS", w * 0.5f, h - 24.0f * s,
-                 TextOverlay::Align::Center, 1.0f, glm::vec4(0.8f, 0.8f, 0.75f, 0.6f * m_terminalBlend), true);
+    if (m_terminalBlend > 0.0f && m_console) {
+        const char* hint = m_console->commandMode() ? "ESC  LEAVE     ENTER  RUN COMMAND     TYPE HELP FOR COMMANDS"
+                                                    : "ESC  LEAVE     ENTER  COMMAND PROMPT";
+        hud.text(hint, w * 0.5f, h - 24.0f * s, TextOverlay::Align::Center, 1.0f,
+                 glm::vec4(0.8f, 0.8f, 0.75f, 0.6f * m_terminalBlend), true);
     }
     if (m_messageTimer > 0.0f && !m_message.empty()) {
         const float a = std::min(1.0f, m_messageTimer / 1.0f) * std::min(1.0f, (5.0f - m_messageTimer) / 0.8f + 0.2f);
@@ -836,8 +838,11 @@ void Engine::setupDemo() {
 void Engine::updateDemo(float dt) {
     if (m_options.demo.empty()) return;
     m_demoTime += dt;
-    if (m_options.demo == "ambush" && m_demoStep == 0 && m_demoTime > 2.0f) {
-        m_player->setViewAngles(m_player->yaw() + kPi, 0.0f); // whip round
+    if (m_options.demo == "ambush" && m_demoStep == 0 && m_entities->stalker().active() &&
+        m_entities->stalkerDistance() < 7.0f) {
+        // Whip round towards it (whatever the layout between).
+        const glm::vec3 to = m_entities->stalker().feet() - m_player->feetPosition();
+        m_player->setViewAngles(yawToward(to), 0.0f);
         m_demoStep = 1;
         std::cout << "[Demo] Turning round\n";
     }

@@ -20,10 +20,11 @@
 // chunk in two.
 //
 // Verticality: for every chunk column (cx, cz) and storey pair (L, L + 1) a
-// stairwell exists with probability kStairwellChance (a pure hash of the
-// seed, cx, cz and L). Stairwells rising from even and odd storeys use
-// different cell columns, so the two stairwells a storey may hold (one going
-// up, one coming down) never collide.
+// stairwell may exist (a pure hash of the seed, cx, cz and L), and every
+// storey of every chunk is guaranteed at least one, going up or down.
+// Stairwells rising from even and odd storeys use different cell columns, so
+// the two stairwells a storey may hold (one going up, one coming down) never
+// collide.
 // ---------------------------------------------------------------------------
 
 #include "World/Chunk.h"

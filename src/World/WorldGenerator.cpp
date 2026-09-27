@@ -31,6 +31,7 @@ constexpr uint64_t kSaltFurniture     = 0xF0E1'0008ull;
 constexpr uint64_t kSaltLevel         = 0x1E7E'0009ull;
 constexpr uint64_t kSaltStairwell     = 0x57A1'000Aull;
 constexpr uint64_t kSaltTerminal      = 0x7E41'000Bull;
+constexpr uint64_t kSaltStairwellRoll = 0x57A1'000Cull;
 
 constexpr float S  = world::kCellSize;
 constexpr float H  = world::kCeilingHeight;
@@ -147,9 +148,19 @@ uint64_t WorldGenerator::chunkSeed(const ChunkCoord& c) const {
 }
 
 std::optional<stairs::Placement> WorldGenerator::stairwell(int lowerLevel, int cx, int cz) const {
+    // Every storey of every chunk gets at least one stairwell. The one rising
+    // from `lowerLevel` exists if its own roll succeeds, or if the roll of the
+    // one arriving at `lowerLevel` from below failed - otherwise that storey
+    // would have none. Both rolls are pure hashes, so this stays deterministic.
+    auto rolls = [this, cx, cz](int level) {
+        const uint64_t h = rnd::hashCombine(rnd::hashCoords(m_seed, cx, cz, kSaltStairwellRoll),
+                                            static_cast<uint64_t>(static_cast<uint32_t>(level)));
+        return rnd::toUnit(h) < world::kStairwellChance;
+    };
+    if (!rolls(lowerLevel) && rolls(lowerLevel - 1)) return std::nullopt;
+
     rnd::Rng rng(rnd::hashCombine(rnd::hashCoords(m_seed, cx, cz, kSaltStairwell),
                                   static_cast<uint64_t>(static_cast<uint32_t>(lowerLevel))));
-    if (!rng.chance(world::kStairwellChance)) return std::nullopt;
     stairs::Placement p;
     // Stairwells rising from odd and even storeys use different columns, so
     // one storey's "up" and "down" stairwells can never share a cell. Rows
