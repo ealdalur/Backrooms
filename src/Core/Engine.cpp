@@ -42,7 +42,8 @@ inline float smooth01(float x) {
     return x * x * (3.0f - 2.0f * x);
 }
 
-/// DOOM's controls from the real keyboard and mouse (WASD or arrows; E or click fires, Space uses).
+/// DOOM's controls from the real keyboard and mouse (WASD or arrows; E or click fires, Space uses,
+/// right button + mouse strafes).
 doom::Controls doomControls(const Input& in, float sensitivity) {
     doom::Controls c;
     c.forward = in.keyDown(SDL_SCANCODE_W) || in.keyDown(SDL_SCANCODE_UP);
@@ -54,7 +55,9 @@ doom::Controls doomControls(const Input& in, float sensitivity) {
     c.run = in.keyDown(SDL_SCANCODE_LSHIFT) || in.keyDown(SDL_SCANCODE_RSHIFT);
     c.fire = in.keyDown(SDL_SCANCODE_E) || in.mouseDown(SDL_BUTTON_LEFT);
     c.use = in.keyDown(SDL_SCANCODE_SPACE);
-    c.turn = in.mouseDelta().x * cfg::kLookRadiansPerPixel * sensitivity;
+    // Holding the right button turns sideways mouse movement into strafing.
+    if (in.mouseDown(SDL_BUTTON_RIGHT)) c.strafe = in.mouseDelta().x * sensitivity;
+    else c.turn = in.mouseDelta().x * cfg::kLookRadiansPerPixel * sensitivity;
     if (in.keyPressed(SDL_SCANCODE_1) || in.keyPressed(SDL_SCANCODE_2)) c.weapon = 2;
     if (in.keyPressed(SDL_SCANCODE_3)) c.weapon = 3;
     return c;

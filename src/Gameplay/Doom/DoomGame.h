@@ -41,7 +41,8 @@ namespace doom {
 struct Controls {
     bool  forward = false, back = false, strafeLeft = false, strafeRight = false;
     bool  turnLeft = false, turnRight = false, run = false, fire = false, use = false;
-    float turn = 0.0f;  ///< Mouse turn this frame, radians (positive = right).
+    float turn = 0.0f;   ///< Mouse turn this frame, radians (positive = right).
+    float strafe = 0.0f; ///< Mouse strafe this frame (strafe button held), mouse pixels (positive = right).
     int   weapon = 0;   ///< Weapon slot pressed this frame (2 pistol, 3 shotgun), 0 = none.
 };
 
@@ -186,6 +187,7 @@ private:
     int      m_levelTics = 0;
     float    m_accum = 0.0f;
     float    m_turn = 0.0f;       ///< Mouse turn accumulated until the next tic.
+    float    m_strafe = 0.0f;     ///< Mouse strafe accumulated until the next tic.
     bool     m_fireLatch = false; ///< Presses between tics are not lost.
     bool     m_useLatch = false;
     bool     m_prevFire = false, m_prevUse = false;

@@ -21,6 +21,8 @@ constexpr float kFriction = 0.90625f;   ///< Momentum kept per tic (the original
 constexpr float kWalkThrust = 0.0082f;  ///< Top speed = thrust / (1 - friction): ~3 cells/s walking...
 constexpr float kRunThrust = 0.0158f;   ///< ...and ~6 running.
 constexpr float kMaxMomentum = kRunThrust / (1.0f - kFriction);
+constexpr float kMouseStrafeThrust = 0.0016f; ///< Thrust per mouse pixel while strafing...
+constexpr float kMaxMouseStrafe = 1.25f * kRunThrust; ///< ...capped a little above running (as the original allowed).
 constexpr float kUseRange = 1.3f;
 constexpr int   kDoorTravelTics = 20;
 constexpr int   kDoorWaitTics = 150;
@@ -79,6 +81,7 @@ void Game::update(float dt, const Controls& in) {
     m_prevUse = in.use;
     if (in.weapon) m_weaponLatch = in.weapon;
     m_turn += in.turn;
+    m_strafe += in.strafe;
 
     m_accum += std::min(dt, 0.25f);
     int ran = 0;
@@ -106,7 +109,7 @@ void Game::tic(const Controls& in) {
             }
         }
         m_melting = !done;
-        m_turn = 0.0f;
+        m_turn = m_strafe = 0.0f;
         return;
     }
     switch (m_mode) {
@@ -238,7 +241,7 @@ void Game::ticPlayer(const Controls& in) {
         glm::vec2 before = p.pos;
         tryMove(p.pos, p.mom, kPlayerRadius, -1, true);
         p.mom = (p.pos - before) * kFriction;
-        m_turn = 0.0f;
+        m_turn = m_strafe = 0.0f;
         if (p.deadTics > 35 && (m_useLatch || m_fireLatch)) {
             beginMelt();
             loadLevel(m_map, true);
@@ -253,7 +256,10 @@ void Game::ticPlayer(const Controls& in) {
     const float thrust = in.run ? kRunThrust : kWalkThrust;
     const float fwd = (in.forward ? 1.0f : 0.0f) - (in.back ? 1.0f : 0.0f);
     const float side = (in.strafeRight ? 1.0f : 0.0f) - (in.strafeLeft ? 1.0f : 0.0f);
-    p.mom += dir * (fwd * thrust) + right * (side * thrust * 0.9f);
+    // Mouse strafing: sideways mouse movement pushes you sideways, like the keys but analogue.
+    const float mouseSide = std::clamp(m_strafe * kMouseStrafeThrust, -kMaxMouseStrafe, kMaxMouseStrafe);
+    m_strafe = 0.0f;
+    p.mom += dir * (fwd * thrust) + right * (side * thrust * 0.9f + mouseSide);
 
     const glm::vec2 before = p.pos;
     if (!tryMove(p.pos, p.mom, kPlayerRadius, -1, true)) p.mom = p.pos - before; // slid along a wall
