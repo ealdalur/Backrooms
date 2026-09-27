@@ -116,6 +116,27 @@ void addClack(Buffer& b, float at, float pitch, float gain, rnd::Rng& rng, Noise
     addNoiseThunk(b, noise, at + 0.004f, 0.3f * gain, 900.0f, 0.001f, 0.02f);
 }
 
+/// One stroke of a pump action, "chhk": all noise, no ringing. A gritty
+/// band of friction noise as the slide travels `length` seconds, then the
+/// pitchless knock of it hitting its stop. Kept below the 11 kHz path's cutoff.
+void addPumpStroke(Buffer& b, float at, float length, float brightness, float gain, rnd::Rng& rng, Noise& noise) {
+    addNoiseBurst(b, at, 0.0003f, 0.004f, Biquad::highpass(2500.0f), 0.7f * gain, noise); // the grip catching
+    Biquad bp, hp = Biquad::highpass(1200.0f);
+    const size_t s0 = samplesFor(at), n = samplesFor(length);
+    const size_t grainLen = samplesFor(0.0012f);
+    float grain = 1.0f;
+    for (size_t i = 0; i < n && s0 + i < b.size(); ++i) {
+        const float t = timeOf(i), u = t / length;
+        if (i % 32 == 0) bp.configure(Biquad::Type::Bandpass, brightness * (3600.0f - 1200.0f * u), 0.9f);
+        if (i % grainLen == 0) grain = 0.45f + 0.55f * rng.nextFloat(); // metal dragging on metal
+        const float env = smooth01(0.0f, 0.006f, t) * (0.6f + 0.4f * u) * (1.0f - smooth01(length - 0.004f, length, t));
+        b[s0 + i] += gain * 0.9f * env * grain * hp.process(bp.process(noise()));
+    }
+    const float stop = at + length;
+    addNoiseBurst(b, stop, 0.0002f, 0.006f, Biquad::highpass(2000.0f), 0.9f * gain, noise, 0.3f);
+    addNoiseThunk(b, noise, stop, 0.6f * gain, 900.0f, 0.001f, 0.018f);
+}
+
 /// A rising square-wave chirp (pickups).
 void addChirp(Buffer& b, float at, float length, float hz0, float hz1, float gain) {
     const size_t s0 = samplesFor(at);
@@ -213,9 +234,9 @@ std::vector<Sound> makeShotgun(uint64_t seed) {
     addNoiseBurst(b, 0.0f, 0.0004f, 0.02f, Biquad::highpass(3000.0f), 0.5f, noise);
     addThump(b, 0.0f, 130.0f, 38.0f, 0.08f, 1.2f);
     addNoiseBurst(b, 0.03f, 0.02f, 0.22f, Biquad::lowpass(500.0f), 0.45f, noise); // rumble
-    // Pump back, pump forward.
-    addClack(b, 0.48f, 1.0f, 0.7f, rng, noise);
-    addClack(b, 0.66f, 1.12f, 0.8f, rng, noise);
+    // Pump back ("chhk"), pump forward ("chhhk").
+    addPumpStroke(b, 0.46f, 0.05f, 1.0f, 0.7f, rng, noise);
+    addPumpStroke(b, 0.63f, 0.065f, 1.1f, 0.8f, rng, noise);
     return {finish(b)};
 }
 
@@ -323,10 +344,9 @@ std::vector<Sound> makeWeaponUp(uint64_t seed) {
     rnd::Rng rng(seed);
     Noise noise(rng.next());
     Buffer b = silence(0.45f);
-    addClack(b, 0.0f, 0.9f, 1.0f, rng, noise);
-    addClack(b, 0.13f, 1.05f, 1.0f, rng, noise);
-    addChirp(b, 0.2f, 0.06f, 700.0f, 900.0f, 0.4f);
-    addChirp(b, 0.26f, 0.1f, 1050.0f, 1300.0f, 0.4f);
+    // Racking the new shotgun: "chhk chhhk".
+    addPumpStroke(b, 0.0f, 0.05f, 1.0f, 1.0f, rng, noise);
+    addPumpStroke(b, 0.14f, 0.065f, 1.1f, 1.0f, rng, noise);
     return {finish(b, 0.8f)};
 }
 

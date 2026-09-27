@@ -5,6 +5,7 @@
 // synthesised like everything else, but voiced for a 1993 PC:
 //   * Effects are rendered at full rate, then pushed through the DMX sound
 //     path of the era: 11 kHz sample-and-hold and 8-bit quantisation.
+//   * Gun actions are pure noise (friction bursts and pitchless knocks).
 //   * Monster voices: a buzzy sawtooth gliding through vowel formants,
 //     ring-modulated and roughened with noise (snarls, screams, gurgles).
 //   * Music: a sequenced metal loop played on 2-operator FM voices with
