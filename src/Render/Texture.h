@@ -26,6 +26,9 @@ public:
     void create(int width, int height, GLenum internalFormat, GLenum format, GLenum type,
                 const void* data, GLenum filter, GLenum wrap);
 
+    /// Replaces the whole image (same size and format as created).
+    void update(const void* data, GLenum format, GLenum type);
+
     void bind(GLuint unit) const;
     GLuint id() const { return m_id; }
     int width() const { return m_width; }

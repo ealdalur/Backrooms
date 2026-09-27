@@ -13,7 +13,8 @@
 //                 climb / descend (scripted walk up / down the nearest
 //                 stairwell), stalker, ambush (it creeps up from
 //                 behind, then the view whips round), caught (...and it never
-//                 does), wanderer, terminal, explore (a long scripted walk with
+//                 does), wanderer, terminal, doom (sits down and plays the
+//                 hidden terminal game), explore (a long scripted walk with
 //                 the Stalker off; --type <n> picks the route), idle (just
 //                 logs entity activity).
 //   --type        Text typed into the terminal in the terminal scene
@@ -45,7 +46,7 @@ bool parseSeed(const char* text, uint64_t& out) {
 void printUsage(const char* exe) {
     std::cout << "Usage: " << exe << " [seed] [--seed <n>] [--level <n>] [--no-entities] [--dump-sounds <dir>]\n"
               << "       [--demo <scene> [--type <text>]] [--screenshot <file.bmp> [--delay <seconds>]]\n"
-              << "  demo scenes: stairs, stairs-top, stairs-sign, climb, descend, stalker, ambush, caught, wanderer, terminal, explore, idle\n";
+              << "  demo scenes: stairs, stairs-top, stairs-sign, climb, descend, stalker, ambush, caught, wanderer, terminal, doom, explore, idle\n";
 }
 
 } // namespace

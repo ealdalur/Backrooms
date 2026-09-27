@@ -14,7 +14,8 @@
 //     from its head every frame, so they swell as it approaches), its
 //     dragging steps, the Stalker's skittering and hiss, and its breathing
 //     when it is right behind you; a heartbeat that quickens with fear.
-//   * Terminals: key clicks, beeps, glitches, boot and the monitor's hum.
+//   * Terminals: key clicks, beeps, glitches, boot and the monitor's hum -
+//     and, when DOOM is running on one, its effects and looping music.
 // Positional sounds get distance attenuation, equal-power panning, head
 // shadow and occlusion (muffled and quieter when a wall is in the way, and
 // always when the source is on another storey).
@@ -67,6 +68,9 @@ public:
 
     /// Hum of the monitor in use; `on` = false silences it.
     void setMonitorHum(bool on, const glm::vec3& at, const WorldGenerator& generator);
+
+    /// DOOM's music from the terminal at `at`; `on` = false stops it.
+    void setTerminalMusic(bool on, const glm::vec3& at, const WorldGenerator& generator);
 
     /// The shock when an entity reaches the player.
     void playSting();
@@ -127,6 +131,7 @@ private:
     VoiceHandle m_heart = 0;      ///< Heartbeat loop (gain and tempo follow fear).
     VoiceHandle m_voice = 0;      ///< The Wanderer's current phrase.
     VoiceHandle m_monitor = 0;    ///< CRT hum of the terminal in use.
+    VoiceHandle m_music = 0;      ///< DOOM's music, while it runs on that terminal.
     float       m_voiceGap = 0.0f; ///< Pause before its next phrase.
 
     float    m_nextDistantEvent = 7.0f;

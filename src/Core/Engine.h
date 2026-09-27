@@ -42,6 +42,7 @@ class Terminal;
 class TerminalConsole;
 class WorldGenerator;
 struct TerminalContext;
+namespace doom { struct Controls; }
 
 /// Start-up options (parsed from the command line in Main.cpp).
 struct EngineOptions {
@@ -50,7 +51,8 @@ struct EngineOptions {
     std::string screenshotPath;          ///< If set: capture a BMP after a delay, then exit.
     float       screenshotDelay = 3.0f;  ///< Seconds of simulation before the capture.
     /// Developer scene set up at start: stairs, stairs-top, stairs-sign, climb, descend,
-    /// stalker, ambush, caught, wanderer, terminal, explore (a long scripted walk,
+    /// stalker, ambush, caught, wanderer, terminal, doom (DOOM on the nearest terminal,
+    /// scripted play), explore (a long scripted walk,
     /// Stalker off; --type <n> picks the route), idle (only logs entity activity).
     std::string demo;
     std::string demoInput;               ///< Typed into the terminal in the "terminal" scene ("upper" in "stairs-sign").
@@ -123,6 +125,8 @@ private:
     /// A random walk of `steps` cells from `from`, preferring unvisited rooms.
     std::vector<AutopilotPoint> exploreRoute(const glm::vec3& from, int level, int steps, uint64_t seed) const;
     void updateDemo(float dt);
+    /// Scripted DOOM input for the "doom" scene.
+    doom::Controls demoDoomControls() const;
 
     EngineOptions m_options;
     Settings      m_settings;
@@ -162,6 +166,7 @@ private:
     glm::vec3 m_terminalEye{0.0f};
     float     m_terminalYaw = 0.0f;
     float     m_terminalPitch = 0.0f;
+    float     m_doomNoiseTimer = 0.0f; ///< Until DOOM's music next reaches the Backrooms' ears.
 
     // Caught sequence.
     glm::vec3 m_caughtFace{0.0f};     ///< What the camera is wrenched towards.

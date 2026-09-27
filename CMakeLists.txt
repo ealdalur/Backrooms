@@ -19,6 +19,7 @@ set(BACKROOMS_SOURCES
   src/AI/Wanderer.cpp
 
   src/Audio/AudioEngine.cpp
+  src/Audio/DoomSounds.cpp
   src/Audio/SoundBank.cpp
   src/Audio/Soundscape.cpp
   src/Audio/SpeechSynth.cpp
@@ -27,6 +28,10 @@ set(BACKROOMS_SOURCES
   src/Core/GpuSelection.cpp
   src/Core/Input.cpp
 
+  src/Gameplay/Doom/DoomAssets.cpp
+  src/Gameplay/Doom/DoomGame.cpp
+  src/Gameplay/Doom/DoomLevel.cpp
+  src/Gameplay/Doom/DoomRenderer.cpp
   src/Gameplay/TerminalConsole.cpp
   src/Gameplay/TerminalText.cpp
 
@@ -73,16 +78,22 @@ set(BACKROOMS_HEADERS
   src/AI/Wanderer.h
 
   src/Audio/AudioEngine.h
+  src/Audio/DoomSounds.h
   src/Audio/Dsp.h
   src/Audio/SoundBank.h
   src/Audio/Soundscape.h
   src/Audio/SpeechSynth.h
+  src/Audio/SynthKit.h
 
   src/Core/Config.h
   src/Core/Engine.h
   src/Core/GpuSelection.h
   src/Core/Input.h
 
+  src/Gameplay/Doom/DoomAssets.h
+  src/Gameplay/Doom/DoomGame.h
+  src/Gameplay/Doom/DoomLevel.h
+  src/Gameplay/Doom/DoomRenderer.h
   src/Gameplay/TerminalConsole.h
   src/Gameplay/TerminalText.h
 

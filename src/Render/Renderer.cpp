@@ -178,8 +178,9 @@ void Renderer::render(const FrameParams& frame, ChunkManager& chunks, const Worl
     m_hud.begin(m_width, m_height);
 }
 
-void Renderer::drawTerminal(const TerminalScreen& screen, float time, float dt, float openAmount) {
-    m_terminal.draw(screen, time, dt, openAmount, m_width, m_height);
+void Renderer::drawTerminal(const TerminalScreen& screen, const TerminalGraphics* graphics, float time, float dt,
+                            float openAmount) {
+    m_terminal.draw(screen, graphics, time, dt, openAmount, m_width, m_height);
 }
 
 void Renderer::resetTerminal() { m_terminal.reset(); }

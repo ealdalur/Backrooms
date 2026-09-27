@@ -57,6 +57,8 @@ uniform float uOpen;
 uniform float uGlitch;
 uniform float uBrightness;
 uniform vec3  uPhosphor;
+uniform float uGlow;      // bloom around lit pixels (strong for phosphor text)
+uniform float uFlipY;     // 1: the picture's rows are stored top-down (graphics mode)
 
 float hash12(vec2 p) {
     vec3 p3 = fract(vec3(p.xyx) * 0.1031);
@@ -101,11 +103,12 @@ void main() {
     uv.x += uGlitch * (hash11(band) - 0.5) * 0.09 * step(0.55, hash11(band + 7.0));
     uv.y += uGlitch * 0.01 * sin(uTime * 90.0);
 
+    if (uFlipY > 0.5) uv.y = 1.0 - uv.y;
     vec2 texel = 1.0 / uConsoleSize;
     vec3 c    = texture(uConsole, uv).rgb;
     vec3 glow = (texture(uConsole, uv + vec2(2.5 * texel.x, 0.0)).rgb + texture(uConsole, uv - vec2(2.5 * texel.x, 0.0)).rgb +
                  texture(uConsole, uv + vec2(0.0, 2.5 * texel.y)).rgb + texture(uConsole, uv - vec2(0.0, 2.5 * texel.y)).rgb) * 0.25;
-    vec3 col = c * 1.05 + glow * 0.6 + uPhosphor * 0.03;     // lit raster background
+    vec3 col = c * 1.05 + glow * uGlow + uPhosphor * 0.03;   // lit raster background
 
     col *= 0.76 + 0.24 * sin(uv.y * uConsoleSize.y * 3.14159265); // scanlines (one per glyph pixel)
     col *= 0.93 + 0.07 * sin(gl_FragCoord.x * 2.0944);            // aperture grille
@@ -267,10 +270,24 @@ void TerminalRenderer::renderConsole(const TerminalScreen& screen, float time, f
     glDisable(GL_BLEND);
 }
 
-void TerminalRenderer::draw(const TerminalScreen& screen, float time, float dt, float openAmount, int width,
-                            int height) {
+void TerminalRenderer::draw(const TerminalScreen& screen, const TerminalGraphics* graphics, float time, float dt,
+                            float openAmount, int width, int height) {
     if (!m_vao || openAmount <= 0.0f) return;
-    renderConsole(screen, time, dt);
+    const bool graphicsMode = graphics && graphics->width > 0 && !graphics->rgba.empty();
+    if (graphicsMode) {
+        if (m_graphics.width() != graphics->width || m_graphics.height() != graphics->height) {
+            m_graphics.create(graphics->width, graphics->height, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, graphics->rgba.data(),
+                              GL_NEAREST, GL_CLAMP_TO_EDGE);
+            m_graphicsVersion = graphics->version;
+        } else if (graphics->version != m_graphicsVersion) {
+            m_graphics.update(graphics->rgba.data(), GL_RGBA, GL_UNSIGNED_BYTE);
+            m_graphicsVersion = graphics->version;
+        }
+        m_consoleValid = false; // the text comes back without stale phosphor
+    } else {
+        renderConsole(screen, time, dt);
+    }
+    const Texture2D& picture = graphicsMode ? m_graphics : m_console;
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, width, height);
@@ -280,15 +297,17 @@ void TerminalRenderer::draw(const TerminalScreen& screen, float time, float dt, 
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     m_crtShader.use();
-    m_console.bind(0);
+    picture.bind(0);
     m_crtShader.set("uConsole", 0);
-    m_crtShader.set("uConsoleSize", glm::vec2(static_cast<float>(m_console.width()), static_cast<float>(m_console.height())));
+    m_crtShader.set("uConsoleSize", glm::vec2(static_cast<float>(picture.width()), static_cast<float>(picture.height())));
+    m_crtShader.set("uGlow", graphicsMode ? 0.22f : 0.6f);
+    m_crtShader.set("uFlipY", graphicsMode ? 1.0f : 0.0f);
     m_crtShader.set("uResolution", glm::vec2(static_cast<float>(width), static_cast<float>(height)));
     m_crtShader.set("uTime", time);
     m_crtShader.set("uOpen", std::clamp(openAmount, 0.0f, 1.0f));
     m_crtShader.set("uGlitch", screen.glitch);
     m_crtShader.set("uBrightness", screen.brightness);
-    m_crtShader.set("uPhosphor", screen.amber ? glm::vec3(1.0f, 0.66f, 0.2f) : glm::vec3(0.35f, 1.0f, 0.5f));
+    m_crtShader.set("uPhosphor", graphicsMode ? glm::vec3(0.5f) : screen.amber ? glm::vec3(1.0f, 0.66f, 0.2f) : glm::vec3(0.35f, 1.0f, 0.5f));
     glBindVertexArray(m_emptyVao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     glBindVertexArray(0);

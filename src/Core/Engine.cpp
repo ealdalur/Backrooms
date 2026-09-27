@@ -42,6 +42,42 @@ inline float smooth01(float x) {
     return x * x * (3.0f - 2.0f * x);
 }
 
+/// DOOM's controls from the real keyboard and mouse (classic and WASD layouts).
+doom::Controls doomControls(const Input& in, float sensitivity) {
+    doom::Controls c;
+    c.forward = in.keyDown(SDL_SCANCODE_W) || in.keyDown(SDL_SCANCODE_UP);
+    c.back = in.keyDown(SDL_SCANCODE_S) || in.keyDown(SDL_SCANCODE_DOWN);
+    c.strafeLeft = in.keyDown(SDL_SCANCODE_A) || in.keyDown(SDL_SCANCODE_COMMA);
+    c.strafeRight = in.keyDown(SDL_SCANCODE_D) || in.keyDown(SDL_SCANCODE_PERIOD);
+    c.turnLeft = in.keyDown(SDL_SCANCODE_LEFT);
+    c.turnRight = in.keyDown(SDL_SCANCODE_RIGHT);
+    c.run = in.keyDown(SDL_SCANCODE_LSHIFT) || in.keyDown(SDL_SCANCODE_RSHIFT);
+    c.fire = in.keyDown(SDL_SCANCODE_LCTRL) || in.keyDown(SDL_SCANCODE_RCTRL) || in.mouseDown(SDL_BUTTON_LEFT);
+    c.use = in.keyDown(SDL_SCANCODE_SPACE) || in.keyDown(SDL_SCANCODE_E);
+    c.turn = in.mouseDelta().x * cfg::kLookRadiansPerPixel * sensitivity;
+    if (in.keyPressed(SDL_SCANCODE_1) || in.keyPressed(SDL_SCANCODE_2)) c.weapon = 2;
+    if (in.keyPressed(SDL_SCANCODE_3)) c.weapon = 3;
+    return c;
+}
+
+/// How each DOOM sound is played from the terminal's speaker (indexed by doom::Sfx).
+struct DoomSfx {
+    SoundId id;
+    float   gain;
+    bool    loud; ///< Gunfire and explosions: heard through the Backrooms.
+};
+const DoomSfx kDoomSfx[] = {
+    {SoundId::DoomPistol, 0.5f, true},          {SoundId::DoomShotgun, 0.6f, true},
+    {SoundId::DoomImpSight, 0.45f, false},      {SoundId::DoomTrooperSight, 0.45f, false},
+    {SoundId::DoomMonsterPain, 0.4f, false},    {SoundId::DoomMonsterDeath, 0.45f, false},
+    {SoundId::DoomClaw, 0.4f, false},           {SoundId::DoomFireball, 0.4f, false},
+    {SoundId::DoomExplode, 0.55f, true},        {SoundId::DoomPlayerPain, 0.3f, false},
+    {SoundId::DoomPlayerDeath, 0.5f, false},    {SoundId::DoomItemUp, 0.25f, false},
+    {SoundId::DoomWeaponUp, 0.45f, false},      {SoundId::DoomDoor, 0.4f, false},
+    {SoundId::DoomSwitch, 0.4f, false},
+};
+static_assert(sizeof(kDoomSfx) / sizeof(kDoomSfx[0]) == static_cast<size_t>(doom::Sfx::Switch) + 1, "one entry per doom::Sfx");
+
 const char* stalkerStateName(Stalker::State s) {
     switch (s) {
     case Stalker::State::Lurking:  return "LURKING";
@@ -268,23 +304,27 @@ void Engine::processEvents() {
 void Engine::handleTerminalKey(const SDL_KeyboardEvent& key) {
     // While seated, the keyboard belongs to the console (characters arrive as
     // text input events); only editing keys and a few globals are handled here.
+    // While DOOM runs it owns the keyboard (its held keys are sampled every
+    // frame in updateTerminal); ESC then quits the game, not the terminal.
     if (!m_console) return;
+    const bool game = m_console->doomActive();
+    if (game && !key.repeat && key.scancode != SDL_SCANCODE_ESCAPE) m_console->keyClick();
     switch (key.scancode) {
     case SDL_SCANCODE_ESCAPE:
-        if (!key.repeat) leaveTerminal(false);
+        if (!key.repeat && !m_console->escape()) leaveTerminal(false);
         break;
     case SDL_SCANCODE_BACKSPACE:
-        m_console->backspace();
+        if (!game) m_console->backspace();
         break;
     case SDL_SCANCODE_RETURN:
     case SDL_SCANCODE_KP_ENTER:
-        if (!key.repeat) m_console->submit(terminalContext());
+        if (!key.repeat && !game) m_console->submit(terminalContext());
         break;
     case SDL_SCANCODE_UP:
-        m_console->historyUp();
+        if (!game) m_console->historyUp();
         break;
     case SDL_SCANCODE_DOWN:
-        m_console->historyDown();
+        if (!game) m_console->historyDown();
         break;
     case SDL_SCANCODE_F11:
         if (!key.repeat) {
@@ -340,6 +380,7 @@ void Engine::leaveTerminal(bool powerOff) {
         if (powerOff) t->setPowered(false);
     }
     m_sound->setMonitorHum(false, glm::vec3(0.0f), *m_world);
+    m_sound->setTerminalMusic(false, glm::vec3(0.0f), *m_world);
     if (m_state == GameState::Terminal) setState(GameState::Running);
     // m_console stays set while the view blends back, so the screen fades out.
 }
@@ -362,7 +403,9 @@ void Engine::updateTerminal(float dt) {
         leaveTerminal(false);
         return;
     }
-    m_console->update(dt, terminalContext());
+    TerminalContext ctx = terminalContext();
+    if (m_console->doomActive()) ctx.doom = m_options.demo == "doom" ? demoDoomControls() : doomControls(m_input, m_settings.mouseSensitivity);
+    m_console->update(dt, ctx);
     const glm::vec3 at = terminal->screenCenter();
     for (TerminalSound s : m_console->takeSounds()) {
         switch (s) {
@@ -389,6 +432,20 @@ void Engine::updateTerminal(float dt) {
             break;
         }
     }
+    // DOOM plays through the terminal's speaker - and the shooting carries.
+    doom::Game* game = m_console->doom();
+    if (game) {
+        for (const doom::SoundEvent& e : game->takeSounds()) {
+            const DoomSfx& sfx = kDoomSfx[static_cast<size_t>(e.id)];
+            m_sound->playEffect(sfx.id, at, sfx.gain * e.gain, *m_world);
+            if (sfx.loud) m_noises.push_back({at, cfg::kNoiseDoomGunfire * std::max(0.5f, e.gain), NoiseKind::Machine});
+        }
+        if ((m_doomNoiseTimer -= dt) <= 0.0f) {
+            m_noises.push_back({at, cfg::kNoiseDoomMusic, NoiseKind::Machine});
+            m_doomNoiseTimer = 1.5f;
+        }
+    }
+    m_sound->setTerminalMusic(game != nullptr, at, *m_world);
     m_sound->setMonitorHum(true, at, *m_world);
     if (m_console->exitRequested()) {
         const bool off = m_console->powerOffRequested();
@@ -566,8 +623,10 @@ void Engine::drawHud() {
                  glm::vec4(1.0f, 1.0f, 0.92f, 0.75f * m_crosshairHighlight), true);
     }
     if (m_terminalBlend > 0.0f && m_console) {
-        const char* hint = m_console->commandMode() ? "ESC  LEAVE     ENTER  RUN COMMAND     TYPE HELP FOR COMMANDS"
-                                                    : "ESC  LEAVE     ENTER  COMMAND PROMPT";
+        const char* hint = m_console->doomActive()
+                               ? "ESC  QUIT     WASD  MOVE     MOUSE  TURN     CTRL / LMB  FIRE     SPACE  USE     2 3  WEAPONS"
+                           : m_console->commandMode() ? "ESC  LEAVE     ENTER  RUN COMMAND     TYPE HELP FOR COMMANDS"
+                                                      : "ESC  LEAVE     ENTER  COMMAND PROMPT";
         hud.text(hint, w * 0.5f, h - 24.0f * s, TextOverlay::Align::Center, 1.0f,
                  glm::vec4(0.8f, 0.8f, 0.75f, 0.6f * m_terminalBlend), true);
     }
@@ -603,7 +662,7 @@ void Engine::render(float dt) {
     m_renderer->render(frame, *m_chunks, *m_world);
 
     if (m_console && m_terminalBlend > 0.0f) {
-        m_renderer->drawTerminal(m_console->screen(), static_cast<float>(m_simTime), dt, m_terminalBlend);
+        m_renderer->drawTerminal(m_console->screen(), m_console->graphics(), static_cast<float>(m_simTime), dt, m_terminalBlend);
     }
     drawHud();
     m_renderer->flushHud();
@@ -812,8 +871,9 @@ void Engine::setupDemo() {
     } else if (demo == "wanderer") {
         const glm::vec3 p = freeSpotAlong(fwd, 4.5f, 2.5f);
         m_entities->spawnAt(EntityKind::Wanderer, p, m_focusLevel, std::atan2(-fwd.x, -fwd.z));
-    } else if (demo == "terminal") {
-        // Nearest terminal on this storey: sit down at it.
+    } else if (demo == "terminal" || demo == "doom") {
+        // Nearest terminal on this storey: sit down at it ("doom": and play).
+        if (demo == "doom") m_entities->setEnabled(EntityKind::Stalker, false);
         Terminal* best = nullptr;
         float bestDist = 1e9f;
         for (Chunk* chunk : m_chunks->sortedChunksMutable()) {
@@ -849,6 +909,18 @@ void Engine::setupDemo() {
     }
 }
 
+doom::Controls Engine::demoDoomControls() const {
+    // A scripted player: start the game, look round the first room, walk in and shoot.
+    doom::Controls c;
+    const float t = m_demoTime;
+    c.fire = (t > 9.0f && t < 9.2f) || (t > 14.0f && std::fmod(t, 0.9f) < 0.15f);
+    c.turnRight = t > 11.0f && t < 12.2f;
+    c.forward = t > 12.2f && t < 14.5f;
+    c.use = t > 14.5f && t < 14.6f;
+    c.turnLeft = t > 15.5f && std::fmod(t, 3.0f) < 0.6f;
+    return c;
+}
+
 void Engine::updateDemo(float dt) {
     if (m_options.demo.empty()) return;
     m_demoTime += dt;
@@ -882,6 +954,11 @@ void Engine::updateDemo(float dt) {
     }
     if (m_options.demo == "terminal" && m_demoStep == 0 && m_demoTime > 1.5f && m_console && !m_options.demoInput.empty()) {
         m_console->type(m_options.demoInput.c_str());
+        m_console->submit(terminalContext());
+        m_demoStep = 1;
+    }
+    if (m_options.demo == "doom" && m_demoStep == 0 && m_demoTime > 1.5f && m_console) {
+        m_console->type("doom");
         m_console->submit(terminalContext());
         m_demoStep = 1;
     }

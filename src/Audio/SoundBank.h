@@ -49,6 +49,23 @@ enum class SoundId : uint8_t {
     TerminalBoot,     ///< POST beep, hard disk spin-up and seek chatter.
     TerminalOff,      ///< CRT power-down zap.
     CrtHum,           ///< Seamless loop: flyback whine and mains hum of a running monitor.
+    // The terminal Doom clone (Audio/DoomSounds): 11 kHz / 8-bit effects and FM music.
+    DoomPistol,       ///< Pistol shot.
+    DoomShotgun,      ///< Shotgun blast and pump.
+    DoomImpSight,     ///< Imp spotting the player: raspy screech.
+    DoomTrooperSight, ///< Trooper spotting the player: gargled growl.
+    DoomMonsterPain,  ///< A monster hit.
+    DoomMonsterDeath, ///< Falling scream, gurgle and thud.
+    DoomClaw,         ///< Imp melee swipe.
+    DoomFireball,     ///< Fireball launch.
+    DoomExplode,      ///< Fireball impact / barrel explosion.
+    DoomPlayerPain,   ///< "Oof."
+    DoomPlayerDeath,  ///< The marine dies.
+    DoomItemUp,       ///< Item pickup chirp.
+    DoomWeaponUp,     ///< Weapon pickup: double clack.
+    DoomDoor,         ///< Door grinding open or shut.
+    DoomSwitch,       ///< Wall switch.
+    DoomMusic,        ///< Seamless loop: the level music.
     Count
 };
 

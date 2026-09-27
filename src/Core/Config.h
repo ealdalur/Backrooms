@@ -110,6 +110,8 @@ inline constexpr float kNoiseLanding         = 18.0f;
 inline constexpr float kNoiseDoor            = 16.0f;
 inline constexpr float kNoiseTyping          = 7.0f;
 inline constexpr float kNoiseMachine         = 10.0f;
+inline constexpr float kNoiseDoomGunfire     = 12.0f;  // DOOM's guns and explosions from a terminal speaker
+inline constexpr float kNoiseDoomMusic       = 6.0f;   // ...and its music, now and then
 
 } // namespace cfg
 

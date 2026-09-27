@@ -47,6 +47,8 @@ TerminalConsole::TerminalConsole(uint64_t terminalId, bool amber, int level)
     m_screen.brightness = 0.0f;
 }
 
+TerminalConsole::~TerminalConsole() = default;
+
 // ---- Command registry ----------------------------------------------------------------
 
 const std::vector<TerminalConsole::Command>& TerminalConsole::commands() {
@@ -64,6 +66,9 @@ const std::vector<TerminalConsole::Command>& TerminalConsole::commands() {
         {"reboot",   "restart",    "REBOOT",            "RESTART THE SYSTEM",                  &TerminalConsole::cmdReboot},
         {"shutdown", "poweroff",   "SHUTDOWN",          "POWER OFF AND LEAVE",                 &TerminalConsole::cmdShutdown},
         {"exit",     "logout quit bye", "EXIT",         "LEAVE THE TERMINAL (ALSO: ESC)",      &TerminalConsole::cmdExit},
+        // Not in HELP.
+        {"doom",     "doom.exe",   "DOOM",              "",                                    &TerminalConsole::cmdDoom, true},
+        {"iddqd",    "idkfa",      "IDDQD",             "",                                    &TerminalConsole::cmdIddqd, true},
     };
     return kCommands;
 }
@@ -169,6 +174,25 @@ void TerminalConsole::update(float dt, const TerminalContext& ctx) {
     }
     advanceTyping(dt);
     compose();
+
+    // DOOM starts once its start-up text has printed, and runs until ESC.
+    if (m_doomBooting && m_queue.empty() && !m_typingLine) {
+        m_doomBooting = false;
+        m_doom = std::make_unique<doom::Game>(rnd::hashCombine(m_id, 0xD003ull));
+    }
+    if (m_doom) m_doom->update(dt, ctx.doom);
+}
+
+bool TerminalConsole::escape() {
+    if (!doomActive()) return false;
+    const bool wasRunning = m_doom != nullptr;
+    m_doom.reset();
+    m_doomBooting = false;
+    m_queue.clear();
+    m_typingLine = false;
+    print(wasRunning ? "DOOM EXITED. RETURNING TO SYSTEM." : "DOOM ABORTED.", TerminalScreen::Dim);
+    if (wasRunning && m_rng.chance(0.35f)) printAnomaly("you can't shoot your way out of here", 1.2f);
+    return true;
 }
 
 std::vector<TerminalSound> TerminalConsole::takeSounds() {
@@ -180,6 +204,7 @@ std::vector<TerminalSound> TerminalConsole::takeSounds() {
 // ---- Keyboard ---------------------------------------------------------------------------------
 
 void TerminalConsole::type(const char* text) {
+    if (doomActive()) return; // the keys belong to the game (see keyClick)
     if (m_powerOffTimer >= 0.0f || !m_ready) return;
     if (!m_commandMode) enterCommandMode(); // typing opens the prompt
     for (const char* c = text; *c; ++c) {
@@ -189,6 +214,8 @@ void TerminalConsole::type(const char* text) {
         sound(TerminalSound::Key);
     }
 }
+
+void TerminalConsole::keyClick() { sound(TerminalSound::Key); }
 
 void TerminalConsole::backspace() {
     if (m_input.empty()) return;
@@ -291,6 +318,7 @@ void TerminalConsole::advanceTyping(float dt) {
             if (p.anomaly) {
                 m_screen.glitch = std::max(m_screen.glitch, m_rng.range(0.55f, 1.0f));
                 sound(TerminalSound::Glitch);
+                if (m_doom) m_doom->message(p.text, true); // it speaks through the game too
             }
             m_lines.push_back({"", p.color});
             while (m_lines.size() > kMaxScrollback) m_lines.pop_front();
@@ -416,6 +444,7 @@ void TerminalConsole::compose() {
 void TerminalConsole::cmdHelp(const Args&, const TerminalContext&) {
     print("AVAILABLE COMMANDS:", TerminalScreen::Bright);
     for (const Command& c : commands()) {
+        if (c.hidden) continue;
         char line[80];
         std::snprintf(line, sizeof(line), "  %-18s %s", c.usage, c.help);
         print(line);
@@ -571,4 +600,34 @@ void TerminalConsole::cmdExit(const Args&, const TerminalContext&) {
     print("LOGGED OUT.", TerminalScreen::Dim);
     m_exitRequested = true;
     if (m_rng.chance(0.4f)) printAnomaly("come back", 0.8f);
+}
+
+void TerminalConsole::cmdDoom(const Args&, const TerminalContext&) {
+    // "DOOM runs on everything." It boots like it did from DOS - except there is no WAD.
+    doom::DoomAssets::preload(); // paints the art while the start-up text prints
+    char line[80];
+    print("DOOM SYSTEM STARTUP V1.9", TerminalScreen::Bright, 0.0f, 0.3f);
+    print("V_INIT: ALLOCATE SCREENS.", TerminalScreen::Normal, 0.0f, 0.25f);
+    print("M_LOADDEFAULTS: LOAD SYSTEM DEFAULTS.", TerminalScreen::Normal, 0.0f, 0.1f);
+    print("Z_INIT: INIT ZONE MEMORY ALLOCATION DAEMON.", TerminalScreen::Normal, 0.0f, 0.1f);
+    print("DPMI MEMORY: 0X800000, 0X800000 ALLOCATED FOR ZONE", TerminalScreen::Normal, 0.0f, 0.15f);
+    print("W_INIT: INIT WADFILES.", TerminalScreen::Normal, 0.0f, 0.2f);
+    std::snprintf(line, sizeof(line), "        NO WAD FOUND. SYNTHESIZING FROM SEED %08X...",
+                  static_cast<unsigned>(rnd::hashCombine(m_id, 0xD003ull) & 0xFFFFFFFFu));
+    print(line, TerminalScreen::Alert, 0.0f, 0.3f);
+    print("M_INIT: INIT MISCELLANEOUS INFO.", TerminalScreen::Normal, 0.0f, 0.5f);
+    print("R_INIT: INIT DOOM REFRESH DAEMON - [..............]", TerminalScreen::Normal, 40.0f, 0.1f);
+    print("P_INIT: INIT PLAYLOOP STATE.", TerminalScreen::Normal, 0.0f, 0.15f);
+    print("I_INIT: SETTING UP MACHINE STATE.", TerminalScreen::Normal, 0.0f, 0.1f);
+    print("S_INIT: SETTING UP SOUND.", TerminalScreen::Normal, 0.0f, 0.15f);
+    print("HU_INIT: SETTING UP HEADS UP DISPLAY.", TerminalScreen::Normal, 0.0f, 0.1f);
+    print("ST_INIT: INIT STATUS BAR.", TerminalScreen::Normal, 0.0f, 0.1f);
+    print("", TerminalScreen::Normal, 0.0f, 0.4f);
+    m_doomBooting = true;
+    sound(TerminalSound::Boot);
+}
+
+void TerminalConsole::cmdIddqd(const Args&, const TerminalContext&) {
+    print("DEGREELESSNESS MODE ON", TerminalScreen::Bright);
+    printAnomaly(m_rng.chance(0.5f) ? "nothing protects you in here" : "there is no god mode on this level", 1.4f);
 }

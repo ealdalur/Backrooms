@@ -41,6 +41,7 @@ constexpr float kBreathRange     = 6.5f;
 constexpr float kHeartGain       = 0.55f;
 constexpr float kStingGain       = 0.8f;
 constexpr float kMonitorHumGain  = 0.05f;
+constexpr float kTerminalMusicGain = 0.3f; // DOOM's music from the terminal's little speaker
 
 // ---- Behaviour -------------------------------------------------------------------
 constexpr float  kLightHearingRange = 14.0f; ///< Lights farther away are inaudible.
@@ -166,6 +167,24 @@ void Soundscape::setMonitorHum(bool on, const glm::vec3& at, const WorldGenerato
         m_monitor = m_audio.play(m_bank.get(SoundId::CrtHum, 0), p);
     }
     m_audio.setVoice(m_monitor, kMonitorHumGain * s.gain, s.pan, s.lowpassHz);
+}
+
+void Soundscape::setTerminalMusic(bool on, const glm::vec3& at, const WorldGenerator& generator) {
+    if (!m_enabled) return;
+    if (!on) {
+        if (m_music) m_audio.stop(m_music, 0.3f);
+        m_music = 0;
+        return;
+    }
+    const Spatial s = spatialize(at, 0.6f, generator);
+    if (!m_music || !m_audio.isPlaying(m_music)) {
+        VoiceParams p;
+        p.loop = true;
+        p.gain = 0.0f;
+        p.reverbSend = 0.15f;
+        m_music = m_audio.play(m_bank.get(SoundId::DoomMusic, 0), p);
+    }
+    m_audio.setVoice(m_music, kTerminalMusicGain * s.gain, s.pan, s.lowpassHz);
 }
 
 void Soundscape::playSting() {

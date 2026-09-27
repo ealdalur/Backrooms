@@ -49,6 +49,14 @@ void Texture2D::create(int width, int height, GLenum internalFormat, GLenum form
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
+void Texture2D::update(const void* data, GLenum format, GLenum type) {
+    glBindTexture(GL_TEXTURE_2D, m_id);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, m_width, m_height, format, type, data);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    glBindTexture(GL_TEXTURE_2D, 0);
+}
+
 void Texture2D::bind(GLuint unit) const {
     glActiveTexture(GL_TEXTURE0 + unit);
     glBindTexture(GL_TEXTURE_2D, m_id);

@@ -59,8 +59,8 @@ public:
     /// Renders one frame of the world into the default framebuffer.
     void render(const FrameParams& frame, ChunkManager& chunks, const WorldGenerator& generator);
 
-    /// Draws a terminal's console as a CRT overlay. Call after render().
-    void drawTerminal(const TerminalScreen& screen, float time, float dt, float openAmount);
+    /// Draws a terminal's console (or its graphics-mode picture) as a CRT overlay. Call after render().
+    void drawTerminal(const TerminalScreen& screen, const TerminalGraphics* graphics, float time, float dt, float openAmount);
     /// Clears the CRT persistence buffer (a different terminal is being used).
     void resetTerminal();
 

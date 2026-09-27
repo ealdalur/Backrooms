@@ -18,9 +18,18 @@
 //
 // Input model: a prompt line with editing and history. Submitted text is
 // matched against a registry of commands (name, aliases, help text and a
-// handler); anything else may be answered by the voice.
+// handler); anything else may be answered by the voice. Hidden commands are
+// left out of HELP.
+//
+// Graphics mode: the hidden DOOM command boots a game (Gameplay/Doom) that
+// takes over the tube and the keyboard. While it runs, graphics() returns its
+// framebuffer (drawn instead of the text grid), the Engine feeds it held keys
+// through TerminalContext::doom and plays its sounds, and ESC quits back to
+// the prompt. The console keeps running underneath: the voice still warns
+// and whispers - its lines break into the game's HUD message line.
 // ---------------------------------------------------------------------------
 
+#include "Gameplay/Doom/DoomGame.h"
 #include "Gameplay/TerminalText.h"
 #include "Math/Random.h"
 #include "Render/TerminalRenderer.h"
@@ -28,6 +37,7 @@
 #include <glm/glm.hpp>
 #include <cstdint>
 #include <deque>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -41,6 +51,7 @@ struct TerminalContext {
     bool      stalkerBehind = false;    ///< Close, and outside the player's view.
     float     wandererDistance = -1.0f; ///< < 0 when the Wanderer is not around.
     const WorldGenerator* world = nullptr;
+    doom::Controls doom;                ///< Held keys, while DOOM runs.
 };
 
 /// Sounds a console asks for (played at the terminal). The player's own key
@@ -50,6 +61,7 @@ enum class TerminalSound : uint8_t { Key, GhostKey, Beep, Glitch, Boot, PowerDow
 class TerminalConsole {
 public:
     TerminalConsole(uint64_t terminalId, bool amber, int level);
+    ~TerminalConsole();
 
     /// The player sits down. An unpowered terminal cold-boots first.
     void open(bool powered);
@@ -63,6 +75,10 @@ public:
     void submit(const TerminalContext& ctx);
     void historyUp();
     void historyDown();
+    /// ESC: quits a running program (true), or does nothing (false: leave the terminal).
+    bool escape();
+    /// A key struck while a program owns the keyboard: it still clatters (and can be heard).
+    void keyClick();
 
     /// The session wants to end (EXIT / SHUTDOWN); SHUTDOWN also powers off.
     bool exitRequested() const { return m_exitRequested; }
@@ -73,6 +89,12 @@ public:
     /// True at the command prompt, false while watching the live log.
     bool commandMode() const { return m_commandMode; }
     uint64_t terminalId() const { return m_id; }
+
+    /// The game, while DOOM is running (for its sounds), else null.
+    doom::Game* doom() { return m_doom.get(); }
+    bool doomActive() const { return m_doom != nullptr || m_doomBooting; }
+    /// The picture to show instead of the text grid, if a program is in graphics mode.
+    const TerminalGraphics* graphics() const { return m_doom ? &m_doom->frame() : nullptr; }
 
     /// Returns and clears the sounds requested since the last call.
     std::vector<TerminalSound> takeSounds();
@@ -86,6 +108,7 @@ private:
         const char* usage;
         const char* help;
         Handler     handler;
+        bool        hidden = false; ///< Not listed by HELP.
     };
     /// The command registry. Adding a command = one entry + one handler.
     static const std::vector<Command>& commands();
@@ -127,6 +150,8 @@ private:
     void cmdReboot(const Args&, const TerminalContext&);
     void cmdShutdown(const Args&, const TerminalContext&);
     void cmdExit(const Args&, const TerminalContext&);
+    void cmdDoom(const Args&, const TerminalContext&);
+    void cmdIddqd(const Args&, const TerminalContext&);
 
     uint64_t m_id;
     int      m_level;
@@ -159,4 +184,7 @@ private:
 
     TerminalScreen             m_screen;
     std::vector<TerminalSound> m_sounds;
+
+    std::unique_ptr<doom::Game> m_doom;
+    bool m_doomBooting = false;      ///< DOOM's start-up text is still printing.
 };

@@ -10,6 +10,9 @@
 //      curved (barrel-distorted) tube face with scanlines, an aperture
 //      grille, glow, noise, flicker, glitch tearing and a beige bezel. The
 //      room stays faintly visible - and dangerous - around the monitor.
+// In graphics mode (a program such as DOOM owns the screen) the console pass
+// is skipped: the program's framebuffer is uploaded when it changes and the
+// CRT pass draws it instead, crisp pixels with one scanline per pixel row.
 // ---------------------------------------------------------------------------
 
 #include "Render/Shader.h"
@@ -44,6 +47,16 @@ struct TerminalScreen {
     const Cell& at(int col, int row) const { return cells[static_cast<size_t>(row * kCols + col)]; }
 };
 
+/// A console's graphics mode: a small colour framebuffer (written by a
+/// program running on the terminal, e.g. Gameplay/Doom) shown on the tube
+/// in place of the text grid.
+struct TerminalGraphics {
+    int width = 0;
+    int height = 0;
+    std::vector<uint8_t> rgba; ///< width * height RGBA8 pixels, rows top to bottom.
+    uint32_t version = 0;      ///< Bumped on every new picture (the renderer re-uploads then).
+};
+
 class TerminalRenderer {
 public:
     TerminalRenderer() = default;
@@ -53,10 +66,12 @@ public:
 
     bool init();
 
-    /// Composites `screen` over the default framebuffer.
+    /// Composites `screen` over the default framebuffer - or `graphics`, if a
+    /// program has the terminal in graphics mode (tube effects still come from `screen`).
     /// @param dt          Frame time (phosphor decay).
     /// @param openAmount  0..1 zoom / fade of the monitor into view.
-    void draw(const TerminalScreen& screen, float time, float dt, float openAmount, int width, int height);
+    void draw(const TerminalScreen& screen, const TerminalGraphics* graphics, float time, float dt, float openAmount,
+              int width, int height);
 
     /// Forgets the persistence buffer (call when a new session starts).
     void reset() { m_consoleValid = false; }
@@ -71,6 +86,8 @@ private:
     Shader    m_crtShader;
     Texture2D m_font;
     Texture2D m_console;
+    Texture2D m_graphics;             ///< Graphics-mode picture.
+    uint32_t  m_graphicsVersion = 0;  ///< Version of the picture in m_graphics.
     GLuint    m_fbo = 0;
     GLuint    m_vao = 0;
     GLuint    m_vbo = 0;
