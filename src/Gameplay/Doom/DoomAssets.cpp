@@ -546,13 +546,16 @@ Canvas paintHumanoid(const Body& b, const Pose& p) {
     const float swing = std::sin(p.walk * 2.0f * kPi);
     const float liftL = std::max(0.0f, swing), liftR = std::max(0.0f, -swing);
     const vec3 bone(0.9f, 0.86f, 0.72f);
+    // The imp is wiry and long-limbed; the trooper is a stocky man in fatigues.
+    const float hipX = b.imp ? 4.0f : 5.0f, thigh = b.imp ? 2.8f : 3.8f, shin = b.imp ? 2.1f : 3.0f;
+    const float shoulderX = b.imp ? 8.0f : 10.0f, upperArm = b.imp ? 2.4f : 3.4f, foreArm = b.imp ? 1.9f : 2.8f;
 
     auto leg = [&](float side, float lift) {
-        const vec2 hip(24.0f + side * 5.0f, 38.0f), knee(24.0f + side * (6.0f + lift * 1.5f), 48.0f - lift * 3.0f);
-        const vec2 foot(24.0f + side * 5.5f, 59.0f - lift * 4.0f);
-        capsule(cv, hip, knee, 3.8f, 3.0f, b.legs, s);
-        capsule(cv, knee, foot, 3.0f, 2.4f, b.legs * 0.9f, s + 1);
-        ellipse(cv, foot + vec2(0.0f, 1.5f), vec2(3.8f, 2.2f), b.boots, s + 2);
+        const vec2 hip(24.0f + side * hipX, 38.0f), knee(24.0f + side * (hipX + 1.0f + lift * 1.5f), 48.0f - lift * 3.0f);
+        const vec2 foot(24.0f + side * (hipX + 0.5f), 59.0f - lift * 4.0f);
+        capsule(cv, hip, knee, thigh, thigh * 0.8f, b.legs, s);
+        capsule(cv, knee, foot, shin, shin * 0.8f, b.legs * 0.9f, s + 1);
+        ellipse(cv, foot + vec2(0.0f, 1.5f), b.imp ? vec2(3.0f, 1.8f) : vec2(3.8f, 2.2f), b.boots, s + 2);
         if (b.imp) { // talons
             for (int k = -1; k <= 1; ++k) cv.put(static_cast<int>(foot.x) + k * 2, static_cast<int>(foot.y + 3.5f), bone);
         }
@@ -562,8 +565,14 @@ Canvas paintHumanoid(const Body& b, const Pose& p) {
 
     // Torso.
     if (b.imp) {
-        ellipse(cv, {24.0f, 35.0f}, {8.5f, 5.5f}, b.legs, s + 3, 0.2f, 0.3f);
-        ellipse(cv, {24.0f, 28.0f}, {10.5f, 10.5f}, b.torso, s + 4, 0.25f, 0.5f);
+        // Broad shoulders tapering to a narrow waist, ribs showing through the hide.
+        ellipse(cv, {24.0f, 36.0f}, {4.8f, 3.2f}, b.legs, s + 3, 0.2f, 0.3f);
+        capsule(cv, {24.0f, 23.0f}, {24.0f, 33.0f}, 7.0f, 4.2f, b.torso, s + 4, 0.25f);
+        for (int y = 25; y <= 30; y += 2)
+            for (int x = 20; x <= 28; ++x)
+                if (x != 24 && std::abs(x - 24) >= 2 && cv.opaque(x, y)) cv.at(x, y) *= 0.62f;
+        for (int y = 24; y <= 32; ++y)
+            if (cv.opaque(24, y)) cv.at(24, y) *= 0.75f; // breastbone
     } else {
         capsule(cv, {24.0f, 36.0f}, {24.0f, 36.5f}, 7.0f, 7.0f, b.legs, s + 3);
         capsule(cv, {24.0f, 25.0f}, {24.0f, 33.0f}, 9.5f, 8.5f, b.torso, s + 4, 0.25f);
@@ -573,10 +582,10 @@ Canvas paintHumanoid(const Body& b, const Pose& p) {
 
     // Arms (shoulder, elbow, hand per side; +1 = the viewer's right).
     auto arm = [&](float side, vec2 elbow, vec2 hand) {
-        const vec2 shoulder(24.0f + side * 10.0f, 22.0f);
-        capsule(cv, shoulder, elbow, 3.4f, 2.8f, b.imp ? b.torso : b.torso * 0.95f, s + 5);
-        capsule(cv, elbow, hand, 2.8f, 2.2f, b.skin, s + 6);
-        ellipse(cv, hand, vec2(2.6f, 2.6f), b.skin * 0.95f, s + 7);
+        const vec2 shoulder(24.0f + side * shoulderX, 22.0f);
+        capsule(cv, shoulder, elbow, upperArm, upperArm * 0.82f, b.imp ? b.torso : b.torso * 0.95f, s + 5);
+        capsule(cv, elbow, hand, foreArm, foreArm * 0.8f, b.skin, s + 6);
+        ellipse(cv, hand, vec2(foreArm * 0.95f), b.skin * 0.95f, s + 7);
         if (b.imp) {
             cv.put(static_cast<int>(hand.x) - 1, static_cast<int>(hand.y) + 3, bone);
             cv.put(static_cast<int>(hand.x) + 1, static_cast<int>(hand.y) + 3, bone);
@@ -589,8 +598,8 @@ Canvas paintHumanoid(const Body& b, const Pose& p) {
     switch (p.arms) {
     case Arms::Down:
         if (b.imp) {
-            arm(-1.0f, {11.0f, 31.0f}, {12.0f, 39.0f + swing * 2.0f});
-            arm(1.0f, {37.0f, 31.0f}, {36.0f, 39.0f - swing * 2.0f});
+            arm(-1.0f, {13.0f, 31.0f}, {14.0f, 40.0f + swing * 2.0f});
+            arm(1.0f, {35.0f, 31.0f}, {34.0f, 40.0f - swing * 2.0f});
         } else {
             rifleDiagonal();
             arm(-1.0f, {13.0f, 31.0f}, {17.0f, 35.0f});
@@ -598,11 +607,11 @@ Canvas paintHumanoid(const Body& b, const Pose& p) {
         }
         break;
     case Arms::Raised:
-        arm(-1.0f, {12.0f, 13.0f}, {16.0f, 5.0f});
-        arm(1.0f, {36.0f, 13.0f}, {32.0f, 5.0f});
+        arm(-1.0f, {14.0f, 13.0f}, {17.0f, 5.0f});
+        arm(1.0f, {34.0f, 13.0f}, {31.0f, 5.0f});
         break;
     case Arms::Throw:
-        arm(-1.0f, {11.0f, 31.0f}, {12.0f, 39.0f});
+        arm(-1.0f, {13.0f, 31.0f}, {14.0f, 40.0f});
         arm(1.0f, {33.0f, 27.0f}, {28.0f, 24.0f});
         break;
     case Arms::Aim:
@@ -619,12 +628,12 @@ Canvas paintHumanoid(const Body& b, const Pose& p) {
         // Bone spikes on the shoulders and brow.
         for (float side : {-1.0f, 1.0f}) {
             for (int k = 0; k < 3; ++k) {
-                const float x = 24.0f + side * (9.0f + static_cast<float>(k) * 2.5f), y = 20.0f + static_cast<float>(k);
+                const float x = 24.0f + side * (6.5f + static_cast<float>(k) * 2.2f), y = 20.0f + static_cast<float>(k);
                 polygon(cv, {{x - 1.0f, y + 1.0f}, {x + 1.0f, y + 1.0f}, {x + side * 1.5f, y - 3.5f}}, bone, s + 10);
             }
         }
-        ellipse(cv, hc, {6.0f, 6.5f}, b.skin, s + 11, 0.25f, 0.4f);
-        rect(cv, static_cast<int>(hc.x) - 5, static_cast<int>(hc.y) - 3, static_cast<int>(hc.x) + 4, static_cast<int>(hc.y) - 2, b.skin * 0.55f);
+        ellipse(cv, hc, {5.0f, 6.2f}, b.skin, s + 11, 0.25f, 0.4f);
+        rect(cv, static_cast<int>(hc.x) - 4, static_cast<int>(hc.y) - 3, static_cast<int>(hc.x) + 3, static_cast<int>(hc.y) - 2, b.skin * 0.55f);
     } else {
         ellipse(cv, hc, {5.5f, 6.5f}, b.skin, s + 11, 0.25f, 0.2f);
         for (int y = static_cast<int>(hc.y) - 7; y < static_cast<int>(hc.y) - 3; ++y)
@@ -738,42 +747,67 @@ std::function<vec3(int, int)> cylinderShade(const vec3& base, float x0, float x1
 }
 
 Canvas paintPistol(float slideBack, uint32_t seed) {
-    // Seen from behind: the slide's top running away from you, its back
-    // with the rear sight, and the fist around the grip.
-    Canvas cv(60, 64);
+    // Seen from behind, as in the original: held in the right hand and angled
+    // in towards the centre - the blued slide running away from you, its back
+    // with the rear sight posts and hammer, the fist round the grip with the
+    // thumb along its side and the finger on the trigger guard.
+    Canvas cv(64, 64);
     const float sb = slideBack;
-    polygon(cv, {{26.0f, 9.0f + sb}, {34.0f, 9.0f + sb}, {36.5f, 34.0f}, {23.5f, 34.0f}}, cylinderShade(kSteel * 1.15f, 24.0f, 36.0f, seed));
-    rect(cv, 29, static_cast<int>(11 + sb), 30, 33, kSteel * 1.9f);                                   // top highlight
-    rect(cv, 29, static_cast<int>(6 + sb), 31, static_cast<int>(9 + sb), kSteel * 0.6f);              // front sight
-    polygon(cv, {{22.5f, 34.0f}, {37.5f, 34.0f}, {38.0f, 43.0f}, {22.0f, 43.0f}}, kSteel * 0.6f, seed); // back of the slide
-    rect(cv, 23, 31, 26, 34, kSteel * 0.5f);                                                          // rear sight
-    rect(cv, 34, 31, 37, 34, kSteel * 0.5f);
-    capsule(cv, {35.0f, 60.0f}, {40.0f, 72.0f}, 9.0f, 11.0f, kSleeve, seed + 1);
-    ellipse(cv, {31.0f, 52.0f}, {12.0f, 10.0f}, kHand, seed + 2, 0.15f);
-    for (int k = 0; k < 3; ++k) rect(cv, 35, 47 + k * 4, 41 - k, 47 + k * 4, kHand * 0.6f);             // finger creases
-    capsule(cv, {21.0f, 49.0f}, {25.0f, 41.0f}, 3.4f, 2.8f, kHand, seed + 3, 0.15f);                    // thumb
+    const vec3 blued(0.30f, 0.32f, 0.38f);
+    polygon(cv, {{24.5f, 10.0f + sb}, {31.5f, 10.0f + sb}, {40.0f, 36.0f}, {26.0f, 36.0f}}, cylinderShade(blued * 1.15f, 25.0f, 38.0f, seed));
+    polygon(cv, {{27.5f, 12.0f + sb}, {28.5f, 12.0f + sb}, {33.5f, 35.0f}, {32.5f, 35.0f}}, blued * 2.0f, seed);   // top highlight
+    rect(cv, 26, static_cast<int>(7 + sb), 27, static_cast<int>(10 + sb), blued * 0.6f);                         // front sight
+    polygon(cv, {{25.0f, 36.0f}, {41.0f, 36.0f}, {41.0f, 44.0f}, {25.0f, 44.0f}}, cylinderShade(blued * 0.7f, 25.0f, 41.0f, seed + 1));
+    rect(cv, 26, 33, 28, 36, blued * 0.55f);                                                                     // rear sight posts
+    rect(cv, 38, 33, 40, 36, blued * 0.55f);
+    rect(cv, 25, 36, 41, 36, blued * 1.4f);                                                                      // edge of the slide
+    rect(cv, 32, 44, 34, 47, blued * 0.4f);                                                                      // hammer
+    polygon(cv, {{27.0f, 44.0f}, {39.0f, 44.0f}, {38.0f, 49.0f}, {28.0f, 49.0f}}, blued * 0.45f, seed);         // frame
+    capsule(cv, {42.0f, 62.0f}, {48.0f, 74.0f}, 10.0f, 12.0f, kSleeve, seed + 2);
+    ellipse(cv, {35.0f, 55.0f}, {13.0f, 10.0f}, kHand, seed + 3, 0.15f);
+    for (int k = 0; k < 3; ++k) rect(cv, 39, 51 + k * 4, 46 - k, 51 + k * 4, kHand * 0.6f);                      // finger creases
+    capsule(cv, {27.0f, 49.5f}, {36.0f, 50.5f}, 2.2f, 2.0f, kHand * 0.95f, seed + 4, 0.15f);                     // trigger finger
+    capsule(cv, {23.0f, 52.0f}, {27.0f, 43.0f}, 3.2f, 2.6f, kHand, seed + 5, 0.15f);                             // thumb
     return cv;
 }
 
 Canvas paintShotgun(float pump, float drop, uint32_t seed) {
-    // A pump gun pointing into the view: barrel, wooden fore-end in the left
-    // hand, receiver and the right hand on the grip.
-    Canvas cv(80, 72);
+    // The pump gun pointing into the view, as the original draws it: barrel
+    // and magazine tube side by side running up the middle of the screen, the
+    // grooved wooden fore-end round both, and the receiver with rounded
+    // shoulders and a shell in its ejection port - broad and squat, filling
+    // the bottom of the view. Hands only show while working the pump.
+    // Laid out on a 96 x 72 grid, stretched to kx x ky on the canvas.
+    const float kx = 1.5f, ky = 1.05f;
+    Canvas cv(static_cast<int>(96 * kx), static_cast<int>(72 * ky));
+    auto P = [&](float x, float y) { return vec2(x * kx, y * ky); };
+    auto R = [&](float x0, float y0, float x1, float y1, const vec3& c) {
+        rect(cv, static_cast<int>(x0 * kx), static_cast<int>(y0 * ky), static_cast<int>(x1 * kx), static_cast<int>(y1 * ky), c);
+    };
     const float o = drop, pp = pump + drop;
-    polygon(cv, {{37.5f, o}, {42.5f, o}, {44.5f, 46.0f + o}, {35.5f, 46.0f + o}}, cylinderShade(kSteel * 1.1f, 35.5f, 44.5f, seed));
-    rect(cv, 39, static_cast<int>(2 + o), 40, static_cast<int>(44 + o), kSteel * 1.9f);
-    ellipse(cv, {40.0f, 1.5f + o}, {2.0f, 1.0f}, vec3(0.03f), seed);
-    polygon(cv, {{32.0f, 22.0f + pp}, {48.0f, 22.0f + pp}, {50.0f, 38.0f + pp}, {30.0f, 38.0f + pp}},
+    polygon(cv, {P(48.0f, 3.0f + o), P(51.0f, 3.0f + o), P(55.0f, 46.0f + o), P(48.5f, 46.0f + o)}, cylinderShade(kSteel * 0.75f, 48.5f * kx, 55.0f * kx, seed));
+    polygon(cv, {P(44.5f, o), P(48.0f, o), P(48.5f, 46.0f + o), P(41.0f, 46.0f + o)}, cylinderShade(kSteel * 1.15f, 41.0f * kx, 48.5f * kx, seed + 1));
+    polygon(cv, {P(47.8f, 3.0f + o), P(48.2f, 3.0f + o), P(48.8f, 46.0f + o), P(48.2f, 46.0f + o)}, vec3(0.04f), seed); // the seam between them
+    polygon(cv, {P(45.5f, 2.0f + o), P(46.1f, 2.0f + o), P(44.6f, 44.0f + o), P(44.0f, 44.0f + o)}, kSteel * 2.0f, seed); // highlight down the barrel
+    ellipse(cv, P(46.2f, 1.0f + o), vec2(2.0f * kx, 1.0f * ky), vec3(0.03f), seed);                                   // muzzle
+    R(46.0f, o, 46.4f, o, vec3(0.85f, 0.85f, 0.8f));                                                                   // bead sight
+    polygon(cv, {P(40.5f, 20.0f + pp), P(56.5f, 20.0f + pp), P(60.0f, 38.0f + pp), P(37.0f, 38.0f + pp)},
             [&](int x, int y) {
-                const vec3 c = cylinderShade(kWood, 30.0f, 50.0f, seed + 2)(x, y);
-                return (y - static_cast<int>(22 + pp)) % 3 == 2 ? c * 0.55f : c; // grip ridges
+                const vec3 c = cylinderShade(kWood, 37.0f * kx, 60.0f * kx, seed + 2)(x, y);
+                return (y - static_cast<int>((20 + pp) * ky)) % 3 == 2 ? c * 0.5f : c; // grooves
             });
-    polygon(cv, {{34.0f, 44.0f + o}, {46.0f, 44.0f + o}, {49.5f, 72.0f}, {30.5f, 72.0f}}, cylinderShade(kSteel * 0.8f, 30.5f, 49.5f, seed + 3));
-    rect(cv, 42, static_cast<int>(50 + o), 45, static_cast<int>(54 + o), vec3(0.05f));              // ejection port
-    ellipse(cv, {30.0f, 32.0f + pp}, {6.5f, 8.0f}, kHand, seed + 4, 0.15f);                          // pump hand
-    for (int k = 0; k < 3; ++k) rect(cv, 25, static_cast<int>(28 + pp) + k * 4, 28, static_cast<int>(28 + pp) + k * 4, kHand * 0.6f);
-    capsule(cv, {54.0f, 70.0f + o}, {62.0f, 80.0f}, 8.0f, 10.0f, kSleeve, seed + 5);
-    ellipse(cv, {47.0f, 66.0f + o}, {9.0f, 7.0f}, kHand, seed + 6, 0.15f);                           // trigger hand
+    // The receiver: a rounded block, broader than the tubes, running off the bottom.
+    ellipse(cv, P(48.0f, 52.0f + o), vec2(16.0f * kx, 9.0f * ky), kSteel * 0.85f, seed + 3, 0.15f);
+    polygon(cv, {P(32.0f, 52.0f + o), P(64.0f, 52.0f + o), P(66.0f, 72.0f), P(30.0f, 72.0f)}, cylinderShade(kSteel * 0.85f, 30.0f * kx, 66.0f * kx, seed + 3));
+    polygon(cv, {P(41.0f, 45.0f + o), P(55.0f, 45.0f + o), P(56.0f, 48.0f + o), P(40.0f, 48.0f + o)}, kSteel * 0.5f, seed); // where the tubes enter it
+    R(53.0f, 54.0f + o, 60.0f, 60.0f + o, vec3(0.04f));                                                                // ejection port...
+    R(54.0f, 56.0f + o, 58.0f, 58.0f + o, vec3(0.7f, 0.1f, 0.08f));                                                    // ...with a shell in it
+    R(58.7f, 56.0f + o, 59.3f, 58.0f + o, vec3(0.9f, 0.75f, 0.3f));
+    if (pump > 0.0f) {
+        capsule(cv, P(30.0f, 42.0f + pp), P(18.0f, 76.0f), 8.0f * kx, 11.0f * kx, kSleeve, seed + 4);
+        ellipse(cv, P(37.0f, 30.0f + pp), vec2(7.0f * kx, 8.5f * ky), kHand, seed + 5, 0.15f);
+        for (int k = 0; k < 3; ++k) R(32.0f, 26.0f + pp + k * 4.0f, 36.0f, 26.0f + pp + k * 4.0f, kHand * 0.6f);
+    }
     return cv;
 }
 
@@ -923,55 +957,100 @@ Canvas paintBigGlyph(char ch) {
 
 /// expression: 0 normal, 1 grin, 2 ouch, 3 dead.
 Canvas paintFace(int level, int look, int expression, uint32_t seed) {
+    // The marine: a flat-top crop, heavy brows over narrowed eyes, high
+    // cheekbones and a square, cleft jaw - all hard planes, not a round face.
     Canvas cv(24, 29);
-    const bool dead = expression == 3;
-    const vec3 skin = dead ? vec3(0.6f, 0.55f, 0.5f) : vec3(0.86f, 0.6f, 0.45f);
-    ellipse(cv, {2.5f, 15.0f}, {2.0f, 3.0f}, skin * 0.85f, seed);
-    ellipse(cv, {21.5f, 15.0f}, {2.0f, 3.0f}, skin * 0.85f, seed);
-    ellipse(cv, {12.0f, 15.0f}, {9.5f, 13.5f}, skin, seed + 1, 0.12f);
-    for (int y = 0; y < 8; ++y)
-        for (int x = 0; x < 24; ++x)
-            if (cv.opaque(x, y) && static_cast<float>(y) < 5.5f + 2.0f * white(x, 0, seed + 2) + (x < 4 || x > 19 ? 3.0f : 0.0f))
-                cv.at(x, y) = vec3(0.32f, 0.2f, 0.09f) * (0.8f + 0.4f * white(x, y, seed + 3));
-    const bool wide = expression == 2;
+    const bool dead = expression == 3, grin = expression == 1, ouch = expression == 2;
+    const vec3 skin = dead ? vec3(0.62f, 0.56f, 0.5f) : vec3(0.88f, 0.62f, 0.44f);
+    const vec3 dark(0.2f, 0.08f, 0.05f);
+
+    // Ears, then the head as an angular outline, shaded in planes.
+    rect(cv, 0, 11, 1, 17, skin * 0.62f);
+    rect(cv, 22, 11, 23, 17, skin * 0.5f);
+    polygon(cv, {{5.0f, 2.0f}, {19.0f, 2.0f}, {21.5f, 5.0f}, {22.0f, 11.0f}, {21.5f, 18.0f}, {19.5f, 23.0f},
+                 {15.5f, 27.5f}, {8.5f, 27.5f}, {4.5f, 23.0f}, {2.5f, 18.0f}, {2.0f, 11.0f}, {2.5f, 5.0f}},
+            [&](int x, int y) {
+                const float u = (static_cast<float>(x) + 0.5f - 12.0f) / 10.0f, v = (static_cast<float>(y) + 0.5f) / 28.0f;
+                float k = (1.0f - 0.45f * u * u) * (1.05f - 0.25f * v) * (1.0f - 0.12f * u); // lit from the upper left
+                const float au = std::fabs(u);
+                if (y >= 14 && y <= 16 && au > 0.4f && au < 0.75f) k *= 1.12f;  // cheekbones
+                if (y >= 18 && y <= 21 && au > 0.45f && au < 0.85f) k *= 0.78f; // hollow cheeks
+                if (y >= 24) k *= 0.85f;                                         // under the jaw
+                return skin * k * (1.0f + 0.12f * (white(x, y, seed) - 0.5f));
+            });
+
+    // Flat-top hair and short sideburns.
+    const vec3 hair(0.30f, 0.18f, 0.08f);
+    for (int y = 0; y < 12; ++y)
+        for (int x = 0; x < 24; ++x) {
+            if (!cv.opaque(x, y) || (x < 2 || x > 21)) continue;
+            const bool top = static_cast<float>(y) < 5.0f + 1.5f * white(x, 0, seed + 2);
+            const bool side = (x < 5 || x > 18) && y < 10;
+            if (top || side) cv.at(x, y) = hair * (0.8f + 0.4f * white(x, y, seed + 3));
+        }
+
+    // Brows: thick, dipping towards the nose (raised when shocked).
+    const int browY = ouch ? 8 : 9;
     for (int e = 0; e < 2; ++e) {
-        const int cx = e == 0 ? 7 : 15, ey = 12;
-        rect(cv, cx - 1, ey - 3 - (wide ? 1 : 0), cx + 3, ey - 3 - (wide ? 1 : 0), vec3(0.25f, 0.15f, 0.08f)); // brow
+        const int x0 = e == 0 ? 5 : 14;
+        for (int i = 0; i < 6; ++i) {
+            const bool inner = e == 0 ? i >= 4 : i <= 1;
+            rect(cv, x0 + i, browY + (inner && !ouch ? 1 : 0), x0 + i, browY + (inner && !ouch ? 1 : 0), dark * 1.2f);
+            if (!ouch) cv.put(x0 + i, browY + (inner ? 2 : 1), skin * 0.55f); // the brow's shadow
+        }
+    }
+
+    // Eyes.
+    for (int e = 0; e < 2; ++e) {
+        const int cx = e == 0 ? 6 : 15, ey = 12;
         if (dead) {
-            cv.put(cx, ey - 1, vec3(0.4f, 0.05f, 0.03f));
-            cv.put(cx + 2, ey - 1, vec3(0.4f, 0.05f, 0.03f));
-            cv.put(cx + 1, ey, vec3(0.4f, 0.05f, 0.03f));
-            cv.put(cx, ey + 1, vec3(0.4f, 0.05f, 0.03f));
-            cv.put(cx + 2, ey + 1, vec3(0.4f, 0.05f, 0.03f));
+            rect(cv, cx, ey, cx + 2, ey, dark);
             continue;
         }
-        rect(cv, cx, ey - (wide ? 1 : 0), cx + 2, ey + 1, vec3(0.95f, 0.95f, 0.92f));
-        const int px = cx + (expression == 1 ? 1 : look);
-        rect(cv, px, ey, px, ey + 1, vec3(0.15f, 0.2f, 0.35f));
+        rect(cv, cx, ey - (ouch ? 1 : 0), cx + 2, ey, vec3(0.95f, 0.93f, 0.88f));
+        const int px = cx + (grin ? 1 : look);
+        rect(cv, px, ey - (ouch ? 1 : 0), px, ey, vec3(0.12f, 0.18f, 0.32f));
+        rect(cv, cx, ey + 1, cx + 2, ey + 1, skin * 0.7f); // bags under them
     }
-    rect(cv, 12, 13, 12, 17, skin * 0.7f); // nose
-    cv.put(11, 18, skin * 0.5f);
-    cv.put(13, 18, skin * 0.5f);
-    const vec3 mouth(0.3f, 0.06f, 0.05f);
-    if (expression == 1) {
-        rect(cv, 7, 21, 17, 23, mouth);
-        rect(cv, 8, 22, 16, 22, vec3(0.95f, 0.95f, 0.9f));
-    } else if (expression == 2 || dead) {
-        ellipse(cv, {12.0f, 22.5f}, {3.0f, 2.5f}, vec3(0.12f, 0.02f, 0.02f), seed, 0.0f);
+
+    // Nose: lit on the left, shadowed on the right, with nostrils.
+    rect(cv, 11, 12, 11, 17, skin * 1.1f);
+    rect(cv, 13, 12, 13, 17, skin * 0.68f);
+    rect(cv, 10, 18, 14, 18, skin * 0.72f);
+    cv.put(11, 18, dark);
+    cv.put(13, 18, dark);
+
+    // Mouth and chin.
+    const vec3 lips(0.45f, 0.18f, 0.12f);
+    if (grin) {
+        rect(cv, 7, 21, 17, 23, dark);
+        rect(cv, 8, 22, 16, 22, vec3(0.95f, 0.93f, 0.85f));
+        cv.put(6, 20, skin * 0.6f);
+        cv.put(18, 20, skin * 0.6f);
+    } else if (ouch || dead) {
+        rect(cv, 10, 21, 14, 24, vec3(0.1f, 0.02f, 0.02f));
+        rect(cv, 10, 21, 14, 21, lips);
     } else {
-        rect(cv, 9, 22, 15, 22, mouth);
+        rect(cv, 9, 21, 15, 21, skin * 0.75f); // upper lip shadow
+        rect(cv, 9, 22, 15, 22, lips);
+        cv.put(8, 23, skin * 0.6f); // a hard set to the mouth
+        cv.put(16, 23, skin * 0.6f);
     }
+    rect(cv, 12, 25, 12, 26, skin * 0.65f); // cleft chin
+
     // Injuries: more blood and bruising the lower the health.
     rnd::Rng rng(seed + static_cast<uint32_t>(level) * 97u);
+    const vec3 blood(0.6f, 0.04f, 0.03f);
     const int streaks = dead ? 7 : level * 2;
     for (int i = 0; i < streaks; ++i) {
         const int x = rng.rangeInt(4, 19), y0 = rng.rangeInt(3, 10), len = rng.rangeInt(3, 10);
         for (int y = y0; y < y0 + len; ++y)
-            if (cv.opaque(x, y)) cv.at(x, y) = vec3(rng.range(0.45f, 0.7f), 0.04f, 0.03f);
+            if (cv.opaque(x, y)) cv.at(x, y) = blood * rng.range(0.75f, 1.15f);
     }
+    if (level >= 2 || dead) rect(cv, 12, 19, 12, 20 + std::min(level, 3), blood); // bloody nose
     for (int i = 0; i < level * 3; ++i) {
         const int x = rng.rangeInt(3, 20), y = rng.rangeInt(6, 26);
-        if (cv.opaque(x, y)) cv.at(x, y) *= 0.6f;
+        if (cv.opaque(x, y)) cv.at(x, y) *= vec3(0.55f, 0.45f, 0.55f); // bruises
     }
     darkenEdges(cv, 0.6f);
     return cv;

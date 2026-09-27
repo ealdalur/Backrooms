@@ -65,7 +65,7 @@ const std::vector<TerminalConsole::Command>& TerminalConsole::commands() {
         {"echo",     "print",      "ECHO <TEXT>",       "PRINT TEXT",                          &TerminalConsole::cmdEcho},
         {"reboot",   "restart",    "REBOOT",            "RESTART THE SYSTEM",                  &TerminalConsole::cmdReboot},
         {"shutdown", "poweroff",   "SHUTDOWN",          "POWER OFF AND LEAVE",                 &TerminalConsole::cmdShutdown},
-        {"exit",     "logout quit bye", "EXIT",         "LEAVE THE TERMINAL (ALSO: ESC)",      &TerminalConsole::cmdExit},
+        {"exit",     "logout quit bye", "EXIT",         "LEAVE THE TERMINAL (ALSO: <ESC>)",      &TerminalConsole::cmdExit},
         // Not in HELP.
         {"doom",     "doom.exe",   "DOOM",              "",                                    &TerminalConsole::cmdDoom, true},
         {"iddqd",    "idkfa",      "IDDQD",             "",                                    &TerminalConsole::cmdIddqd, true},
@@ -103,7 +103,7 @@ void TerminalConsole::open(bool powered) {
         std::snprintf(header, sizeof(header), "FACILITY MONITOR 2.3 - NODE %04X - LEVEL %d",
                       static_cast<unsigned>(m_id & 0xFFFF), m_level);
         print(header, TerminalScreen::Bright);
-        print("PRESS ENTER FOR A COMMAND PROMPT.", TerminalScreen::Dim);
+        print("PRESS <ENTER> FOR A COMMAND PROMPT.", TerminalScreen::Dim);
         print("");
     } else {
         print("", TerminalScreen::Normal);
@@ -410,7 +410,7 @@ void TerminalConsole::compose() {
     const bool usable = m_ready && m_powerOffTimer < 0.0f;
     m_screen.cursorVisible = usable && m_commandMode;
     if (usable && !m_commandMode) {
-        const std::string hint = "PRESS ENTER FOR A COMMAND PROMPT";
+        const std::string hint = "PRESS <ENTER> FOR A COMMAND PROMPT";
         for (int col = 0; col < static_cast<int>(hint.size()); ++col) {
             m_screen.at(col, promptRow) = {hint[static_cast<size_t>(col)], TerminalScreen::Dim};
         }
@@ -465,7 +465,7 @@ void TerminalConsole::cmdDiag(const Args&, const TerminalContext& ctx) {
 void TerminalConsole::cmdStream(const Args&, const TerminalContext&) {
     m_commandMode = false;
     m_streamTimer = 0.6f;
-    print(std::string("RESUMING LIVE LOG (") + termtext::modeName(m_mode) + "). PRESS ENTER FOR THE PROMPT.", TerminalScreen::Dim);
+    print(std::string("RESUMING LIVE LOG (") + termtext::modeName(m_mode) + "). PRESS <ENTER> FOR THE PROMPT.", TerminalScreen::Dim);
 }
 
 void TerminalConsole::cmdMode(const Args& args, const TerminalContext&) {

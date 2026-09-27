@@ -623,11 +623,11 @@ void Engine::drawHud() {
                  glm::vec4(1.0f, 1.0f, 0.92f, 0.75f * m_crosshairHighlight), true);
     }
     if (m_terminalBlend > 0.0f && m_console) {
-        const char* hint = m_console->doomActive()
-                               ? "ESC  QUIT     WASD  MOVE     MOUSE  TURN     CTRL / LMB  FIRE     SPACE  USE     2 3  WEAPONS"
-                           : m_console->commandMode() ? "ESC  LEAVE     ENTER  RUN COMMAND     TYPE HELP FOR COMMANDS"
-                                                      : "ESC  LEAVE     ENTER  COMMAND PROMPT";
-        hud.text(hint, w * 0.5f, h - 24.0f * s, TextOverlay::Align::Center, 1.0f,
+        // The terminal's key guide, at twice the size of the other HUD text.
+        const char* hint = m_console->doomActive() ? "<ESC> Quit  <W><A><S><D> Move  MOUSE Turn  <CTRL>/CLICK Fire  <SPACE> Use  <2> <3> Weapons"
+                           : m_console->commandMode() ? "<ESC> Leave     <ENTER> Run Command     Type HELP for Commands"
+                                                      : "<ESC> Leave     <ENTER> Command Prompt";
+        hud.text(hint, w * 0.5f, h - 40.0f * s, TextOverlay::Align::Center, 2.0f,
                  glm::vec4(0.8f, 0.8f, 0.75f, 0.6f * m_terminalBlend), true);
     }
     if (m_messageTimer > 0.0f && !m_message.empty()) {

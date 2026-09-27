@@ -1023,7 +1023,7 @@ void Game::drawTitle() {
         r.drawText((kScreenW - SoftwareRenderer::textWidth(s, scale)) / 2, y, s, color, scale);
     };
     if ((m_tic / 18) % 2 == 0) centered(136, "PRESS FIRE TO PLAY", pal(Yellow, 14));
-    centered(150, "ESC TO QUIT", pal(Grey, 10));
+    centered(150, "<ESC> TO QUIT", pal(Grey, 10));
     char seed[64];
     std::snprintf(seed, sizeof(seed), "NO WAD FOUND. SYNTHESIZED FROM SEED %08X", static_cast<unsigned>(m_seed & 0xFFFFFFFFu));
     centered(186, seed, pal(Grey, 7));
@@ -1066,7 +1066,8 @@ void Game::drawLevel() {
     const int cellLight = m_level.lightAt(static_cast<int>(std::floor(p.pos.x)), static_cast<int>(std::floor(p.pos.y)), m_levelTics);
     const int light = std::clamp((255 - cellLight) / 10 - 2 - (p.extraLight > 0 ? 4 : 0), 0, kColormaps - 1);
     if (flash) {
-        const int muzzleX = x + gun->w / 2, muzzleY = y + (p.weapon == Weapon::Pistol ? 6 : 1);
+        const int muzzleX = x + gun->w * (p.weapon == Weapon::Pistol ? 27 : 46) / (p.weapon == Weapon::Pistol ? 64 : 96);
+        const int muzzleY = y + (p.weapon == Weapon::Pistol ? 6 : 1);
         r.drawImage(*flash, muzzleX - flash->w / 2, muzzleY - flash->h * 3 / 4, 0, kViewH);
     }
     r.drawImage(*gun, x, y, light, kViewH);
