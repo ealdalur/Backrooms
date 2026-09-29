@@ -111,8 +111,8 @@ void PhoneCall::press(char key) {
     const char* p = key != '\0' ? std::strchr(kKeys, key) : nullptr;
     if (!p) return;
     // The key clicks and its tone sounds in the earpiece whatever the line is doing...
-    sound(SoundId::PhoneKey, -1, 0.35f, 0.0f, false);
-    sound(SoundId::PhoneDtmf, static_cast<int>(p - kKeys), 0.45f);
+    sound(SoundId::PhoneKey, -1, 0.70f, 0.0f, false);
+    sound(SoundId::PhoneDtmf, static_cast<int>(p - kKeys), 0.90f);
     // ...but only a line waiting for digits takes any notice.
     if (m_state != State::DialTone && m_state != State::OpenLine && m_state != State::Seizing && m_state != State::Dialing) return;
     m_dialed += key;

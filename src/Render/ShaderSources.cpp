@@ -363,7 +363,7 @@ void main() {
     // down (ceiling, undersides) receive strong warm bounce from the lit
     // carpet and walls; upward-facing surfaces receive the dimmer ceiling bounce.
     vec3 ambient = mix(uAmbientDown, uAmbient, N.y * 0.5 + 0.5);
-    vec3 color = albedo * ambient * ao;
+    vec3 color = albedo * ambient * ao * 0.7;
     color += evaluateLights(vWorldPos, N, V, albedo, params.x * specMask, params.y) * mix(0.55, 1.0, ao);
 
     // Emissive diffuser panels follow their fixture's flicker.
