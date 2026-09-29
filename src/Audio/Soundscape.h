@@ -16,6 +16,9 @@
 //     when it is right behind you; a heartbeat that quickens with fear.
 //   * Terminals: key clicks, beeps, glitches, boot and the monitor's hum -
 //     and, when DOOM is running on one, its effects and looping music.
+//   * Phones: the earpiece of a lifted handset - the open line, one looping
+//     call-progress tone and whatever else comes down the wire - played at
+//     the listener's ear, not in the world.
 // Positional sounds get distance attenuation, equal-power panning, head
 // shadow and occlusion (muffled and quieter when a wall is in the way, and
 // always when the source is on another storey).
@@ -75,6 +78,18 @@ public:
     /// The shock when an entity reaches the player.
     void playSting();
 
+    /// The earpiece of the handset in the player's hand: the open line's hiss
+    /// at `lineGain` and `tone` (a looping call-progress tone, SoundId::Count
+    /// for none) at `toneGain`. A new tone starts at the top of its cadence.
+    void setPhoneLine(SoundId tone, float toneGain, float lineGain);
+    /// A one-shot in the earpiece; `variant` < 0 picks one at random.
+    void playEarpiece(SoundId id, int variant, float gain, float delay);
+    /// Hung up: everything in the earpiece stops at once.
+    void stopEarpiece();
+
+    /// The synthesised sounds (lengths, variant counts).
+    const SoundBank& bank() const { return m_bank; }
+
     /// Writes the whole synthesised sound bank to WAV files.
     void dumpSounds(const std::string& directory) const { m_bank.writeWavFiles(directory); }
 
@@ -132,6 +147,10 @@ private:
     VoiceHandle m_voice = 0;      ///< The Wanderer's current phrase.
     VoiceHandle m_monitor = 0;    ///< CRT hum of the terminal in use.
     VoiceHandle m_music = 0;      ///< DOOM's music, while it runs on that terminal.
+    VoiceHandle m_phoneLine = 0;  ///< Earpiece: the open line.
+    VoiceHandle m_phoneTone = 0;  ///< Earpiece: the current call-progress tone...
+    SoundId     m_phoneToneId = SoundId::Count; ///< ...and which one it is.
+    std::vector<VoiceHandle> m_earpiece; ///< Earpiece one-shots still playing.
     float       m_voiceGap = 0.0f; ///< Pause before its next phrase.
 
     float    m_nextDistantEvent = 7.0f;

@@ -31,7 +31,7 @@ public:
     /// Resolves, blooms and composites into the default framebuffer.
     /// @param fear  0..1 dread effects (aberration, desaturation, closing vignette).
     /// @param fade  0..1 fade to black.
-    void present(float time, float exposure, float bloomStrength, float bloomThreshold, float crosshairHighlight,
+    void present(float time, float exposure, float bloomStrength, float bloomThreshold, float crosshair, float crosshairHighlight,
                  float fear, float fade);
 
 private:

@@ -22,10 +22,11 @@ class WorldGenerator;
 
 /// Something the player can use with the interact key.
 struct Interactable {
-    enum class Kind : uint8_t { None, Door, Terminal };
+    enum class Kind : uint8_t { None, Door, Terminal, Phone };
     Kind      kind = Kind::None;
     Door*     door = nullptr;
     Terminal* terminal = nullptr;
+    Phone*    phone = nullptr;
 
     explicit operator bool() const { return kind != Kind::None; }
 };
@@ -46,7 +47,7 @@ public:
     /// Same, optionally skipping doors (for things that slip under them).
     void gatherColliders(const AABB& region, std::vector<AABB>& out, bool includeDoors) const;
 
-    /// Best door or terminal in front of / next to the eye, or none.
+    /// Best door, terminal or phone in front of / next to the eye, or none.
     Interactable findInteractable(const glm::vec3& eye, const glm::vec3& forward) const;
 
     /// The door hanging in a global edge on a storey, if its chunk is loaded.
@@ -55,6 +56,8 @@ public:
 
     /// A loaded terminal by id, or nullptr.
     Terminal* terminalById(uint64_t id);
+    /// A loaded phone by id, or nullptr.
+    Phone* phoneById(uint64_t id);
 
     /// Finds a collision-free standing position on `level` near `near`
     /// (spiralling outward over cell centres and quarter points).

@@ -151,6 +151,9 @@ Interactable ChunkManager::findInteractable(const glm::vec3& eye, const glm::vec
                     if (glm::dot(t.screenNormal(), eye - t.screenCenter()) <= 0.05f) continue;
                     consider(t.screenCenter(), 0.55f, [&] { best = {Interactable::Kind::Terminal, nullptr, &t}; });
                 }
+                for (Phone& p : it->second->phones()) {
+                    consider(p.center(), 0.6f, [&] { best = {Interactable::Kind::Phone, nullptr, nullptr, &p}; });
+                }
             }
         }
     }
@@ -171,6 +174,15 @@ Terminal* ChunkManager::terminalById(uint64_t id) {
     for (auto& kv : m_chunks) {
         for (Terminal& t : kv.second->terminals()) {
             if (t.id() == id) return &t;
+        }
+    }
+    return nullptr;
+}
+
+Phone* ChunkManager::phoneById(uint64_t id) {
+    for (auto& kv : m_chunks) {
+        for (Phone& p : kv.second->phones()) {
+            if (p.id() == id) return &p;
         }
     }
     return nullptr;

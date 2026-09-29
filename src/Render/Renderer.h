@@ -2,12 +2,13 @@
 // ---------------------------------------------------------------------------
 // Renderer.h
 // Top-level render subsystem. Owns shaders, procedural materials, shared
-// furniture/door/terminal meshes, the clustered light grid, the entity
+// furniture/door/terminal/phone meshes, the clustered light grid, the entity
 // renderer, the terminal CRT overlay and the HDR post chain, and draws the
 // loaded world from the player's camera each frame.
 // ---------------------------------------------------------------------------
 
 #include "Actors/Furniture.h"
+#include "Actors/Phone.h"
 #include "Actors/Terminal.h"
 #include "Render/Camera.h"
 #include "Render/EntityRenderer.h"
@@ -34,6 +35,7 @@ struct RenderStats {
     size_t furnitureDrawn = 0;
     size_t doorsDrawn = 0;
     size_t terminalsDrawn = 0;
+    size_t phonesDrawn = 0;
     size_t lights = 0;
 };
 
@@ -41,6 +43,7 @@ struct RenderStats {
 struct FrameParams {
     Camera camera;
     double time = 0.0;
+    float  crosshair = 1.0f;                                  ///< 0..1, visibility of the crosshair.
     float  crosshairHighlight = 0.0f;                         ///< 0..1, shows the "interactable" ring.
     float  fear = 0.0f;                                        ///< 0..1, drives the dread post effects.
     float  fade = 0.0f;                                        ///< 0..1, fade to black.
@@ -89,6 +92,10 @@ private:
     std::vector<glm::mat4>                                  m_doorInstances;
     std::array<GpuMesh, kTerminalLookCount>                 m_terminalMeshes;
     std::array<std::vector<glm::mat4>, kTerminalLookCount>  m_terminalInstances;
+    std::array<GpuMesh, kPhoneLookCount>                    m_phoneMeshes;
+    std::array<std::vector<glm::mat4>, kPhoneLookCount>     m_phoneInstances;
+    std::array<GpuMesh, Phone::kKeyCount>                   m_phoneKeyMeshes;    ///< One per key: each carries its own label.
+    std::array<std::vector<glm::mat4>, Phone::kKeyCount>    m_phoneKeyInstances;
 
     uint64_t    m_lightTopology = ~0ull; ///< ChunkManager version the light grid was built for.
     int         m_width = 1;

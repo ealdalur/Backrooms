@@ -70,6 +70,9 @@ inline constexpr float kStairLobbyDepth = 1.3f; ///< Floor strip inside the entr
 // Terminals ---------------------------------------------------------------------
 inline constexpr float kTerminalChance = 0.20f; ///< Probability that a placed desk carries a retro computer.
 
+// Phones --------------------------------------------------------------------------
+inline constexpr float kPhoneChance = 0.40f; ///< Probability that a placed desk carries a telephone.
+
 /// Wall-edge classification shared by generation, collision and the shader.
 enum class EdgeType : uint8_t {
     Open    = 0, ///< No wall at all (open-plan).

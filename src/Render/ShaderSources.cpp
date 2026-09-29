@@ -96,6 +96,7 @@ const int MAT_CARPET    = 1;
 const int MAT_CEILING   = 2;
 const int MAT_CRT       = 10;
 const int MAT_SIGN      = 12;
+const int MAT_PHONE     = 13;
 
 const uint EDGE_OPEN = 0u;
 const uint EDGE_WALL = 1u;
@@ -377,6 +378,13 @@ void main() {
     if (vMaterial == MAT_SIGN) {
         color += albedo * emissiveMask * params.w * (0.97 + 0.03 * sin(uTime * 377.0));
     }
+    // Phone message lamps: most are dark, some blink (a message is waiting),
+    // and the one off the hook burns steadily (its lamp UVs are offset by +2 in u).
+    if (vMaterial == MAT_PHONE && emissiveMask > 0.0) {
+        float h = hash13(floor(vInstanceOrigin * 3.7) + 0.5);
+        float lamp = vUV.x > 1.5 ? 1.0 : (h < 0.3 ? step(0.55, fract(uTime * (0.45 + 0.4 * h) + h * 13.0)) : 0.0);
+        color += albedo * emissiveMask * params.w * lamp;
+    }
 
     // Humid, yellowish squared-exponential haze.
     float fog = 1.0 - exp(-pow(camDist * uFogDensity, 2.0));
@@ -560,6 +568,7 @@ uniform float uExposure;
 uniform float uBloomStrength;
 uniform float uTime;
 uniform vec2  uResolution;
+uniform float uCrosshair;           // 0..1, visibility of the crosshair (hidden while a mouse pointer is used)
 uniform float uCrosshairHighlight;  // 0..1, ring shown when something is interactable
 uniform float uFear;                // 0..1, an entity is near / being watched
 uniform float uFade;                // 0..1, fade to black
@@ -601,7 +610,7 @@ void main() {
     float r = length(gl_FragCoord.xy - uResolution * 0.5);
     float dotMask = 1.0 - smoothstep(1.5, 2.5, r);
     float ringMask = uCrosshairHighlight * (1.0 - smoothstep(0.8, 1.6, abs(r - 7.0)));
-    c = mix(c, vec3(1.0), max(dotMask * 0.7, ringMask * 0.85) * (1.0 - uFade));
+    c = mix(c, vec3(1.0), max(dotMask * 0.7, ringMask * 0.85) * uCrosshair * (1.0 - uFade));
 
     oColor = vec4(clamp(c, 0.0, 1.0), 1.0);
 }

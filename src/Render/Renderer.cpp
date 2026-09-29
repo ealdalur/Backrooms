@@ -53,6 +53,12 @@ bool Renderer::init(int width, int height) {
     for (int i = 0; i < kTerminalLookCount; ++i) {
         m_terminalMeshes[static_cast<size_t>(i)].upload(Terminal::buildMesh(static_cast<TerminalLook>(i)), true);
     }
+    for (int i = 0; i < kPhoneLookCount; ++i) {
+        m_phoneMeshes[static_cast<size_t>(i)].upload(Phone::buildMesh(static_cast<PhoneLook>(i)), true);
+    }
+    for (int k = 0; k < Phone::kKeyCount; ++k) {
+        m_phoneKeyMeshes[static_cast<size_t>(k)].upload(Phone::buildKeyMesh(k), true);
+    }
 
     // Constant world shader state.
     m_worldShader.use();
@@ -131,6 +137,8 @@ void Renderer::render(const FrameParams& frame, ChunkManager& chunks, const Worl
 
     for (auto& list : m_furnitureInstances) list.clear();
     for (auto& list : m_terminalInstances) list.clear();
+    for (auto& list : m_phoneInstances) list.clear();
+    for (auto& list : m_phoneKeyInstances) list.clear();
     m_doorInstances.clear();
 
     for (const Chunk* chunk : ordered) {
@@ -146,9 +154,13 @@ void Renderer::render(const FrameParams& frame, ChunkManager& chunks, const Worl
         for (const Terminal& t : chunk->terminals()) {
             m_terminalInstances[static_cast<size_t>(t.look())].push_back(t.modelMatrix());
         }
+        for (const Phone& p : chunk->phones()) {
+            m_phoneInstances[static_cast<size_t>(p.look())].push_back(p.modelMatrix());
+            for (int k = 0; k < Phone::kKeyCount; ++k) m_phoneKeyInstances[static_cast<size_t>(k)].push_back(p.keyMatrix(k));
+        }
     }
 
-    // ---- Instanced furniture, doors and terminals ------------------------------------------
+    // ---- Instanced furniture, doors, terminals and phones ------------------------------------------
     m_worldShader.set("uLightBase", 0);
     for (size_t t = 0; t < m_furnitureMeshes.size(); ++t) {
         m_furnitureMeshes[t].setInstances(m_furnitureInstances[t]);
@@ -163,6 +175,15 @@ void Renderer::render(const FrameParams& frame, ChunkManager& chunks, const Worl
         m_terminalMeshes[t].drawInstanced();
         m_stats.terminalsDrawn += m_terminalInstances[t].size();
     }
+    for (size_t t = 0; t < m_phoneMeshes.size(); ++t) {
+        m_phoneMeshes[t].setInstances(m_phoneInstances[t]);
+        m_phoneMeshes[t].drawInstanced();
+        m_stats.phonesDrawn += m_phoneInstances[t].size();
+    }
+    for (size_t k = 0; k < m_phoneKeyMeshes.size(); ++k) {
+        m_phoneKeyMeshes[k].setInstances(m_phoneKeyInstances[k]);
+        m_phoneKeyMeshes[k].drawInstanced();
+    }
 
     // ---- Entities: lit bodies through the world shader, then the shadow creature ----------
     if (frame.entities) {
@@ -174,7 +195,7 @@ void Renderer::render(const FrameParams& frame, ChunkManager& chunks, const Worl
 
     // ---- Post-processing to the back buffer -----------------------------------------------
     m_post.present(static_cast<float>(frame.time), cfg::kExposure, cfg::kBloomStrength, cfg::kBloomThreshold,
-                   frame.crosshairHighlight, frame.fear, frame.fade);
+                   frame.crosshair, frame.crosshairHighlight, frame.fear, frame.fade);
     m_hud.begin(m_width, m_height);
 }
 

@@ -20,6 +20,7 @@ set(BACKROOMS_SOURCES
 
   src/Audio/AudioEngine.cpp
   src/Audio/DoomSounds.cpp
+  src/Audio/PhoneSounds.cpp
   src/Audio/SoundBank.cpp
   src/Audio/Soundscape.cpp
   src/Audio/SpeechSynth.cpp
@@ -32,6 +33,7 @@ set(BACKROOMS_SOURCES
   src/Gameplay/Doom/DoomGame.cpp
   src/Gameplay/Doom/DoomLevel.cpp
   src/Gameplay/Doom/DoomRenderer.cpp
+  src/Gameplay/PhoneCall.cpp
   src/Gameplay/TerminalConsole.cpp
   src/Gameplay/TerminalText.cpp
 
@@ -64,6 +66,7 @@ set(BACKROOMS_SOURCES
   src/Actors/CreatureRig.cpp
   src/Actors/Door.cpp
   src/Actors/Furniture.cpp
+  src/Actors/Phone.cpp
   src/Actors/Player.cpp
   src/Actors/Terminal.cpp
 )
@@ -79,6 +82,7 @@ set(BACKROOMS_HEADERS
 
   src/Audio/AudioEngine.h
   src/Audio/DoomSounds.h
+  src/Audio/PhoneSounds.h
   src/Audio/Dsp.h
   src/Audio/SoundBank.h
   src/Audio/Soundscape.h
@@ -94,6 +98,7 @@ set(BACKROOMS_HEADERS
   src/Gameplay/Doom/DoomGame.h
   src/Gameplay/Doom/DoomLevel.h
   src/Gameplay/Doom/DoomRenderer.h
+  src/Gameplay/PhoneCall.h
   src/Gameplay/TerminalConsole.h
   src/Gameplay/TerminalText.h
 
@@ -131,6 +136,7 @@ set(BACKROOMS_HEADERS
   src/Actors/CreatureRig.h
   src/Actors/Door.h
   src/Actors/Furniture.h
+  src/Actors/Phone.h
   src/Actors/Player.h
   src/Actors/Terminal.h
 )

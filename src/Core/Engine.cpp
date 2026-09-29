@@ -7,9 +7,11 @@
 
 #include "AI/EntityDirector.h"
 #include "AI/NavGrid.h"
+#include "Actors/Phone.h"
 #include "Actors/Player.h"
 #include "Audio/Soundscape.h"
 #include "Core/GpuSelection.h"
+#include "Gameplay/PhoneCall.h"
 #include "Gameplay/TerminalConsole.h"
 #include "Math/Random.h"
 #include "Physics/Physics.h"
@@ -80,6 +82,26 @@ const DoomSfx kDoomSfx[] = {
     {SoundId::DoomSwitch, 0.4f, false},
 };
 static_assert(sizeof(kDoomSfx) / sizeof(kDoomSfx[0]) == static_cast<size_t>(doom::Sfx::Switch) + 1, "one entry per doom::Sfx");
+
+/// Splits text into lines of at most `width` characters at spaces.
+std::vector<std::string> wrapText(const std::string& text, size_t width) {
+    std::vector<std::string> lines;
+    std::string line;
+    size_t i = 0;
+    while (i < text.size()) {
+        size_t j = text.find(' ', i);
+        if (j == std::string::npos) j = text.size();
+        const std::string word = text.substr(i, j - i);
+        if (!line.empty() && line.size() + 1 + word.size() > width) {
+            lines.push_back(line);
+            line.clear();
+        }
+        line += (line.empty() ? "" : " ") + word;
+        i = j + 1;
+    }
+    if (!line.empty()) lines.push_back(line);
+    return lines;
+}
 
 const char* stalkerStateName(Stalker::State s) {
     switch (s) {
@@ -156,6 +178,8 @@ bool Engine::createWindow() {
 bool Engine::init() {
     if (!createWindow()) return false;
 
+    m_pointerCursor = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_POINTER);
+
     m_renderer = std::make_unique<Renderer>();
     if (!m_renderer->init(m_pixelWidth, m_pixelHeight)) {
         std::cerr << "[Engine] Renderer initialisation failed\n";
@@ -188,7 +212,7 @@ bool Engine::init() {
               << " chunks loaded, spawn (" << m_player->feetPosition().x << ", " << m_player->feetPosition().z
               << ") on level " << m_focusLevel << "\n"
               << "[Engine] Controls: WASD move, mouse or arrow keys look, Shift run, Space jump, C crouch,\n"
-              << "         E open doors / use terminals (Esc leaves a terminal), hold RMB + move mouse to drive,\n"
+              << "         E open doors / use terminals / pick up phones (Esc leaves), hold RMB + move mouse to drive,\n"
               << "         +/- sensitivity, F3 entity debug, F11 fullscreen, F12 screenshot, P pause, Esc quit.\n";
 
     setState(m_state);
@@ -199,9 +223,11 @@ bool Engine::init() {
 
 void Engine::setState(GameState state) {
     m_state = state;
-    SDL_SetWindowRelativeMouseMode(m_window, state != GameState::Paused);
+    // Holding a phone, a mouse pointer presses its keys.
+    SDL_SetWindowRelativeMouseMode(m_window, state != GameState::Paused && state != GameState::Phone);
+    if (state != GameState::Phone) SDL_SetCursor(SDL_GetDefaultCursor());
     if (m_sound) m_sound->setPaused(state == GameState::Paused);
-    if (state == GameState::Terminal) SDL_StartTextInput(m_window);
+    if (state == GameState::Terminal || state == GameState::Phone) SDL_StartTextInput(m_window);
     else SDL_StopTextInput(m_window);
     m_input.reset();
     m_titleDirty = true; // refresh the title immediately
@@ -252,13 +278,26 @@ void Engine::processEvents() {
             break;
         case SDL_EVENT_MOUSE_BUTTON_DOWN:
             if (m_state == GameState::Paused && e.button.button == SDL_BUTTON_LEFT) setState(m_resumeState);
+            else if (m_state == GameState::Phone && e.button.button == SDL_BUTTON_LEFT) {
+                const int key = phoneKeyAt(e.button.x, e.button.y);
+                if (key >= 0) m_phoneKeys += Phone::kKeyChars[key];
+            }
             break;
         case SDL_EVENT_TEXT_INPUT:
             if (m_state == GameState::Terminal && m_console) m_console->type(e.text.text);
+            if (m_state == GameState::Phone) {
+                for (const char* c = e.text.text; *c; ++c) {
+                    if (Phone::keyIndex(*c) >= 0) m_phoneKeys += *c;
+                }
+            }
             break;
         case SDL_EVENT_KEY_DOWN:
             if (m_state == GameState::Terminal) {
                 handleTerminalKey(e.key);
+                break;
+            }
+            if (m_state == GameState::Phone) {
+                handlePhoneKey(e.key);
                 break;
             }
             if (e.key.repeat) break;
@@ -328,6 +367,27 @@ void Engine::handleTerminalKey(const SDL_KeyboardEvent& key) {
         break;
     case SDL_SCANCODE_DOWN:
         if (!game) m_console->historyDown();
+        break;
+    case SDL_SCANCODE_F11:
+        if (!key.repeat) {
+            m_fullscreen = !m_fullscreen;
+            SDL_SetWindowFullscreen(m_window, m_fullscreen);
+        }
+        break;
+    case SDL_SCANCODE_F12:
+        m_screenshotRequested = true;
+        break;
+    default:
+        break;
+    }
+}
+
+void Engine::handlePhoneKey(const SDL_KeyboardEvent& key) {
+    // Digits, * and # arrive as text input; here only hanging up and a few globals.
+    switch (key.scancode) {
+    case SDL_SCANCODE_ESCAPE:
+    case SDL_SCANCODE_E:
+        if (!key.repeat) m_phoneHangUp = true;
         break;
     case SDL_SCANCODE_F11:
         if (!key.repeat) {
@@ -457,6 +517,140 @@ void Engine::updateTerminal(float dt) {
     }
 }
 
+// ---- Phones ------------------------------------------------------------------------------------
+
+Phone* Engine::activePhone() const { return m_phoneId ? m_chunks->phoneById(m_phoneId) : nullptr; }
+
+void Engine::enterPhone(Phone& phone) {
+    // The handset comes up to the ear; a fresh call every time.
+    phone.setOffHook(true);
+    m_phoneId = phone.id();
+    const uint64_t session = rnd::hashCombine(phone.id(), static_cast<uint64_t>(m_simTime * 1000.0) + static_cast<uint64_t>(++m_phonePickups));
+    m_call = std::make_unique<PhoneCall>(m_sound->bank(), rnd::hashCombine(m_options.seed, 0x9403'CA11ull), session);
+    m_phoneKeys.clear();
+    m_phoneHangUp = false;
+    m_phoneHover = -1;
+    m_phoneNoiseTimer = 0.0f;
+    m_sound->playEffect(SoundId::PhonePickup, phone.center(), 0.5f, *m_world);
+    m_noises.push_back({phone.center(), cfg::kNoiseTyping, NoiseKind::Machine});
+
+    // Lean over the keypad.
+    m_phoneEye = phone.viewPoint();
+    const glm::vec3 look = phone.viewTarget() - m_phoneEye;
+    m_phoneYaw = yawToward(look);
+    m_phonePitch = pitchToward(look);
+    setState(GameState::Phone);
+    int ww = 0, wh = 0;
+    SDL_GetWindowSize(m_window, &ww, &wh);
+    SDL_WarpMouseInWindow(m_window, 0.5f * static_cast<float>(ww), 0.62f * static_cast<float>(wh));
+}
+
+void Engine::leavePhone() {
+    if (Phone* phone = activePhone()) {
+        phone->setOffHook(false);
+        m_sound->playEffect(SoundId::PhoneHangup, phone->center(), 0.55f, *m_world);
+        m_noises.push_back({phone->center(), cfg::kNoiseTyping * 1.4f, NoiseKind::Machine});
+    }
+    m_sound->stopEarpiece();
+    m_call.reset();
+    m_phoneKeys.clear();
+    m_phoneHangUp = false;
+    if (m_state == GameState::Phone) setState(GameState::Running);
+    // m_phoneId stays set while the view blends back.
+}
+
+int Engine::phoneKeyAt(float windowX, float windowY) const {
+    const Phone* phone = activePhone();
+    if (!phone || m_state != GameState::Phone) return -1;
+    int ww = 0, wh = 0;
+    SDL_GetWindowSize(m_window, &ww, &wh);
+    const float W = static_cast<float>(m_pixelWidth), H = static_cast<float>(m_pixelHeight);
+    const glm::vec2 p(windowX * W / static_cast<float>(std::max(1, ww)), windowY * H / static_cast<float>(std::max(1, wh)));
+    const Camera cam = viewCamera();
+    const glm::mat4 viewProj = cam.projectionMatrix(W / std::max(H, 1.0f)) * cam.viewMatrix();
+    // Each key's share of the keypad, projected: the pointer must be inside it.
+    for (int k = 0; k < Phone::kKeyCount; ++k) {
+        glm::vec3 corners[4];
+        phone->keyHitCorners(k, corners);
+        glm::vec2 s[4];
+        bool visible = true;
+        for (int i = 0; i < 4; ++i) {
+            const glm::vec4 clip = viewProj * glm::vec4(corners[i], 1.0f);
+            if (clip.w <= 1e-4f) visible = false;
+            const glm::vec2 ndc = glm::vec2(clip) / std::max(clip.w, 1e-4f);
+            s[i] = glm::vec2((ndc.x * 0.5f + 0.5f) * W, (0.5f - 0.5f * ndc.y) * H);
+        }
+        if (!visible) continue;
+        int positive = 0, negative = 0;
+        for (int i = 0; i < 4; ++i) {
+            const glm::vec2 e = s[(i + 1) % 4] - s[i], d = p - s[i];
+            const float cross = e.x * d.y - e.y * d.x;
+            positive += cross > 0.0f;
+            negative += cross < 0.0f;
+        }
+        if (positive == 0 || negative == 0) return k;
+    }
+    return -1;
+}
+
+void Engine::updatePhone(float dt) {
+    const bool holding = m_state == GameState::Phone;
+    const float step = dt / cfg::kTerminalOpenTime;
+    m_phoneBlend = std::clamp(m_phoneBlend + (holding ? step : -step), 0.0f, 1.0f);
+    if (!holding) {
+        if (m_phoneBlend <= 0.0f) m_phoneId = 0;
+        return;
+    }
+    Phone* phone = activePhone();
+    if (!phone || !m_call || m_phoneHangUp) { // hung up (or its chunk went away)
+        leavePhone();
+        return;
+    }
+    const glm::vec3 at = phone->center();
+    for (char c : m_phoneKeys) {
+        phone->press(Phone::keyIndex(c));
+        m_call->press(c);
+        m_noises.push_back({at, cfg::kNoiseTyping * 0.6f, NoiseKind::Typing}); // the Wanderer hears you dialling
+    }
+    m_phoneKeys.clear();
+    phone->update(dt);
+
+    PhoneContext ctx;
+    ctx.stalkerBehind = m_entities->stalkerBehindPlayer();
+    ctx.wandererDistance = m_entities->wandererDistance();
+    m_call->update(dt, ctx);
+    const bool log = m_options.demo == "phone"; // scripted verification of the line's behaviour
+    for (const PhoneSoundEvent& e : m_call->takeSounds()) {
+        if (e.earpiece) m_sound->playEarpiece(e.id, e.variant, e.gain, e.delay);
+        else m_sound->playEffect(e.id, at, e.gain, *m_world);
+        if (log) std::printf("[Phone] t=%.2f sound %d variant %d (+%.2fs)\n", m_demoTime, static_cast<int>(e.id), e.variant, e.delay);
+    }
+    if (m_call->hungUp()) { // hung up on: the player's handset goes back down too
+        if (log) std::printf("[Phone] t=%.2f the other end hung up\n", m_demoTime);
+        leavePhone();
+        return;
+    }
+    if (log) {
+        const std::string state = "tone " + std::to_string(static_cast<int>(m_call->tone())) + " \"" +
+                                  (m_call->captionAlpha() > 0.0f ? m_call->caption() : std::string()) + "\"";
+        if (state != m_lastPhoneLog) std::printf("[Phone] t=%.2f %s\n", m_demoTime, state.c_str());
+        m_lastPhoneLog = state;
+    }
+    m_sound->setPhoneLine(m_call->tone(), m_call->toneGain(), m_call->lineGain());
+    // Left off the hook, the howler screams out of the earpiece - and carries.
+    if (m_call->tone() == SoundId::PhoneHowler && (m_phoneNoiseTimer -= dt) <= 0.0f) {
+        m_noises.push_back({at, cfg::kNoiseMachine * 0.8f, NoiseKind::Machine});
+        m_phoneNoiseTimer = 1.5f;
+    }
+
+    // The pointer becomes a hand over a key.
+    float mx = 0.0f, my = 0.0f;
+    SDL_GetMouseState(&mx, &my);
+    const int hover = phoneKeyAt(mx, my);
+    if ((hover >= 0) != (m_phoneHover >= 0)) SDL_SetCursor(hover >= 0 && m_pointerCursor ? m_pointerCursor : SDL_GetDefaultCursor());
+    m_phoneHover = hover;
+}
+
 // ---- Noise and entities ------------------------------------------------------------------------
 
 void Engine::collectNoise() {
@@ -483,6 +677,7 @@ void Engine::collectNoise() {
 
 void Engine::startCaught(EntityKind by) {
     if (m_state == GameState::Terminal) leaveTerminal(false);
+    if (m_state == GameState::Phone) leavePhone();
     // It looms up in front of the player; the camera is wrenched to its face.
     m_caughtFace = m_entities->confront(by, m_player->feetPosition(), m_player->lookDirection());
     m_caughtTimer = 0.0f;
@@ -549,10 +744,13 @@ void Engine::update(float dt) {
         } else if (target.kind == Interactable::Kind::Terminal) {
             m_prompt = target.terminal->powered() ? "E  USE TERMINAL" : "E  SWITCH ON TERMINAL";
             if (m_input.keyPressed(SDL_SCANCODE_E)) enterTerminal(*target.terminal);
+        } else if (target.kind == Interactable::Kind::Phone) {
+            m_prompt = "E  PICK UP PHONE";
+            if (m_input.keyPressed(SDL_SCANCODE_E)) enterPhone(*target.phone);
         }
     }
 
-    // Seated or caught, the body just stands there.
+    // Seated, on the phone or caught, the body just stands there.
     const Input& bodyInput = m_state == GameState::Running ? m_input : m_idleInput;
     m_player->update(dt, bodyInput, m_settings, *m_chunks, *m_physics);
     updateFocusLevel();
@@ -566,10 +764,12 @@ void Engine::update(float dt) {
     }
 
     updateTerminal(dt);
+    updatePhone(dt);
     collectNoise();
 
     // ---- Anomalies: they perceive what the player actually sees.
-    const bool blind = m_state == GameState::Terminal || (m_state == GameState::Caught && m_fade > 0.5f);
+    const bool blind = m_state == GameState::Terminal || m_state == GameState::Phone ||
+                       (m_state == GameState::Caught && m_fade > 0.5f);
     const float aspect = static_cast<float>(m_pixelWidth) / static_cast<float>(std::max(1, m_pixelHeight));
     m_entities->update(dt, viewCamera(), aspect, m_player->feetPosition(), m_focusLevel, blind, *m_chunks, *m_physics,
                        m_noises);
@@ -581,7 +781,7 @@ void Engine::update(float dt) {
     m_sound->update(dt, m_simTime, *m_player, *m_chunks, *m_world);
     m_sound->updateEntities(dt, m_entities->audioState(), m_entities->sounds(), m_entities->fear(), *m_world);
 
-    // Crosshair ring fades in when a door or terminal is within reach.
+    // Crosshair ring fades in when a door, terminal or phone is within reach.
     m_crosshairHighlight += ((canUse ? 1.0f : 0.0f) - m_crosshairHighlight) * (1.0f - std::exp(-12.0f * dt));
 }
 
@@ -595,6 +795,13 @@ Camera Engine::viewCamera() const {
         cam.yaw += wrapAngle(m_terminalYaw - cam.yaw) * t;
         cam.pitch += (m_terminalPitch - cam.pitch) * t;
         cam.fovYDegrees += (55.0f - cam.fovYDegrees) * t;
+    }
+    if (m_phoneBlend > 0.0f) {
+        const float t = smooth01(m_phoneBlend);
+        cam.position = glm::mix(cam.position, m_phoneEye, t);
+        cam.yaw += wrapAngle(m_phoneYaw - cam.yaw) * t;
+        cam.pitch += (m_phonePitch - cam.pitch) * t;
+        cam.fovYDegrees += (52.0f - cam.fovYDegrees) * t;
     }
     if (m_state == GameState::Caught && !m_respawned) {
         // The jumpscare: the head is wrenched round to face it, and shakes.
@@ -633,6 +840,27 @@ void Engine::drawHud() {
         hud.text(hint, w * 0.5f, h - 40.0f * s, TextOverlay::Align::Center, 2.0f,
                  glm::vec4(0.8f, 0.8f, 0.75f, 0.6f * m_terminalBlend), true);
     }
+    if (m_state == GameState::Phone && m_call) {
+        const glm::vec4 guide(0.8f, 0.8f, 0.75f, 0.6f * m_phoneBlend);
+        hud.text("<ESC>/<E> Hang Up     <0-9> <*> <#> or CLICK the Keys to Dial", w * 0.5f, h - 40.0f * s,
+                 TextOverlay::Align::Center, 2.0f, guide, true);
+        if (!m_call->dialed().empty()) {
+            hud.text(m_call->dialed(), w * 0.5f, h - 76.0f * s, TextOverlay::Align::Center, 3.0f,
+                     glm::vec4(0.95f, 0.93f, 0.85f, 0.8f * m_phoneBlend), true);
+        }
+        // What is heard on the line: the operator steady, the voices faint and unsteady.
+        if (const float a = m_call->captionAlpha(); a > 0.0f) {
+            const bool voice = m_call->captionAnomalous();
+            const float t = static_cast<float>(m_simTime);
+            const float flicker = voice ? 0.7f + 0.3f * std::sin(t * 23.0f) * std::sin(t * 7.1f) : 1.0f;
+            const glm::vec4 ink = voice ? glm::vec4(0.85f, 0.5f, 0.45f, 0.85f * a * flicker) : glm::vec4(0.9f, 0.9f, 0.85f, 0.85f * a);
+            const std::vector<std::string> lines = wrapText(voice ? "... " + m_call->caption() + " ..." : m_call->caption(), 56);
+            for (size_t i = 0; i < lines.size(); ++i) {
+                hud.text(lines[i], w * 0.5f, h * 0.12f + static_cast<float>(i) * 22.0f * s, TextOverlay::Align::Center, 2.0f, ink,
+                         true);
+            }
+        }
+    }
     if (m_messageTimer > 0.0f && !m_message.empty()) {
         const float a = std::min(1.0f, m_messageTimer / 1.0f) * std::min(1.0f, (5.0f - m_messageTimer) / 0.8f + 0.2f);
         hud.text(m_message, w * 0.5f, h * 0.62f, TextOverlay::Align::Center, 2.0f, glm::vec4(0.95f, 0.93f, 0.85f, a));
@@ -657,6 +885,7 @@ void Engine::render(float dt) {
     FrameParams frame;
     frame.camera = cam;
     frame.time = m_simTime;
+    frame.crosshair = 1.0f - m_phoneBlend;
     frame.crosshairHighlight = m_state == GameState::Running ? m_crosshairHighlight : 0.0f;
     frame.fear = m_entities->fear();
     frame.fade = m_fade;
@@ -765,6 +994,7 @@ void Engine::shutdown() {
     m_renderer.reset();
     m_entities.reset();
     m_consoles.clear();
+    m_call.reset();
     m_player.reset();
     m_chunks.reset();
     m_physics.reset();
@@ -773,6 +1003,10 @@ void Engine::shutdown() {
     if (m_context) {
         SDL_GL_DestroyContext(m_context);
         m_context = nullptr;
+    }
+    if (m_pointerCursor) {
+        SDL_DestroyCursor(m_pointerCursor);
+        m_pointerCursor = nullptr;
     }
     if (m_window) {
         SDL_DestroyWindow(m_window);
@@ -900,6 +1134,34 @@ void Engine::setupDemo() {
         // Re-find it: teleporting may have reloaded its chunk.
         if (Terminal* t = m_chunks->terminalById(best->id())) enterTerminal(*t);
         m_terminalBlend = 1.0f;
+    } else if (demo == "phone") {
+        // Nearest phone on this storey: pick it up (--type: then dial; 'h' hangs up).
+        Phone* best = nullptr;
+        float bestDist = 1e9f;
+        for (Chunk* chunk : m_chunks->sortedChunksMutable()) {
+            if (chunk->coord().level != m_focusLevel) continue;
+            for (Phone& p : chunk->phones()) {
+                const float d = glm::length(p.center() - feet);
+                if (d < bestDist) {
+                    bestDist = d;
+                    best = &p;
+                }
+            }
+        }
+        if (!best) {
+            std::cerr << "[Demo] No phone loaded\n";
+            return;
+        }
+        const uint64_t id = best->id();
+        const glm::vec3 at = best->center();
+        const glm::vec3 front = glm::normalize(glm::vec3(best->modelMatrix() * glm::vec4(0.0f, 0.0f, 1.0f, 0.0f)));
+        glm::vec3 stand = at + front * 0.6f;
+        stand.y = world::levelFloorY(m_focusLevel);
+        teleportPlayer(stand, m_focusLevel, yawToward(at - stand));
+        m_player->setViewAngles(yawToward(at - stand), pitchToward(at - m_player->eyePosition()));
+        // Re-find it: teleporting may have reloaded its chunk.
+        if (Phone* p = m_chunks->phoneById(id)) enterPhone(*p);
+        m_phoneBlend = 1.0f;
     } else if (demo == "explore") {
         // A long walk through the rooms (Stalker off: a catch would teleport
         // the player); for measuring how often the Wanderer is met.
@@ -959,6 +1221,12 @@ void Engine::updateDemo(float dt) {
         m_console->type(m_options.demoInput.c_str());
         m_console->submit(terminalContext());
         m_demoStep = 1;
+    }
+    if (m_options.demo == "phone" && m_state == GameState::Phone && m_demoTime > 2.5f &&
+        m_demoStep < static_cast<int>(m_options.demoInput.size()) && m_demoTime > 2.5f + 0.3f * static_cast<float>(m_demoStep)) {
+        const char c = m_options.demoInput[static_cast<size_t>(m_demoStep++)]; // dial, one key at a time
+        if (c == 'h') m_phoneHangUp = true;                                    // ...or hang up
+        else m_phoneKeys += c;
     }
     if (m_options.demo == "doom" && m_demoStep == 0 && m_demoTime > 1.5f && m_console) {
         m_console->type("doom");

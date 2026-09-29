@@ -32,6 +32,7 @@ constexpr uint64_t kSaltLevel         = 0x1E7E'0009ull;
 constexpr uint64_t kSaltStairwell     = 0x57A1'000Aull;
 constexpr uint64_t kSaltTerminal      = 0x7E41'000Bull;
 constexpr uint64_t kSaltStairwellRoll = 0x57A1'000Cull;
+constexpr uint64_t kSaltPhone         = 0x9403'000Dull;
 
 constexpr float S  = world::kCellSize;
 constexpr float H  = world::kCeilingHeight;
@@ -642,8 +643,9 @@ void WorldGenerator::placeFurniture(ChunkBlueprint& bp, const glm::vec3& origin)
             const int gz = bp.coord.z * kN + lz;
             if (cellRole(level, gx, gz) != CellRole::Room) continue; // stairwells stay clear
             rnd::Rng rng(rnd::hashCoords(bp.seed, lx, lz, kSaltFurniture));
-            // Terminals use their own stream so furniture layouts are unaffected.
+            // Terminals and phones use their own streams so furniture layouts are unaffected.
             rnd::Rng terminalRng(rnd::hashCoords(bp.seed, lx, lz, kSaltTerminal));
+            rnd::Rng phoneRng(rnd::hashCoords(bp.seed, lx, lz, kSaltPhone));
             int deskCount = 0;
 
             const glm::vec3 cellMin = origin + glm::vec3(static_cast<float>(lx) * S, 0.0f, static_cast<float>(lz) * S);
@@ -674,11 +676,25 @@ void WorldGenerator::placeFurniture(ChunkBlueprint& bp, const glm::vec3& origin)
 
             // Occasionally a desk carries a retro computer, facing the chair.
             auto maybeTerminal = [&]() {
-                if (!terminalRng.chance(world::kTerminalChance)) return;
+                if (!terminalRng.chance(world::kTerminalChance)) return false;
                 const glm::mat4 model =
                     glm::translate(bp.furniture.back().model, glm::vec3(-0.2f, 0.75f, -0.04f)); // on the desk top
                 const uint64_t id = rnd::hashCoords(levelSeed(level), gx, gz, kSaltTerminal + static_cast<uint64_t>(deskCount));
                 bp.terminals.push_back({id, model, terminalRng.chance(0.85f)});
+                return true;
+            };
+
+            // Often a desk has a telephone: beside the computer (turned towards
+            // the chair), or anywhere along the desk if there is none.
+            auto maybePhone = [&](bool besideTerminal) {
+                if (!phoneRng.chance(world::kPhoneChance)) return;
+                const float x = besideTerminal ? phoneRng.range(0.40f, 0.52f) : phoneRng.range(-0.40f, 0.50f);
+                const float z = phoneRng.range(-0.14f, 0.02f);
+                const float yaw = besideTerminal ? phoneRng.range(-0.45f, -0.12f) : -0.5f * x + phoneRng.range(-0.15f, 0.15f);
+                const glm::mat4 model = glm::rotate(glm::translate(bp.furniture.back().model, glm::vec3(x, 0.75f, z)), yaw,
+                                                    glm::vec3(0.0f, 1.0f, 0.0f));
+                const uint64_t id = rnd::hashCoords(levelSeed(level), gx, gz, kSaltPhone + static_cast<uint64_t>(deskCount));
+                bp.phones.push_back({id, model});
             };
 
             // A desk against the wall, a chair pulled up to it, optional
@@ -688,7 +704,7 @@ void WorldGenerator::placeFurniture(ChunkBlueprint& bp, const glm::vec3& origin)
                 wallFrame(side, face, n, r);
                 const glm::vec3 base = face + r * rng.range(-0.5f, 0.5f);
                 add(FurnitureType::Desk, base + n * (0.375f + 0.03f), yawFacing(n));
-                maybeTerminal();
+                maybePhone(maybeTerminal());
                 ++deskCount;
                 add(FurnitureType::Chair,
                     base + n * (0.78f + rng.range(0.25f, 0.55f)) + r * rng.range(-0.3f, 0.3f),

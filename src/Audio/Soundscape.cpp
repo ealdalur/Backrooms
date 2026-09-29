@@ -42,6 +42,11 @@ constexpr float kHeartGain       = 0.55f;
 constexpr float kStingGain       = 0.8f;
 constexpr float kMonitorHumGain  = 0.05f;
 constexpr float kTerminalMusicGain = 1.0f; // DOOM's music from the terminal's little speaker
+// The handset is held to the right ear, right against it.
+constexpr float kEarpieceGain    = 0.55f;
+constexpr float kEarpiecePan     = 0.35f;
+constexpr float kPhoneToneGain   = 0.5f;
+constexpr float kPhoneLineGain   = 0.14f;
 
 // ---- Behaviour -------------------------------------------------------------------
 constexpr float  kLightHearingRange = 14.0f; ///< Lights farther away are inaudible.
@@ -190,6 +195,51 @@ void Soundscape::setTerminalMusic(bool on, const glm::vec3& at, const WorldGener
 void Soundscape::playSting() {
     if (!m_enabled) return;
     play2D(SoundId::CatchSting, kStingGain, 0.0f, 1.0f, 0.3f);
+}
+
+void Soundscape::setPhoneLine(SoundId tone, float toneGain, float lineGain) {
+    if (!m_enabled) return;
+    auto loopAt = [this](VoiceHandle& voice, SoundId id, float gain) {
+        if (!voice || !m_audio.isPlaying(voice)) {
+            VoiceParams p;
+            p.loop = true;
+            p.gain = 0.0f; // the mixer's smoothing fades it in without a click
+            p.pan = kEarpiecePan;
+            p.reverbSend = 0.0f;
+            voice = m_audio.play(m_bank.get(id, 0), p);
+        }
+        m_audio.setVoice(voice, gain, kEarpiecePan, 20000.0f);
+    };
+    loopAt(m_phoneLine, SoundId::PhoneLine, kPhoneLineGain * lineGain);
+    if (tone != m_phoneToneId) {
+        if (m_phoneTone) m_audio.stop(m_phoneTone, 0.01f);
+        m_phoneTone = 0;
+        m_phoneToneId = tone;
+    }
+    if (tone != SoundId::Count) loopAt(m_phoneTone, tone, kPhoneToneGain * toneGain);
+}
+
+void Soundscape::playEarpiece(SoundId id, int variant, float gain, float delay) {
+    if (!m_enabled) return;
+    m_earpiece.erase(std::remove_if(m_earpiece.begin(), m_earpiece.end(), [this](VoiceHandle h) { return !m_audio.isPlaying(h); }),
+                     m_earpiece.end());
+    VoiceParams p;
+    p.gain = kEarpieceGain * gain;
+    p.pan = kEarpiecePan;
+    p.reverbSend = 0.0f;
+    p.delay = delay;
+    const VoiceHandle h = m_audio.play(m_bank.get(id, variant < 0 ? pickVariant(id) : variant), p);
+    if (h) m_earpiece.push_back(h);
+}
+
+void Soundscape::stopEarpiece() {
+    if (!m_enabled) return;
+    for (VoiceHandle h : m_earpiece) m_audio.stop(h, 0.01f);
+    m_earpiece.clear();
+    if (m_phoneLine) m_audio.stop(m_phoneLine, 0.01f);
+    if (m_phoneTone) m_audio.stop(m_phoneTone, 0.01f);
+    m_phoneLine = m_phoneTone = 0;
+    m_phoneToneId = SoundId::Count;
 }
 
 int Soundscape::pickVariant(SoundId id) {

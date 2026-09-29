@@ -4,13 +4,14 @@
 // One 25 x 25 m square of one storey of the infinite Backrooms. A chunk is
 // produced as a CPU-only ChunkBlueprint by the WorldGenerator (pure function
 // of the world seed and chunk coordinate) and then turned into a live Chunk
-// that owns GPU geometry, collision data, doors, terminals, furniture and
-// light fixtures. A chunk that holds the lower half of a stairwell also owns
+// that owns GPU geometry, collision data, doors, terminals, phones, furniture
+// and light fixtures. A chunk that holds the lower half of a stairwell also owns
 // the stair geometry reaching up into the storey above.
 // ---------------------------------------------------------------------------
 
 #include "Actors/Door.h"
 #include "Actors/Furniture.h"
+#include "Actors/Phone.h"
 #include "Actors/Terminal.h"
 #include "Physics/AABB.h"
 #include "Render/Mesh.h"
@@ -37,6 +38,12 @@ struct TerminalPlacement {
     bool      powered;
 };
 
+/// Placement of a telephone on a desk.
+struct PhonePlacement {
+    uint64_t  id;
+    glm::mat4 model;
+};
+
 /// Everything the generator produces for a chunk (no GL objects).
 struct ChunkBlueprint {
     ChunkCoord                     coord;
@@ -46,6 +53,7 @@ struct ChunkBlueprint {
     std::vector<FurnitureInstance> furniture;
     std::vector<DoorPlacement>     doors;
     std::vector<TerminalPlacement> terminals;
+    std::vector<PhonePlacement>    phones;
     std::vector<LightFixture>      lights;
     AABB                           bounds;
 };
@@ -61,7 +69,7 @@ public:
     /// Advances door animations.
     void update(float dt, const AABB& playerBox);
 
-    /// Appends static colliders, furniture / terminal colliders and (unless
+    /// Appends static colliders, furniture / terminal / phone colliders and (unless
     /// `includeDoors` is false) door colliders that overlap `region`.
     void gatherColliders(const AABB& region, std::vector<AABB>& out, bool includeDoors = true) const;
 
@@ -79,6 +87,8 @@ public:
     const std::vector<Door>& doors() const { return m_doors; }
     std::vector<Terminal>& terminals() { return m_terminals; }
     const std::vector<Terminal>& terminals() const { return m_terminals; }
+    std::vector<Phone>& phones() { return m_phones; }
+    const std::vector<Phone>& phones() const { return m_phones; }
 
     /// Offset of this chunk's first light in the renderer's global light list.
     int lightBase() const { return m_lightBase; }
@@ -97,6 +107,7 @@ private:
     std::vector<Door>              m_doors;
     std::vector<uint64_t>          m_doorEdges; ///< edgeKey() of each door (parallel to m_doors).
     std::vector<Terminal>          m_terminals;
+    std::vector<Phone>             m_phones;
     std::vector<LightFixture>      m_lights;
     AABB                           m_bounds;
     int                            m_lightBase = 0;

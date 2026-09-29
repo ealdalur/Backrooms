@@ -2,12 +2,14 @@
 // ---------------------------------------------------------------------------
 // SynthKit.h
 // Offline synthesis toolkit shared by every procedural sound generator
-// (SoundBank's world sounds, DoomSounds' terminal game): buffer helpers,
-// noise sources, modal / thump / noise-burst primitives and distance baking.
+// (SoundBank's world sounds, DoomSounds' terminal game, PhoneSounds' office
+// telephones): buffer helpers, noise sources, modal / thump / noise-burst
+// primitives, distance baking and voice degradation.
 // Everything works on mono float buffers at dsp::kSampleRate.
 // ---------------------------------------------------------------------------
 
 #include "Audio/Dsp.h"
+#include "Math/Noise.h"
 #include "Math/Random.h"
 
 #include <algorithm>
@@ -186,6 +188,37 @@ inline void bakeDistance(Buffer& b, float lowpassHz, float roomSize, float dampi
     }
     applyFilter(b, Biquad::highpass(30.0f));
     fadeEdges(b, 0.002f, 0.4f);
+}
+
+// ----- Voice degradation ------------------------------------------------------------
+
+/// Resamples with a slow, irregular speed wobble (worn tape / a failing voice).
+inline Buffer tapeWow(const Buffer& b, float depth, float rateHz, uint64_t seed) {
+    Buffer out;
+    out.reserve(b.size() + b.size() / 10);
+    double pos = 0.0;
+    while (pos < static_cast<double>(b.size() - 1)) {
+        const size_t i = static_cast<size_t>(pos);
+        const float frac = static_cast<float>(pos - static_cast<double>(i));
+        out.push_back(b[i] + (b[i + 1] - b[i]) * frac);
+        const float t = static_cast<float>(out.size()) / kRate;
+        pos += 1.0 + depth * (0.6f * std::sin(dsp::kTwoPi * rateHz * t) + 0.4f * (noise::value1D(t * 3.0, seed) * 2.0f - 1.0f));
+    }
+    return out;
+}
+
+/// Punches short holes into a phrase: the voice keeps breaking up.
+inline void dropouts(Buffer& b, rnd::Rng& rng, int count) {
+    const size_t fade = samplesFor(0.004f);
+    for (int k = 0; k < count; ++k) {
+        const size_t len = samplesFor(rng.range(0.02f, 0.07f));
+        if (b.size() < len + 4 * fade) return;
+        const size_t start = static_cast<size_t>(rng.range(0.15f, 0.85f) * static_cast<float>(b.size() - len));
+        for (size_t i = 0; i < len; ++i) {
+            const float edge = std::min(1.0f, static_cast<float>(std::min(i, len - 1 - i)) / static_cast<float>(fade));
+            b[start + i] *= 1.0f - edge;
+        }
+    }
 }
 
 } // namespace synth

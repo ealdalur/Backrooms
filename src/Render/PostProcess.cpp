@@ -113,7 +113,7 @@ void PostProcess::beginScene(const glm::vec3& clearColor) {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 }
 
-void PostProcess::present(float time, float exposure, float bloomStrength, float bloomThreshold,
+void PostProcess::present(float time, float exposure, float bloomStrength, float bloomThreshold, float crosshair,
                           float crosshairHighlight, float fear, float fade) {
     // ---- Resolve MSAA -> single-sample HDR texture ------------------------------------
     glBindFramebuffer(GL_READ_FRAMEBUFFER, m_msaaFbo);
@@ -172,6 +172,7 @@ void PostProcess::present(float time, float exposure, float bloomStrength, float
     m_compositeShader.set("uBloomStrength", bloomStrength);
     m_compositeShader.set("uTime", time);
     m_compositeShader.set("uResolution", glm::vec2(static_cast<float>(m_width), static_cast<float>(m_height)));
+    m_compositeShader.set("uCrosshair", crosshair);
     m_compositeShader.set("uCrosshairHighlight", crosshairHighlight);
     m_compositeShader.set("uFear", fear);
     m_compositeShader.set("uFade", fade);

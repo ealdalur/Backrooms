@@ -66,6 +66,24 @@ enum class SoundId : uint8_t {
     DoomDoor,         ///< Door grinding open or shut.
     DoomSwitch,       ///< Wall switch.
     DoomMusic,        ///< Seamless loop: the level music.
+    // Office phones (Audio/PhoneSounds): all but the desk-side handling are heard in the earpiece.
+    PhoneLine,        ///< Seamless loop: an open line - hiss, mains buzz, crackle.
+    PhoneDialTone,    ///< Seamless loop: dial tone (350 + 440 Hz).
+    PhoneRingback,    ///< Seamless loop: ringing at the far end (440 + 480 Hz, 2 s on, 4 s off).
+    PhoneBusy,        ///< Seamless loop: busy signal (480 + 620 Hz, 0.5 s cadence).
+    PhoneReorder,     ///< Seamless loop: fast busy (480 + 620 Hz, 0.25 s cadence).
+    PhoneHowler,      ///< Seamless loop: the off-hook warning howl.
+    PhoneDtmf,        ///< Touch-tone pairs; variant = key, in keypad order (1-9, *, 0, #).
+    PhoneKey,         ///< A keypad button pressed (at the desk).
+    PhonePickup,      ///< The handset lifted off its cradle (at the desk).
+    PhoneHangup,      ///< The handset put back in its cradle: clunk and hook-switch click (at the desk).
+    PhoneSwitching,   ///< Exchange relays clicking as a call is routed.
+    PhoneSit,         ///< Special information tones ahead of a recording.
+    PhoneOperator,    ///< Intercept announcements; variant = phonesfx::Announcement.
+    PhoneStatic,      ///< A burst of interference: something forcing its way onto the line.
+    PhoneVoice,       ///< Voices on the line; variant = phonesfx::Voice.
+    PhoneBreath,      ///< Someone breathing into a mouthpiece.
+    PhoneJenny,       ///< 867-5309: Jenny picks up, and she is sick of it.
     Count
 };
 
@@ -84,6 +102,8 @@ public:
 
     int variantCount(SoundId id) const { return static_cast<int>(m_sounds[static_cast<size_t>(id)].size()); }
     const Sound& get(SoundId id, int variant) const;
+    /// Length of a variant in seconds.
+    float duration(SoundId id, int variant) const;
 
     /// Writes every variant as a 16-bit mono WAV into `directory` (for
     /// auditioning the synthesis) and prints its peak / RMS level.

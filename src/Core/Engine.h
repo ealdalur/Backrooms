@@ -11,6 +11,9 @@
 //   Terminal - seated at a computer: the camera leans into the screen,
 //              keyboard input goes to the console, and the world keeps
 //              running around the player (the Stalker loves this).
+//   Phone    - holding a desk phone's handset: the camera leans over its
+//              keypad, a mouse pointer appears to press the keys (the digit
+//              keys work too), and the earpiece plays the line.
 //   Caught   - an entity reached the player: jumpscare, blackout, and the
 //              player wakes up somewhere else.
 // ---------------------------------------------------------------------------
@@ -34,6 +37,8 @@
 class ChunkManager;
 class EntityDirector;
 enum class EntityKind : uint8_t;
+class Phone;
+class PhoneCall;
 class Physics;
 class Player;
 class Renderer;
@@ -52,10 +57,10 @@ struct EngineOptions {
     float       screenshotDelay = 3.0f;  ///< Seconds of simulation before the capture.
     /// Developer scene set up at start: stairs, stairs-top, stairs-sign, climb, descend,
     /// stalker, ambush, caught, wanderer, terminal, doom (DOOM on the nearest terminal,
-    /// scripted play), explore (a long scripted walk,
+    /// scripted play), phone (picks up the nearest phone), explore (a long scripted walk,
     /// Stalker off; --type <n> picks the route), idle (only logs entity activity).
     std::string demo;
-    std::string demoInput;               ///< Typed into the terminal in the "terminal" scene ("upper" in "stairs-sign").
+    std::string demoInput;               ///< Typed into the terminal in the "terminal" scene, dialled in "phone" ('h' hangs up; "upper" in "stairs-sign").
     bool        noEntities = false;      ///< Disable the anomalies.
     std::string dumpSoundsDir;           ///< If set: write every synthesised sound there as WAV.
 };
@@ -74,7 +79,7 @@ public:
     int run();
 
 private:
-    enum class GameState { Running, Paused, Terminal, Caught };
+    enum class GameState { Running, Paused, Terminal, Phone, Caught };
 
     /// A point of a scripted walk. `door` marks the approach to a door that
     /// has to be opened first (the edge it hangs in follows).
@@ -108,13 +113,22 @@ private:
     TerminalContext terminalContext() const;
     Terminal* activeTerminal() const;
 
+    // ---- Phones -----------------------------------------------------------------------
+    void enterPhone(Phone& phone);
+    void leavePhone();
+    void updatePhone(float dt);
+    void handlePhoneKey(const SDL_KeyboardEvent& key);
+    Phone* activePhone() const;
+    /// The key of the phone in use under a window position (logical pixels), or -1.
+    int phoneKeyAt(float windowX, float windowY) const;
+
     // ---- Entities / noise -----------------------------------------------------------------
     void collectNoise();
     void startCaught(EntityKind by);
     void updateCaught(float dt);
 
-    /// The camera actually rendered: the player's, blended into a terminal
-    /// close-up, or wrenched towards whatever caught them.
+    /// The camera actually rendered: the player's, blended into a terminal or
+    /// phone close-up, or wrenched towards whatever caught them.
     Camera viewCamera() const;
     void drawHud();
     void showMessage(const std::string& text, float seconds);
@@ -168,6 +182,20 @@ private:
     float     m_terminalPitch = 0.0f;
     float     m_doomNoiseTimer = 0.0f; ///< Until DOOM's music next reaches the Backrooms' ears.
 
+    // Phone in hand.
+    std::unique_ptr<PhoneCall> m_call;
+    uint64_t    m_phoneId = 0;
+    float       m_phoneBlend = 0.0f;   ///< 0 = player view, 1 = leaning over the keypad.
+    glm::vec3   m_phoneEye{0.0f};
+    float       m_phoneYaw = 0.0f;
+    float       m_phonePitch = 0.0f;
+    std::string m_phoneKeys;           ///< Keys pressed since the last update.
+    bool        m_phoneHangUp = false; ///< Hang up at the next update.
+    int         m_phoneHover = -1;     ///< Key under the mouse pointer.
+    int         m_phonePickups = 0;
+    float       m_phoneNoiseTimer = 0.0f; ///< Until the howler next carries through the Backrooms.
+    SDL_Cursor* m_pointerCursor = nullptr; ///< Hand shown over a key.
+
     // Caught sequence.
     glm::vec3 m_caughtFace{0.0f};     ///< What the camera is wrenched towards.
     float     m_caughtTimer = 0.0f;
@@ -198,4 +226,5 @@ private:
     float  m_demoTime = 0.0f;
     int    m_demoStep = 0;
     std::string m_lastEntityStates;
+    std::string m_lastPhoneLog;              ///< Last logged line state ("phone" scene).
 };

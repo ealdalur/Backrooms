@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <functional>
 #include <future>
 #include <iostream>
@@ -448,6 +449,73 @@ void generateStairSign(Canvas& c) {
     });
 }
 
+// ----- Phone keys ---------------------------------------------------------------------
+// Atlas of a desk phone's printed parts in 4 x 4 cells (v up): the twelve
+// keycaps in columns 0-2 (top keypad row in the top cell row) - cream plastic
+// with a black digit and its letters beneath, grubby where fingers press -
+// then in column 3 the red message lamp lens (top) and the paper number card.
+// Each part is mapped onto a rectangle of its own aspect, so font pixels are
+// stretched here to come out square on the model.
+void generatePhoneKeys(Canvas& c) {
+    static const char kDigits[] = "123456789*0#";
+    static const char* const kLetters[12] = {"", "ABC", "DEF", "GHI", "JKL", "MNO", "PRS", "TUV", "WXY", "", "OPER", ""};
+    static const char* const kCard[2] = {"DIAL 9 FOR", "OUTSIDE LINE"};
+    const int advance = font::kGlyphW + 1;
+    // Is the font pixel under (cu, cv) lit, for `s` centred on cx with its top edge at `top`?
+    auto ink = [&](const char* s, float cu, float cv, float cx, float top, float pu, float pv) {
+        const int n = static_cast<int>(std::strlen(s));
+        const float x0 = cx - 0.5f * pu * static_cast<float>(n * advance - 1);
+        const int col = static_cast<int>(std::floor((cu - x0) / pu));
+        const int row = static_cast<int>(std::floor((top - cv) / pv));
+        if (col < 0 || row < 0 || row >= font::kGlyphH || col >= n * advance - 1 || col % advance >= font::kGlyphW) return false;
+        const uint8_t* rows = font::glyph(s[col / advance]);
+        return rows && (rows[row] & (0x10 >> (col % advance))) != 0;
+    };
+    forEachTexel(c, [&](int x, int y, float u, float v) {
+        const int ci = std::min(3, static_cast<int>(u * 4.0f)), cj = std::min(3, static_cast<int>(v * 4.0f));
+        const float cu = u * 4.0f - static_cast<float>(ci), cv = v * 4.0f - static_cast<float>(cj);
+        const float grain = 0.97f + 0.03f * noise::white(x, y, 0xB0B0u);
+        if (ci < 3) {
+            // Keycap (21 x 17 mm): rounded, dished, handled for decades.
+            const int key = ci + (3 - cj) * 3;
+            const float aspect = 0.021f / 0.017f;
+            const float edge = smooth(0.0f, 0.14f, std::min(std::min(cu, 1.0f - cu) * aspect, std::min(cv, 1.0f - cv)));
+            const float dish = sq(cu - 0.5f) + sq(cv - 0.5f);
+            const float grime = gauss(cu, 0.5f, 0.3f) * gauss(cv, 0.5f, 0.3f) *
+                                smooth(0.3f, 0.8f, noise::fbm(u * 24.0f, v * 24.0f, 24, 24, 3, 0xB0B1u + static_cast<uint32_t>(key)));
+            glm::vec3 col = glm::vec3(0.86f, 0.84f, 0.78f) * (0.70f + 0.30f * edge) * grain;
+            col = glm::mix(col, col * glm::vec3(0.72f, 0.66f, 0.55f), grime * 0.6f);
+            const char digit[2] = {kDigits[key], '\0'};
+            const float pv = 0.50f / static_cast<float>(font::kGlyphH), pv2 = 0.19f / static_cast<float>(font::kGlyphH);
+            if (ink(digit, cu, cv, 0.5f, 0.88f, pv / aspect, pv) || ink(kLetters[key], cu, cv, 0.5f, 0.30f, pv2 / aspect, pv2)) {
+                col = glm::vec3(0.07f, 0.07f, 0.075f) * (1.0f + 0.3f * grime);
+            }
+            c.put(x, y, col, 0.35f + 0.4f * edge - 0.6f * dish, 0.6f - 0.3f * grime, 0.0f);
+        } else if (cj == 3) {
+            // Message lamp lens: ribbed red plastic, glowing inside a dark rim.
+            const float aspect = 0.020f / 0.014f;
+            const float edge = std::min(std::min(cu, 1.0f - cu) * aspect, std::min(cv, 1.0f - cv));
+            const float lens = smooth(0.06f, 0.12f, edge);
+            const float ribs = 0.85f + 0.15f * std::sin(cu * 90.0f);
+            const float hot = gauss(cu, 0.5f, 0.35f) * gauss(cv, 0.5f, 0.45f);
+            const glm::vec3 col = glm::mix(glm::vec3(0.05f), glm::vec3(0.85f, 0.10f, 0.06f) * ribs * (0.6f + 0.4f * hot), lens);
+            c.put(x, y, col * grain, 0.5f + 0.2f * lens, 0.9f, lens * (0.55f + 0.45f * hot));
+        } else if (cj == 2) {
+            // Number card (84 x 26 mm) under its window: yellowed paper, typed in blue-black.
+            const float aspect = 0.084f / 0.026f;
+            const float stain = smooth(0.45f, 0.85f, noise::fbm(u * 10.0f, v * 10.0f, 10, 10, 4, 0xCA2Du));
+            glm::vec3 col = glm::mix(glm::vec3(0.90f, 0.87f, 0.76f), glm::vec3(0.80f, 0.70f, 0.50f), stain * 0.6f) * grain;
+            const float pu = 0.88f / static_cast<float>(12 * advance - 1), pv = pu * aspect;
+            if (ink(kCard[0], cu, cv, 0.5f, 0.84f, pu, pv) || ink(kCard[1], cu, cv, 0.5f, 0.42f, pu, pv)) {
+                col = glm::vec3(0.10f, 0.11f, 0.20f);
+            }
+            c.put(x, y, col, 0.5f, 0.7f, 0.0f); // glossy: it sits under clear plastic
+        } else {
+            c.put(x, y, glm::vec3(0.1f) * grain, 0.5f, 0.3f, 0.0f); // unused
+        }
+    });
+}
+
 } // namespace
 
 bool MaterialLibrary::build(int size) {
@@ -459,7 +527,7 @@ bool MaterialLibrary::build(int size) {
         generateWallpaper, generateCarpet, generateCeiling, generateWood,
         generateMetal,     generateLightPanel, generatePlastic, generateFabric,
         generateConcrete,  generateBeigePlastic, generateCrtScreen, generateFlesh,
-        generateStairSign,
+        generateStairSign, generatePhoneKeys,
     };
 
     // Synthesise every layer concurrently: each generator is independent and

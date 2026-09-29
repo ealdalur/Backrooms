@@ -11,12 +11,15 @@
 //     broken up with tape wobble, dropouts, an octave-down double and drive.
 //   * Sample-and-hold bit crushing, square waves and motor models for the
 //     terminals.
+//   * Call-progress tones, DTMF, line noise, the operator and the voices on
+//     the line for the office phones (PhoneSounds).
 // All generation is deterministic (fixed seeds per sound and variant).
 // ---------------------------------------------------------------------------
 #include "Audio/SoundBank.h"
 
 #include "Audio/DoomSounds.h"
 #include "Audio/Dsp.h"
+#include "Audio/PhoneSounds.h"
 #include "Audio/SpeechSynth.h"
 #include "Audio/SynthKit.h"
 #include "Math/Noise.h"
@@ -583,35 +586,6 @@ std::vector<Sound> makeDistantMachinery(uint64_t seed) {
 // The Wanderer
 // ============================================================================
 
-/// Resamples with a slow, irregular speed wobble (worn tape / a failing voice).
-Buffer tapeWow(const Buffer& b, float depth, float rateHz, uint64_t seed) {
-    Buffer out;
-    out.reserve(b.size() + b.size() / 10);
-    double pos = 0.0;
-    while (pos < static_cast<double>(b.size() - 1)) {
-        const size_t i = static_cast<size_t>(pos);
-        const float frac = static_cast<float>(pos - static_cast<double>(i));
-        out.push_back(b[i] + (b[i + 1] - b[i]) * frac);
-        const float t = static_cast<float>(out.size()) / kRate;
-        pos += 1.0 + depth * (0.6f * std::sin(dsp::kTwoPi * rateHz * t) + 0.4f * (noise::value1D(t * 3.0, seed) * 2.0f - 1.0f));
-    }
-    return out;
-}
-
-/// Punches short holes into a phrase: the voice keeps breaking up.
-void dropouts(Buffer& b, rnd::Rng& rng, int count) {
-    const size_t fade = samplesFor(0.004f);
-    for (int k = 0; k < count; ++k) {
-        const size_t len = samplesFor(rng.range(0.02f, 0.07f));
-        if (b.size() < len + 4 * fade) return;
-        const size_t start = static_cast<size_t>(rng.range(0.15f, 0.85f) * static_cast<float>(b.size() - len));
-        for (size_t i = 0; i < len; ++i) {
-            const float edge = std::min(1.0f, static_cast<float>(std::min(i, len - 1 - i)) / static_cast<float>(fade));
-            b[start + i] *= 1.0f - edge;
-        }
-    }
-}
-
 std::vector<Sound> makeWandererMutter(uint64_t seed) {
     static const char* const kPhrases[] = {
         "HH EH L P | M IY",               // help me
@@ -1019,6 +993,10 @@ void SoundBank::build() {
         doomsfx::makeMonsterPain, doomsfx::makeMonsterDeath, doomsfx::makeClaw, doomsfx::makeFireball,
         doomsfx::makeExplode, doomsfx::makePlayerPain, doomsfx::makePlayerDeath, doomsfx::makeItemUp,
         doomsfx::makeWeaponUp, doomsfx::makeDoor, doomsfx::makeSwitch, doomsfx::makeMusic,
+        phonesfx::makeLine, phonesfx::makeDialTone, phonesfx::makeRingback, phonesfx::makeBusy, phonesfx::makeReorder,
+        phonesfx::makeHowler, phonesfx::makeDtmf, phonesfx::makeKey, phonesfx::makePickup, phonesfx::makeHangup,
+        phonesfx::makeSwitching, phonesfx::makeSit, phonesfx::makeOperator, phonesfx::makeStatic, phonesfx::makeVoice,
+        phonesfx::makeBreath, phonesfx::makeJenny,
     };
 
     // Every sound is independent: synthesise them all concurrently.
@@ -1049,6 +1027,9 @@ void SoundBank::writeWavFiles(const std::string& directory) const {
         "doom_pistol", "doom_shotgun", "doom_imp_sight", "doom_trooper_sight", "doom_monster_pain",
         "doom_monster_death", "doom_claw", "doom_fireball", "doom_explode", "doom_player_pain", "doom_player_death",
         "doom_item_up", "doom_weapon_up", "doom_door", "doom_switch", "doom_music",
+        "phone_line", "phone_dial_tone", "phone_ringback", "phone_busy", "phone_reorder", "phone_howler",
+        "phone_dtmf", "phone_key", "phone_pickup", "phone_hangup", "phone_switching", "phone_sit",
+        "phone_operator", "phone_static", "phone_voice", "phone_breath", "phone_jenny",
     };
     static_assert(sizeof(kNames) / sizeof(kNames[0]) == kSoundIdCount, "one file name per SoundId");
     auto put16 = [](std::ofstream& f, uint16_t v) { f.put(static_cast<char>(v & 0xFF)).put(static_cast<char>(v >> 8)); };
@@ -1097,4 +1078,8 @@ void SoundBank::writeWavFiles(const std::string& directory) const {
 const Sound& SoundBank::get(SoundId id, int variant) const {
     const std::vector<Sound>& variants = m_sounds[static_cast<size_t>(id)];
     return variants[static_cast<size_t>(variant) % variants.size()];
+}
+
+float SoundBank::duration(SoundId id, int variant) const {
+    return static_cast<float>(get(id, variant).samples.size()) / kRate;
 }

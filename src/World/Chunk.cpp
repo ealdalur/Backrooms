@@ -14,7 +14,7 @@ Chunk::Chunk(ChunkBlueprint&& bp)
       m_bounds(bp.bounds) {
     m_staticMesh.upload(bp.staticMesh);
 
-    // Furniture and terminals never move, so their world colliders are computed once.
+    // Furniture, terminals and phones never move, so their world colliders are computed once.
     for (const FurnitureInstance& f : m_furniture) {
         Furniture::appendWorldColliders(f, m_furnitureColliders);
     }
@@ -22,6 +22,11 @@ Chunk::Chunk(ChunkBlueprint&& bp)
     for (const TerminalPlacement& t : bp.terminals) {
         m_terminals.emplace_back(t.id, t.model, t.powered);
         for (const AABB& local : Terminal::localColliders()) m_furnitureColliders.push_back(local.transformed(t.model));
+    }
+    m_phones.reserve(bp.phones.size());
+    for (const PhonePlacement& p : bp.phones) {
+        m_phones.emplace_back(p.id, p.model);
+        for (const AABB& local : Phone::localColliders()) m_furnitureColliders.push_back(local.transformed(p.model));
     }
 
     m_doors.reserve(bp.doors.size());
