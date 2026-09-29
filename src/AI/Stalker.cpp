@@ -31,7 +31,9 @@ Frame frameOf(const glm::vec3& feet, float yaw) {
 
 } // namespace
 
-Stalker::Stalker(uint64_t seed) : Agent(kHalfWidth, kHeight), m_rng(seed) {}
+Stalker::Stalker(uint64_t seed) : Agent(kHalfWidth, kHeight), m_rng(seed) {
+    m_vulnerability = 1.3f; // a thing of shadow: the light of the arc tears through it
+}
 
 void Stalker::place(const glm::vec3& feet, int level, float yaw) {
     Agent::place(feet, level, yaw);
@@ -177,7 +179,33 @@ void Stalker::startFleeing(const PlayerView& player, const NavGrid& nav, std::ve
 bool Stalker::update(float dt, const PlayerView& player, const NavGrid& nav, const ICollisionWorld& world,
                      const Physics& physics, std::vector<EntitySound>& sounds) {
     if (!m_active) return false;
+    const VitalSigns vitals = updateVitals(dt);
+    if (vitals.pain) sounds.push_back({EntitySound::Type::StalkerPain, m_eyes[0], 1.0f});
+    if (vitals.died) {
+        sounds.push_back({EntitySound::Type::StalkerDeath, m_eyes[0], 1.0f});
+        sounds.push_back({EntitySound::Type::Vaporize, m_feet + glm::vec3(0.0f, 1.0f, 0.0f), 1.0f});
+    }
     m_seen = isSeenBy(player, nav);
+    if (shocked() || dying()) {
+        // Caught in the arc: it rears up to its full height, screeching and
+        // convulsing, unable to move.
+        integrate(dt, glm::vec3(0.0f), 30.0f, world, physics);
+        m_burnt = true;
+        m_animTime += dt;
+        m_crawl += (0.0f - m_crawl) * (1.0f - std::exp(-6.0f * dt));
+        m_stride *= std::exp(-8.0f * dt);
+        pose();
+        convulse(m_rig);
+        updateMotes(dt);
+        return false;
+    }
+    if (m_burnt) {
+        // The arc let go: it bolts for the nearest dark corner.
+        m_burnt = false;
+        m_exposure = 0.0f;
+        m_coverTries = 0;
+        startFleeing(player, nav, sounds);
+    }
     const glm::vec3 toPlayer = player.feet - m_feet;
     const float dist = glm::length(xz(toPlayer));
     const bool sameLevel = player.level == m_level;
@@ -394,15 +422,24 @@ void Stalker::updateMotes(float dt) {
 
 void Stalker::buildGeometry(EntityDrawList& list, const glm::vec3& camRight, const glm::vec3& camUp) const {
     if (!m_active) return;
-    const size_t first = list.shadow.vertices.size();
-    m_rig.appendMesh(list.shadow, MaterialId::Wallpaper, 10);
+    MeshData& target = dying() ? list.shadowDissolve.mesh : list.shadow;
+    const size_t first = target.vertices.size();
+    m_rig.appendMesh(target, MaterialId::Wallpaper, 10);
     // The shadow shader reads the "material" slot as a sprite kind: 0 = body.
-    for (size_t i = first; i < list.shadow.vertices.size(); ++i) list.shadow.vertices[i].material = 0.0f;
+    for (size_t i = first; i < target.vertices.size(); ++i) target.vertices[i].material = 0.0f;
+    if (dying()) {
+        list.shadowDissolve.amount = dissolve();
+        list.shadowDissolve.feet = m_feet;
+        list.shadowDissolve.height = 2.3f;
+        buildEmbers(list, camRight, camUp);
+    }
 
     for (const Mote& m : m_motes) {
         const float life = m.age / m.life;
         const float opacity = 0.8f * (1.0f - life) * std::min(1.0f, m.age * 6.0f);
         list.addSprite(m.pos, m.size * (1.0f + life), EntityDrawList::Smoke, opacity, camRight, camUp);
     }
-    for (const glm::vec3& e : m_eyes) list.addSprite(e, 0.011f, EntityDrawList::Eye, 1.0f, camRight, camUp);
+    if (dissolve() < 0.25f) { // the eyes go out first
+        for (const glm::vec3& e : m_eyes) list.addSprite(e, 0.011f, EntityDrawList::Eye, 1.0f, camRight, camUp);
+    }
 }

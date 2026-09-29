@@ -21,6 +21,9 @@
 // walls and live door states, and darkness - in an unlit area it cannot be
 // made out beyond a few metres. It slips under closed doors and drains the
 // fluorescent tubes around it.
+//
+// The Tesla gun's arc stops it dead: it rears up screeching, convulsing, and
+// the moment the arc lets go it darts for cover.
 // ---------------------------------------------------------------------------
 
 #include "AI/Agent.h"
@@ -63,7 +66,9 @@ public:
     /// Nearby tubes sag and stutter.
     LightDisturbance lightDisturbance() const;
 
-    /// Appends the shadow body, soot motes and eye glints.
+    const CreatureRig& body() const override { return m_rig; }
+
+    /// Appends the shadow body, soot motes and eye glints (or the vaporising body and its embers).
     void buildGeometry(EntityDrawList& list, const glm::vec3& camRight, const glm::vec3& camUp) const;
 
 private:
@@ -91,6 +96,7 @@ private:
     int      m_coverTries = 0;
     int      m_flees = 0;          ///< Times it has been driven into cover since it appeared.
     bool     m_patient = false;    ///< Lying low after fleeing: waits out its timer.
+    bool     m_burnt = false;      ///< The arc just had it: it runs as soon as it lets go.
 
     // Animation state (frozen along with the creature while it is watched).
     float     m_animTime = 0.0f;

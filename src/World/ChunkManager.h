@@ -5,8 +5,9 @@
 // player: a full radius on the player's storey and a small one on the
 // storeys directly above and below (enough that a stairwell, and whatever
 // is visible through its entrances, is always loaded on both ends). Keeps
-// door, terminal and phone (heard message) states alive across unload/reload, answers collision
-// queries and finds interaction targets.
+// door, terminal and phone (heard message) states - and whatever the player
+// took from or left at an item site - alive across unload/reload, answers
+// collision queries and finds interaction targets.
 // ---------------------------------------------------------------------------
 
 #include "Physics/Physics.h"
@@ -15,6 +16,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -22,13 +24,21 @@ class WorldGenerator;
 
 /// Something the player can use with the interact key.
 struct Interactable {
-    enum class Kind : uint8_t { None, Door, Terminal, Phone };
-    Kind      kind = Kind::None;
-    Door*     door = nullptr;
-    Terminal* terminal = nullptr;
-    Phone*    phone = nullptr;
+    enum class Kind : uint8_t { None, Door, Terminal, Phone, Cabinet, Item };
+    Kind         kind = Kind::None;
+    Door*        door = nullptr;
+    Terminal*    terminal = nullptr;
+    Phone*       phone = nullptr;
+    FileCabinet* cabinet = nullptr;
+    ItemSite*    item = nullptr; ///< A part lying out in the open (not in a drawer).
 
     explicit operator bool() const { return kind != Kind::None; }
+};
+
+/// A filing cabinet drawer starting to move (FileCabinet event bits).
+struct CabinetEvent {
+    uint8_t   flags;
+    glm::vec3 position;
 };
 
 class ChunkManager : public ICollisionWorld {
@@ -47,7 +57,7 @@ public:
     /// Same, optionally skipping doors (for things that slip under them).
     void gatherColliders(const AABB& region, std::vector<AABB>& out, bool includeDoors) const;
 
-    /// Best door, terminal or phone in front of / next to the eye, or none.
+    /// Best door, terminal, phone, cabinet or loose part in front of / next to the eye, or none.
     Interactable findInteractable(const glm::vec3& eye, const glm::vec3& forward) const;
 
     /// The door hanging in a global edge on a storey, if its chunk is loaded.
@@ -58,6 +68,10 @@ public:
     Terminal* terminalById(uint64_t id);
     /// A loaded phone by id, or nullptr.
     Phone* phoneById(uint64_t id);
+    /// A loaded filing cabinet by id, or nullptr.
+    FileCabinet* cabinetById(uint64_t id);
+    /// The item site in a drawer of a loaded cabinet, or nullptr if it has none.
+    ItemSite* drawerSite(uint64_t cabinetId, int drawer);
 
     /// Finds a collision-free standing position on `level` near `near`
     /// (spiralling outward over cell centres and quarter points).
@@ -79,6 +93,8 @@ public:
 
     /// Door events (unlatch / swing / shut) raised during the last update().
     const std::vector<DoorEvent>& doorEvents() const { return m_doorEvents; }
+    /// Cabinet drawer events raised during the last update().
+    const std::vector<CabinetEvent>& cabinetEvents() const { return m_cabinetEvents; }
 
 private:
     void loadChunk(const ChunkCoord& c);
@@ -93,7 +109,9 @@ private:
     std::unordered_map<uint64_t, int>  m_doorMemory;     ///< Door id -> persisted state.
     std::unordered_map<uint64_t, bool> m_terminalMemory; ///< Terminal id -> powered.
     std::unordered_map<uint64_t, bool> m_phoneMemory;    ///< Phone id -> message still waiting.
+    std::unordered_map<uint64_t, std::optional<Item>> m_itemMemory; ///< Item site id -> what the player left there.
     std::vector<DoorEvent> m_doorEvents;
+    std::vector<CabinetEvent> m_cabinetEvents;
     uint64_t m_version = 0;
     size_t m_pending = 0;
 };

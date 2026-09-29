@@ -45,6 +45,16 @@ public:
 
     const std::vector<Limb>& limbs() const { return m_limbs; }
 
+    /// Moves every joint through `fn` (a function of position, so limbs that
+    /// share a joint stay joined): convulsions, shudders.
+    template <typename Fn>
+    void warp(Fn&& fn) {
+        for (Limb& l : m_limbs) {
+            l.a = fn(l.a);
+            l.b = fn(l.b);
+        }
+    }
+
     /// World-space bounds of every limb (incl. radii).
     AABB bounds() const;
 

@@ -35,6 +35,11 @@ struct EntitySound {
         StalkerSkitter, ///< Claws scrabbling on carpet as it rushes unseen.
         StalkerHiss,    ///< A sharp exhale as it darts for cover.
         WandererStep,   ///< A heavy, dragging bare footstep.
+        WandererPain,   ///< Shrieking with current running through it.
+        WandererDeath,  ///< Its last, falling wail as it burns away.
+        StalkerPain,    ///< An inhuman screech under the arc.
+        StalkerDeath,   ///< The screech coming apart into hissing steam.
+        Vaporize,       ///< A body sizzling and crackling away to nothing.
     };
     Type      type;
     glm::vec3 position;

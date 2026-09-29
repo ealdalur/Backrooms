@@ -5,6 +5,7 @@
 // Usage:
 //   Backrooms [seed] [--seed <n>] [--level <n>] [--no-entities] [--dump-sounds <dir>]
 //             [--demo <scene> [--type <text>]] [--screenshot <file.bmp> [--delay <seconds>]]
+//             [--size <width>x<height>]
 //
 //   seed          World seed (decimal or 0x-prefixed hex). Same seed -> same world.
 //   --level       Storey to start on (0 = the classic floor; negative = below).
@@ -17,7 +18,15 @@
 //                 hidden terminal game), phone (picks up the nearest desk
 //                 phone; --type <digits> dials them), explore (a long scripted walk with
 //                 the Stalker off; --type <n> picks the route), idle (just
-//                 logs entity activity).
+//                 logs entity activity), cabinet (searches the nearest filing
+//                 cabinet with a Tesla gun part in it; --type take: takes it;
+//                 --type swap-persist: swaps a flat one in, leaves until the
+//                 chunk unloads, comes back and checks), part (walks up to
+//                 the nearest part on a desk or chair),
+//                 assemble (all four parts, put together), tesla /
+//                 tesla-stalker (the assembled gun fired at the Wanderer /
+//                 the Stalker until it is vaporised; --type <percent> sets
+//                 the battery's charge).
 //   --type        Text typed into the terminal in the terminal scene (keys
 //                 dialled in the phone scene, "upper" in the stairs-sign
 //                 scene, a route number in explore).
@@ -25,6 +34,7 @@
 //   --dump-sounds Write every procedurally synthesised sound to <dir> as WAV.
 //   --screenshot  Render for a few seconds, save a BMP of the frame and exit
 //                 (handy for automated smoke tests / CI).
+//   --size        Initial window size in logical pixels, e.g. 1280x720.
 // ---------------------------------------------------------------------------
 #include "Core/Engine.h"
 #include "Core/GpuSelection.h"
@@ -47,8 +57,9 @@ bool parseSeed(const char* text, uint64_t& out) {
 
 void printUsage(const char* exe) {
     std::cout << "Usage: " << exe << " [seed] [--seed <n>] [--level <n>] [--no-entities] [--dump-sounds <dir>]\n"
-              << "       [--demo <scene> [--type <text>]] [--screenshot <file.bmp> [--delay <seconds>]]\n"
-              << "  demo scenes: stairs, stairs-top, stairs-sign, climb, descend, stalker, ambush, caught, wanderer, terminal, doom, phone, explore, idle\n";
+              << "       [--demo <scene> [--type <text>]] [--screenshot <file.bmp> [--delay <seconds>]] [--size <w>x<h>]\n"
+              << "  demo scenes: stairs, stairs-top, stairs-sign, climb, descend, stalker, ambush, caught, wanderer, terminal, doom, phone,\n"
+              << "               explore, idle, cabinet, part, assemble, tesla, tesla-stalker\n";
 }
 
 } // namespace
@@ -83,6 +94,16 @@ int main(int argc, char* argv[]) {
             options.dumpSoundsDir = argv[++i];
         } else if (std::strcmp(arg, "--screenshot") == 0 && i + 1 < argc) {
             options.screenshotPath = argv[++i];
+        } else if (std::strcmp(arg, "--size") == 0 && i + 1 < argc) {
+            char* end = nullptr;
+            const long w = std::strtol(argv[++i], &end, 10);
+            const long h = (end && (*end == 'x' || *end == 'X')) ? std::strtol(end + 1, &end, 10) : 0;
+            if (w < 64 || h < 64 || *end != '\0') {
+                std::cerr << "Invalid size: " << argv[i] << " (expected e.g. 1280x720)\n";
+                return 1;
+            }
+            options.windowWidth = static_cast<int>(w);
+            options.windowHeight = static_cast<int>(h);
         } else if (std::strcmp(arg, "--delay") == 0 && i + 1 < argc) {
             options.screenshotDelay = static_cast<float>(std::atof(argv[++i]));
         } else if (std::strcmp(arg, "--help") == 0 || std::strcmp(arg, "-h") == 0) {

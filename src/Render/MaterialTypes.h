@@ -24,11 +24,15 @@ enum class MaterialId : uint8_t {
     Flesh,         ///< Pale, clammy, veined skin (the Wanderer).
     StairSign,     ///< Illuminated "^ STAIRS" (top half) / "v STAIRS" (bottom half) sign face.
     PhoneKeys,     ///< Atlas of a desk phone's keycaps, message lamp and number card.
+    Copper,        ///< Enamelled magnet wire: fine windings running round a coil (u around, v along).
+    Aluminum,      ///< Spun / brushed aluminium (the toroid, the spike).
+    Manila,        ///< Manila file-folder card.
+    TeslaLabels,   ///< Atlas of the gun parts' labels, warning stickers, circuit board and gauge LEDs.
     Count
 };
 
 /// Upper bound baked into the world shader's material parameter array.
-inline constexpr int kMaxMaterials = 16;
+inline constexpr int kMaxMaterials = 24;
 
 inline constexpr int kMaterialCount = static_cast<int>(MaterialId::Count);
 
@@ -62,6 +66,10 @@ inline const MaterialInfo& materialInfo(MaterialId id) {
         {"Flesh",         0.50f, 0.35f,  20.0f, 0.0015f, 0.0f},
         {"StairSign",     1.00f, 0.40f,  60.0f, 0.0000f, 3.2f},
         {"PhoneKeys",     1.00f, 0.25f,  48.0f, 0.0003f, 10.0f},
+        {"Copper",        0.064f, 0.85f, 90.0f, 0.0003f, 0.0f},
+        {"Aluminum",      0.25f, 0.95f, 110.0f, 0.0002f, 0.0f},
+        {"Manila",        0.30f, 0.06f,  10.0f, 0.0003f, 0.0f},
+        {"TeslaLabels",   1.00f, 0.35f,  40.0f, 0.0002f, 6.0f},
     };
     static_assert(kMaterialCount <= kMaxMaterials, "raise kMaxMaterials and the shader array");
     return kTable[static_cast<int>(id)];

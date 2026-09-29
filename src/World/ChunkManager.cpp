@@ -33,6 +33,13 @@ void ChunkManager::loadChunk(const ChunkCoord& c) {
         auto it = m_phoneMemory.find(p.id());
         if (it != m_phoneMemory.end()) p.setMessageWaiting(it->second);
     }
+    // Parts taken away stay gone; parts swapped in stay where they were left (with their charge).
+    for (ItemSite& site : chunk->items()) {
+        auto it = m_itemMemory.find(site.id);
+        if (it == m_itemMemory.end()) continue;
+        site.item = it->second;
+        site.modified = true;
+    }
     m_chunks.emplace(c, std::move(chunk));
     ++m_version;
 }
@@ -46,6 +53,9 @@ void ChunkManager::rememberState(const Chunk& chunk) {
     for (const Terminal& t : chunk.terminals()) m_terminalMemory[t.id()] = t.powered();
     for (const Phone& p : chunk.phones()) {
         if (p.hasMessage()) m_phoneMemory[p.id()] = p.messageWaiting();
+    }
+    for (const ItemSite& site : chunk.items()) {
+        if (site.modified) m_itemMemory[site.id] = site.item;
     }
 }
 
@@ -94,10 +104,14 @@ void ChunkManager::update(const glm::vec3& focus, int focusLevel, float dt, cons
 
     // ---- Animate doors and collect their events for the soundscape.
     m_doorEvents.clear();
+    m_cabinetEvents.clear();
     for (auto& kv : m_chunks) {
         kv.second->update(dt, playerBox);
         for (Door& d : kv.second->doors()) {
             if (const uint8_t flags = d.takeEvents()) m_doorEvents.push_back({flags, d.doorwayCenter()});
+        }
+        for (FileCabinet& c : kv.second->cabinets()) {
+            if (const uint8_t flags = c.takeEvents()) m_cabinetEvents.push_back({flags, c.frontCenter()});
         }
     }
 }
@@ -161,6 +175,25 @@ Interactable ChunkManager::findInteractable(const glm::vec3& eye, const glm::vec
                 for (Phone& p : it->second->phones()) {
                     consider(p.center(), 0.6f, [&] { best = {Interactable::Kind::Phone, nullptr, nullptr, &p}; });
                 }
+                for (FileCabinet& c : it->second->cabinets()) {
+                    // Only from in front, where the drawers pull out.
+                    if (glm::dot(c.frontNormal(), eye - c.frontCenter()) <= 0.05f) continue;
+                    consider(c.frontCenter(), 0.5f, [&] {
+                        best = Interactable{};
+                        best.kind = Interactable::Kind::Cabinet;
+                        best.cabinet = &c;
+                    });
+                }
+                for (ItemSite& site : it->second->items()) {
+                    if (!site.item || site.kind == SiteKind::Drawer) continue;
+                    // A small thing: it must be looked at fairly directly (and then wins over the desk it is on).
+                    const glm::vec3 at = glm::vec3(site.world * glm::vec4(0.0f, 0.05f, 0.0f, 1.0f));
+                    consider(at, 0.8f, [&] {
+                        best = Interactable{};
+                        best.kind = Interactable::Kind::Item;
+                        best.item = &site;
+                    });
+                }
             }
         }
     }
@@ -190,6 +223,25 @@ Phone* ChunkManager::phoneById(uint64_t id) {
     for (auto& kv : m_chunks) {
         for (Phone& p : kv.second->phones()) {
             if (p.id() == id) return &p;
+        }
+    }
+    return nullptr;
+}
+
+FileCabinet* ChunkManager::cabinetById(uint64_t id) {
+    for (auto& kv : m_chunks) {
+        for (FileCabinet& c : kv.second->cabinets()) {
+            if (c.id() == id) return &c;
+        }
+    }
+    return nullptr;
+}
+
+ItemSite* ChunkManager::drawerSite(uint64_t cabinetId, int drawer) {
+    for (auto& kv : m_chunks) {
+        std::vector<FileCabinet>& cabinets = kv.second->cabinets();
+        for (size_t i = 0; i < cabinets.size(); ++i) {
+            if (cabinets[i].id() == cabinetId) return kv.second->drawerSite(static_cast<int>(i), drawer);
         }
     }
     return nullptr;

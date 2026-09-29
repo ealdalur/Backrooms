@@ -11,11 +11,47 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iostream>
 
 namespace {
 constexpr float kTwoPi = 6.28318530718f;
 inline glm::vec2 xz(const glm::vec3& v) { return {v.x, v.z}; }
 inline float yawToward(const glm::vec3& from, const glm::vec3& to) { return std::atan2(to.x - from.x, to.z - from.z); }
+
+/// Squared distance between segments p1-q1 and p2-q2, with the parameters of
+/// the closest points on each (Ericson, "Real-Time Collision Detection" 5.1.9).
+float segmentDistance2(const glm::vec3& p1, const glm::vec3& q1, const glm::vec3& p2, const glm::vec3& q2, float& s, float& t) {
+    const glm::vec3 d1 = q1 - p1, d2 = q2 - p2, r = p1 - p2;
+    const float a = glm::dot(d1, d1), e = glm::dot(d2, d2), f = glm::dot(d2, r);
+    constexpr float eps = 1e-8f;
+    if (a <= eps && e <= eps) {
+        s = t = 0.0f;
+    } else if (a <= eps) {
+        s = 0.0f;
+        t = std::clamp(f / e, 0.0f, 1.0f);
+    } else {
+        const float c = glm::dot(d1, r);
+        if (e <= eps) {
+            t = 0.0f;
+            s = std::clamp(-c / a, 0.0f, 1.0f);
+        } else {
+            const float b = glm::dot(d1, d2), denom = a * e - b * b;
+            s = denom > eps ? std::clamp((b * f - c * e) / denom, 0.0f, 1.0f) : 0.0f;
+            t = (b * s + f) / e;
+            if (t < 0.0f) {
+                t = 0.0f;
+                s = std::clamp(-c / a, 0.0f, 1.0f);
+            } else if (t > 1.0f) {
+                t = 1.0f;
+                s = std::clamp((b - c) / a, 0.0f, 1.0f);
+            }
+        }
+    }
+    const glm::vec3 c1 = p1 + d1 * s, c2 = p2 + d2 * t;
+    return glm::dot(c1 - c2, c1 - c2);
+}
+
+const char* entityName(EntityKind kind) { return kind == EntityKind::Stalker ? "Stalker" : "Wanderer"; }
 } // namespace
 
 void EntityDirector::NoDoorWorld::gatherColliders(const AABB& region, std::vector<AABB>& out) const {
@@ -37,15 +73,16 @@ void EntityDirector::setEnabled(bool enabled) {
 
 void EntityDirector::setEnabled(EntityKind kind, bool enabled) {
     if (kind == EntityKind::Stalker) {
-        m_stalkerEnabled = enabled;
+        m_stalkerEnabled = enabled && !m_stalkerGone;
         if (!enabled) m_stalker.deactivate();
     } else {
-        m_wandererEnabled = enabled;
+        m_wandererEnabled = enabled && !m_wandererGone;
         if (!enabled) m_wanderer.deactivate();
     }
 }
 
 void EntityDirector::spawnAt(EntityKind kind, const glm::vec3& feet, int level, float yaw, bool hunt) {
+    if (gone(kind)) return;
     if (kind == EntityKind::Stalker) {
         m_stalker.place(feet, level, yaw);
         if (hunt) m_stalker.provoke();
@@ -121,6 +158,17 @@ void EntityDirector::update(float dt, const Camera& camera, float aspect, const 
     m_sounds.clear();
     m_disturbances.clear();
 
+    // ---- Vaporised entities are removed from the game for good.
+    auto retire = [this](Agent& agent, bool& gone, bool& enabled, EntityKind kind) {
+        if (gone || !agent.destroyed()) return;
+        gone = true;
+        enabled = false;
+        m_vaporised.push_back(kind);
+        std::cout << "[Entities] The " << entityName(kind) << " has been vaporised. It will not return.\n";
+    };
+    retire(m_stalker, m_stalkerGone, m_stalkerEnabled, EntityKind::Stalker);
+    retire(m_wanderer, m_wandererGone, m_wandererEnabled, EntityKind::Wanderer);
+
     // ---- The player's view: slightly narrower than the screen, so something
     //      glimpsed at the very edge is not "seen".
     const glm::vec3 moved(playerFeet.x - m_lastFeet.x, 0.0f, playerFeet.z - m_lastFeet.z);
@@ -150,7 +198,7 @@ void EntityDirector::update(float dt, const Camera& camera, float aspect, const 
                     m_stalker.deactivate();
                     m_stalkerTimer = m_rng.range(4.0f, 9.0f);
                     m_stalkerResurface = true;
-                } else if (!manageLifetime(m_stalker, m_stalkerTimer, m_view, chunks, !m_stalker.seen(),
+                } else if (!manageLifetime(m_stalker, m_stalkerTimer, m_view, chunks, !m_stalker.seen() && !m_stalker.dying(),
                                            cfg::kStalkerRelocateDist) &&
                            m_stalker.update(dt, m_view, m_nav, noDoors, physics, m_sounds)) {
                     m_catch = EntityKind::Stalker;
@@ -170,7 +218,7 @@ void EntityDirector::update(float dt, const Camera& camera, float aspect, const 
         // ---- The Wanderer.
         if (m_wandererEnabled) {
             if (m_wanderer.active()) {
-                if (!manageLifetime(m_wanderer, m_wandererTimer, m_view, chunks, true, cfg::kWandererRelocateDist) &&
+                if (!manageLifetime(m_wanderer, m_wandererTimer, m_view, chunks, !m_wanderer.dying(), cfg::kWandererRelocateDist) &&
                     m_wanderer.update(dt, m_view, m_nav, chunks, physics, noises, m_sounds)) {
                     m_catch = EntityKind::Wanderer;
                 }
@@ -190,12 +238,12 @@ void EntityDirector::update(float dt, const Camera& camera, float aspect, const 
     if (m_stalker.active() && m_stalker.level() == playerLevel) m_disturbances.push_back(m_stalker.lightDisturbance());
 
     float target = 0.0f;
-    if (m_stalker.active() && m_stalker.level() == playerLevel) {
+    if (m_stalker.active() && !m_stalker.dying() && m_stalker.level() == playerLevel) {
         const float d = glm::length(m_stalker.feet() - playerFeet);
         if (m_stalker.seen()) target = std::max(target, 0.55f + 0.45f * std::clamp(1.0f - d / 15.0f, 0.0f, 1.0f));
         else if (d < 12.0f) target = std::max(target, 0.55f * (1.0f - d / 12.0f));
     }
-    if (m_wanderer.active() && m_wanderer.level() == playerLevel) {
+    if (m_wanderer.active() && !m_wanderer.dying() && m_wanderer.level() == playerLevel) {
         const float d = glm::length(m_wanderer.feet() - playerFeet);
         if (d < 16.0f) target = std::max(target, 0.6f * (1.0f - d / 16.0f));
     }
@@ -208,14 +256,14 @@ void EntityDirector::buildDrawList(EntityDrawList& list, const Camera& camera) c
     const glm::vec3 right = camera.right();
     const glm::vec3 up = glm::normalize(glm::cross(right, camera.forward()));
     m_stalker.buildGeometry(list, right, up);
-    m_wanderer.buildGeometry(list);
+    m_wanderer.buildGeometry(list, right, up);
 }
 
 EntityAudioState EntityDirector::audioState() const {
     EntityAudioState s;
-    s.stalkerActive = m_stalker.active();
+    s.stalkerActive = m_stalker.active() && !m_stalker.dying();
     s.stalkerPosition = m_stalker.feet() + glm::vec3(0.0f, 1.0f, 0.0f);
-    s.wandererActive = m_wanderer.active();
+    s.wandererActive = m_wanderer.active() && !m_wanderer.dying(); // its voice dies with it
     s.wandererHead = m_wanderer.headPosition();
     s.wandererAgitation = m_wanderer.agitation();
     return s;
@@ -236,4 +284,72 @@ bool EntityDirector::stalkerBehindPlayer() const {
     if (d < 0.0f || d > 12.0f || m_stalker.seen()) return false;
     const glm::vec3 to = glm::normalize(m_stalker.feet() - m_view.feet + glm::vec3(0.0f, 1e-3f, 0.0f));
     return glm::dot(glm::vec2(to.x, to.z), glm::vec2(m_view.forward.x, m_view.forward.z)) < 0.3f;
+}
+
+// ---- The Tesla gun's targets ------------------------------------------------------------------
+
+int EntityDirector::arcTarget(const glm::vec3& from, const glm::vec3& aim, float reach, float cosCone, glm::vec3& point) const {
+    int best = -1;
+    float bestScore = 1e9f;
+    const Agent* agents[2] = {&m_stalker, &m_wanderer};
+    for (int id = 0; id < 2; ++id) {
+        const Agent& a = *agents[id];
+        if (!a.active() || a.dying() || a.level() != m_view.level) continue;
+        bool visible = false, tested = false;
+        for (const CreatureRig::Limb& l : a.body().limbs()) {
+            // The arc jumps to the part of the body closest to the line of fire.
+            const glm::vec3 p = (l.a + l.b) * 0.5f;
+            const glm::vec3 d = p - from;
+            const float dist = glm::length(d);
+            if (dist > reach + 0.3f || dist < 1e-3f) continue;
+            const float facing = glm::dot(d / dist, aim);
+            if (facing < cosCone) continue;
+            const float score = (1.0f - facing) * 8.0f + dist * 0.15f;
+            if (score >= bestScore) continue;
+            if (!tested) { // walls and closed doors in between: once per body
+                visible = m_nav.lineOfSight(a.level(), xz(from), xz(a.body().bounds().center()));
+                tested = true;
+            }
+            if (!visible) break;
+            bestScore = score;
+            best = id;
+            point = p;
+        }
+    }
+    return best;
+}
+
+int EntityDirector::shockTest(const glm::vec3& a, const glm::vec3& b, float radius, glm::vec3& hit) const {
+    int best = -1;
+    float bestS = 2.0f;
+    const Agent* agents[2] = {&m_stalker, &m_wanderer};
+    const AABB segment = AABB(glm::min(a, b), glm::max(a, b)).expanded(radius);
+    for (int id = 0; id < 2; ++id) {
+        const Agent& agent = *agents[id];
+        if (!agent.active() || agent.dying()) continue;
+        const std::vector<CreatureRig::Limb>& limbs = agent.body().limbs();
+        if (limbs.empty() || !segment.intersects(agent.body().bounds())) continue;
+        // Segment against every limb capsule: the first contact along the bolt counts.
+        for (const CreatureRig::Limb& l : limbs) {
+            float s = 0.0f, t = 0.0f;
+            const float r = radius + std::max(l.ra, l.rb);
+            if (segmentDistance2(a, b, l.a, l.b, s, t) > r * r || s >= bestS) continue;
+            bestS = s;
+            best = id;
+            hit = a + (b - a) * s;
+        }
+    }
+    return best;
+}
+
+void EntityDirector::applyShock(int target, float damage, const glm::vec3&) {
+    if (target == 0) m_stalker.applyShock(damage);
+    else if (target == 1) m_wanderer.applyShock(damage);
+}
+
+std::optional<EntityKind> EntityDirector::takeVaporised() {
+    if (m_vaporised.empty()) return std::nullopt;
+    const EntityKind k = m_vaporised.front();
+    m_vaporised.erase(m_vaporised.begin());
+    return k;
 }

@@ -24,8 +24,10 @@ set(BACKROOMS_SOURCES
   src/Audio/SoundBank.cpp
   src/Audio/Soundscape.cpp
   src/Audio/SpeechSynth.cpp
+  src/Audio/TeslaSounds.cpp
 
   src/Core/Engine.cpp
+  src/Core/EngineTesla.cpp
   src/Core/GpuSelection.cpp
   src/Core/Input.cpp
 
@@ -33,9 +35,12 @@ set(BACKROOMS_SOURCES
   src/Gameplay/Doom/DoomGame.cpp
   src/Gameplay/Doom/DoomLevel.cpp
   src/Gameplay/Doom/DoomRenderer.cpp
+  src/Gameplay/Inventory.cpp
+  src/Gameplay/Lightning.cpp
   src/Gameplay/PhoneCall.cpp
   src/Gameplay/TerminalConsole.cpp
   src/Gameplay/TerminalText.cpp
+  src/Gameplay/TeslaGun.cpp
 
   src/Math/Noise.cpp
 
@@ -46,6 +51,7 @@ set(BACKROOMS_SOURCES
   src/Render/EntityRenderer.cpp
   src/Render/Frustum.cpp
   src/Render/LightGrid.cpp
+  src/Render/LightningRenderer.cpp
   src/Render/MaterialLibrary.cpp
   src/Render/Mesh.cpp
   src/Render/MeshBuilder.cpp
@@ -65,9 +71,11 @@ set(BACKROOMS_SOURCES
 
   src/Actors/CreatureRig.cpp
   src/Actors/Door.cpp
+  src/Actors/FileCabinet.cpp
   src/Actors/Furniture.cpp
   src/Actors/Phone.cpp
   src/Actors/Player.cpp
+  src/Actors/TeslaParts.cpp
   src/Actors/Terminal.cpp
 )
 
@@ -88,6 +96,7 @@ set(BACKROOMS_HEADERS
   src/Audio/Soundscape.h
   src/Audio/SpeechSynth.h
   src/Audio/SynthKit.h
+  src/Audio/TeslaSounds.h
 
   src/Core/Config.h
   src/Core/Engine.h
@@ -98,9 +107,14 @@ set(BACKROOMS_HEADERS
   src/Gameplay/Doom/DoomGame.h
   src/Gameplay/Doom/DoomLevel.h
   src/Gameplay/Doom/DoomRenderer.h
+  src/Gameplay/Inventory.h
+  src/Gameplay/Items.h
+  src/Gameplay/Lightning.h
   src/Gameplay/PhoneCall.h
+  src/Gameplay/Shockable.h
   src/Gameplay/TerminalConsole.h
   src/Gameplay/TerminalText.h
+  src/Gameplay/TeslaGun.h
 
   src/Math/Noise.h
   src/Math/Random.h
@@ -113,6 +127,7 @@ set(BACKROOMS_HEADERS
   src/Render/EntityRenderer.h
   src/Render/Frustum.h
   src/Render/LightGrid.h
+  src/Render/LightningRenderer.h
   src/Render/MaterialLibrary.h
   src/Render/MaterialTypes.h
   src/Render/Mesh.h
@@ -135,9 +150,11 @@ set(BACKROOMS_HEADERS
 
   src/Actors/CreatureRig.h
   src/Actors/Door.h
+  src/Actors/FileCabinet.h
   src/Actors/Furniture.h
   src/Actors/Phone.h
   src/Actors/Player.h
+  src/Actors/TeslaParts.h
   src/Actors/Terminal.h
 )
 

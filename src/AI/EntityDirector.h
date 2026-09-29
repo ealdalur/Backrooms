@@ -11,7 +11,11 @@
 //     near the player a little later ("they always find you");
 //   * perception: builds the player's real view frustum for the Stalker;
 //   * outputs for other systems: catches, light disturbances, entity sounds,
-//     the voice position, fear (0..1) and hints for the terminal voice.
+//     the voice position, fear (0..1) and hints for the terminal voice;
+//   * the Tesla gun's targets (IShockable): where an arc jumps to, which body
+//     a bolt passes through (segment-vs-capsule tests against the posed
+//     limbs) and the damage it does. An entity burnt to nothing is gone for
+//     good: it is never spawned or resurfaced again.
 // ---------------------------------------------------------------------------
 
 #include "AI/NavGrid.h"
@@ -19,6 +23,7 @@
 #include "AI/Perception.h"
 #include "AI/Stalker.h"
 #include "AI/Wanderer.h"
+#include "Gameplay/Shockable.h"
 #include "Math/Random.h"
 #include "Render/Camera.h"
 #include "Render/LightGrid.h"
@@ -33,7 +38,7 @@ struct EntityDrawList;
 
 enum class EntityKind : uint8_t { Stalker, Wanderer };
 
-class EntityDirector {
+class EntityDirector : public IShockable {
 public:
     EntityDirector(const WorldGenerator& generator, const ChunkManager& chunks, uint64_t seed);
 
@@ -58,7 +63,17 @@ public:
     /// be made to start hunting at once with `hunt`.
     void spawnAt(EntityKind kind, const glm::vec3& feet, int level, float yaw, bool hunt = false);
 
-    /// Disables / enables the anomalies entirely, or just one of them.
+    // IShockable: target ids are 0 = the Stalker, 1 = the Wanderer.
+    int arcTarget(const glm::vec3& from, const glm::vec3& aim, float reach, float cosCone, glm::vec3& point) const override;
+    int shockTest(const glm::vec3& a, const glm::vec3& b, float radius, glm::vec3& hit) const override;
+    void applyShock(int target, float damage, const glm::vec3& at) override;
+
+    /// An entity that finished vaporising since the last call, if any.
+    std::optional<EntityKind> takeVaporised();
+    /// Whether an entity has been destroyed for good.
+    bool gone(EntityKind kind) const { return kind == EntityKind::Stalker ? m_stalkerGone : m_wandererGone; }
+
+    /// Disables / enables the anomalies entirely, or just one of them (a destroyed one stays gone).
     void setEnabled(bool enabled);
     void setEnabled(EntityKind kind, bool enabled);
 
@@ -107,6 +122,9 @@ private:
     bool     m_stalkerEnabled = true;
     bool     m_wandererEnabled = true;
     bool     m_holding = false; ///< A catch is being staged: entities hold still.
+    bool     m_stalkerGone = false;  ///< Vaporised: never comes back.
+    bool     m_wandererGone = false;
+    std::vector<EntityKind> m_vaporised;
     float    m_stalkerTimer;   ///< Countdown to the next (re)appearance.
     bool     m_stalkerResurface = false; ///< Next appearance is a close-range resurfacing.
     float    m_wandererTimer;

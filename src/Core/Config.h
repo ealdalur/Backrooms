@@ -112,6 +112,24 @@ inline constexpr float kNoiseTyping          = 7.0f;
 inline constexpr float kNoiseMachine         = 10.0f;
 inline constexpr float kNoiseDoomGunfire     = 12.0f;  // DOOM's guns and explosions from a terminal speaker
 inline constexpr float kNoiseDoomMusic       = 6.0f;   // ...and its music, now and then
+inline constexpr float kNoiseCabinet         = 9.0f;   // A filing-cabinet drawer rolling open or slamming shut
+inline constexpr float kNoiseTesla           = 24.0f;  // The Tesla gun's roaring discharge: everything hears it
+
+// ----- The Tesla coil gun ---------------------------------------------------------
+inline constexpr float kCabinetOpenTime  = 0.45f;  // Seconds to lean in to / away from a filing cabinet
+inline constexpr float kAssembleTime     = 2.4f;   // Putting the four parts together
+inline constexpr float kSwapDipTime      = 0.7f;   // The gun dips out of view while a part is hot-swapped
+inline constexpr float kBatteryLife      = 14.0f;  // Seconds of continuous discharge from a full battery
+inline constexpr float kLowBattery       = 0.2f;   // Below this charge the gauge blinks red and the gun beeps
+inline constexpr float kArcReachMin      = 1.6f;   // Discharge reach (m) on a nearly flat battery...
+inline constexpr float kArcReachMax      = 7.5f;   // ...and on a full one
+inline constexpr float kArcStrikeRate    = 34.0f;  // New sets of streamers per second
+inline constexpr float kArcConeDeg       = 26.0f;  // Arcs jump to a body within this angle of the aim
+inline constexpr float kArcLightPower    = 1.4f;   // Brightness of the flicker the arcs throw on the room
+inline constexpr float kShockDps         = 0.55f;  // Health per second a connected arc burns at full power
+inline constexpr float kShockRegenDelay  = 2.5f;   // An entity out of the arc this long starts to recover...
+inline constexpr float kShockRegenRate   = 0.06f;  // ...this much health per second
+inline constexpr float kVaporizeTime     = 3.2f;   // Seconds a dead entity takes to dissolve away
 
 } // namespace cfg
 

@@ -22,6 +22,7 @@
 #include "Audio/PhoneSounds.h"
 #include "Audio/SpeechSynth.h"
 #include "Audio/SynthKit.h"
+#include "Audio/TeslaSounds.h"
 #include "Math/Noise.h"
 #include "Math/Random.h"
 
@@ -997,6 +998,10 @@ void SoundBank::build() {
         phonesfx::makeHowler, phonesfx::makeDtmf, phonesfx::makeKey, phonesfx::makePickup, phonesfx::makeHangup,
         phonesfx::makeSwitching, phonesfx::makeSit, phonesfx::makeOperator, phonesfx::makeStatic, phonesfx::makeVoice,
         phonesfx::makeBreath, phonesfx::makeJenny, phonesfx::makeBeep, phonesfx::makeMessage,
+        teslasfx::makePartPickup, teslasfx::makePartSwap, teslasfx::makeAssembleSnap, teslasfx::makePowerUp,
+        teslasfx::makeArcLoop, teslasfx::makeZap, teslasfx::makeDryClick, teslasfx::makeBatteryLow,
+        teslasfx::makeCabinetOpen, teslasfx::makeCabinetClose, teslasfx::makeWandererPain, teslasfx::makeWandererDeath,
+        teslasfx::makeStalkerPain, teslasfx::makeStalkerDeath, teslasfx::makeVaporize,
     };
 
     // Every sound is independent: synthesise them all concurrently.
@@ -1030,6 +1035,9 @@ void SoundBank::writeWavFiles(const std::string& directory) const {
         "phone_line", "phone_dial_tone", "phone_ringback", "phone_busy", "phone_reorder", "phone_howler",
         "phone_dtmf", "phone_key", "phone_pickup", "phone_hangup", "phone_switching", "phone_sit",
         "phone_operator", "phone_static", "phone_voice", "phone_breath", "phone_jenny", "phone_beep", "phone_message",
+        "part_pickup", "part_swap", "assemble_snap", "weapon_power_up", "tesla_arc", "tesla_zap", "tesla_dry_click",
+        "battery_low", "cabinet_open", "cabinet_close", "wanderer_pain", "wanderer_death", "stalker_pain",
+        "stalker_death", "vaporize",
     };
     static_assert(sizeof(kNames) / sizeof(kNames[0]) == kSoundIdCount, "one file name per SoundId");
     auto put16 = [](std::ofstream& f, uint16_t v) { f.put(static_cast<char>(v & 0xFF)).put(static_cast<char>(v >> 8)); };

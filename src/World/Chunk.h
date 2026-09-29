@@ -4,15 +4,18 @@
 // One 25 x 25 m square of one storey of the infinite Backrooms. A chunk is
 // produced as a CPU-only ChunkBlueprint by the WorldGenerator (pure function
 // of the world seed and chunk coordinate) and then turned into a live Chunk
-// that owns GPU geometry, collision data, doors, terminals, phones, furniture
-// and light fixtures. A chunk that holds the lower half of a stairwell also owns
+// that owns GPU geometry, collision data, doors, terminals, phones, filing
+// cabinets, furniture, item sites (where the gun's parts rest) and light
+// fixtures. A chunk that holds the lower half of a stairwell also owns
 // the stair geometry reaching up into the storey above.
 // ---------------------------------------------------------------------------
 
 #include "Actors/Door.h"
+#include "Actors/FileCabinet.h"
 #include "Actors/Furniture.h"
 #include "Actors/Phone.h"
 #include "Actors/Terminal.h"
+#include "Gameplay/Items.h"
 #include "Physics/AABB.h"
 #include "Render/Mesh.h"
 #include "World/ChunkCoord.h"
@@ -44,6 +47,12 @@ struct PhonePlacement {
     glm::mat4 model;
 };
 
+/// Placement of a filing cabinet.
+struct CabinetPlacement {
+    uint64_t  id;
+    glm::mat4 model;
+};
+
 /// Everything the generator produces for a chunk (no GL objects).
 struct ChunkBlueprint {
     ChunkCoord                     coord;
@@ -54,6 +63,8 @@ struct ChunkBlueprint {
     std::vector<DoorPlacement>     doors;
     std::vector<TerminalPlacement> terminals;
     std::vector<PhonePlacement>    phones;
+    std::vector<CabinetPlacement>  cabinets;
+    std::vector<ItemSite>          items;        ///< Drawer sites refer to `cabinets` by index.
     std::vector<LightFixture>      lights;
     AABB                           bounds;
 };
@@ -66,10 +77,10 @@ public:
     Chunk(const Chunk&) = delete;
     Chunk& operator=(const Chunk&) = delete;
 
-    /// Advances door animations.
+    /// Advances door and drawer animations (items in drawers slide with them).
     void update(float dt, const AABB& playerBox);
 
-    /// Appends static colliders, furniture / terminal / phone colliders and (unless
+    /// Appends static colliders, furniture / terminal / phone / cabinet colliders and (unless
     /// `includeDoors` is false) door colliders that overlap `region`.
     void gatherColliders(const AABB& region, std::vector<AABB>& out, bool includeDoors = true) const;
 
@@ -89,6 +100,13 @@ public:
     const std::vector<Terminal>& terminals() const { return m_terminals; }
     std::vector<Phone>& phones() { return m_phones; }
     const std::vector<Phone>& phones() const { return m_phones; }
+    std::vector<FileCabinet>& cabinets() { return m_cabinets; }
+    const std::vector<FileCabinet>& cabinets() const { return m_cabinets; }
+    std::vector<ItemSite>& items() { return m_items; }
+    const std::vector<ItemSite>& items() const { return m_items; }
+
+    /// The item site in a drawer of one of this chunk's cabinets, or nullptr.
+    ItemSite* drawerSite(int cabinet, int drawer);
 
     /// Offset of this chunk's first light in the renderer's global light list.
     int lightBase() const { return m_lightBase; }
@@ -97,6 +115,8 @@ public:
 private:
     /// Packs a global edge coordinate into a lookup key.
     static uint64_t edgeKey(int gx, int gz, world::EdgeAxis axis);
+    /// Recomputes the world transform of an item site.
+    void placeSite(ItemSite& site) const;
 
     ChunkCoord                     m_coord;
     uint64_t                       m_seed;
@@ -108,6 +128,8 @@ private:
     std::vector<uint64_t>          m_doorEdges; ///< edgeKey() of each door (parallel to m_doors).
     std::vector<Terminal>          m_terminals;
     std::vector<Phone>             m_phones;
+    std::vector<FileCabinet>       m_cabinets;
+    std::vector<ItemSite>          m_items;
     std::vector<LightFixture>      m_lights;
     AABB                           m_bounds;
     int                            m_lightBase = 0;

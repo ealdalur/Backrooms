@@ -7,12 +7,14 @@
 
 #include "AI/EntityDirector.h"
 #include "AI/NavGrid.h"
+#include "Actors/FileCabinet.h"
 #include "Actors/Phone.h"
 #include "Actors/Player.h"
 #include "Audio/Soundscape.h"
 #include "Core/GpuSelection.h"
 #include "Gameplay/PhoneCall.h"
 #include "Gameplay/TerminalConsole.h"
+#include "Gameplay/TeslaGun.h"
 #include "Math/Random.h"
 #include "Physics/Physics.h"
 #include "Render/Renderer.h"
@@ -144,7 +146,7 @@ bool Engine::createWindow() {
     // The scene renders into an MSAA HDR framebuffer; the back buffer needs neither.
     SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 0);
 
-    m_window = SDL_CreateWindow(cfg::kWindowTitle, cfg::kWindowWidth, cfg::kWindowHeight,
+    m_window = SDL_CreateWindow(cfg::kWindowTitle, m_options.windowWidth, m_options.windowHeight,
                                 SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
     if (!m_window) {
         std::cerr << "Window could not be created! SDL Error: " << SDL_GetError() << '\n';
@@ -197,6 +199,7 @@ bool Engine::init() {
     m_physics = std::make_unique<Physics>(cfg::kStepHeight);
     m_entities = std::make_unique<EntityDirector>(*m_world, *m_chunks, m_options.seed);
     m_entities->setEnabled(!m_options.noEntities);
+    m_gun = std::make_unique<TeslaGun>(rnd::hashCombine(m_options.seed, 0x7E51'A600ull));
 
     // Load the neighbourhood of the origin, find a free spot and spawn there.
     const int level = m_options.startLevel;
@@ -212,7 +215,8 @@ bool Engine::init() {
               << " chunks loaded, spawn (" << m_player->feetPosition().x << ", " << m_player->feetPosition().z
               << ") on level " << m_focusLevel << "\n"
               << "[Engine] Controls: WASD move, mouse or arrow keys look, Shift run, Space jump, C crouch,\n"
-              << "         E open doors / use terminals / pick up phones (Esc leaves), hold RMB + move mouse to drive,\n"
+              << "         E open doors / use terminals / pick up phones / search cabinets / take parts (Esc leaves),\n"
+              << "         R assemble the Tesla gun, LMB or F fire it, hold RMB + move mouse to drive,\n"
               << "         +/- sensitivity, F3 entity debug, F11 fullscreen, F12 screenshot, P pause, Esc quit.\n";
 
     setState(m_state);
@@ -278,11 +282,15 @@ void Engine::processEvents() {
             break;
         case SDL_EVENT_MOUSE_BUTTON_DOWN:
             if (m_state == GameState::Paused && e.button.button == SDL_BUTTON_LEFT) setState(m_resumeState);
+            else if (m_state == GameState::Cabinet && e.button.button == SDL_BUTTON_LEFT) m_cabinetUse = true;
             else if (m_state == GameState::Phone && e.button.button == SDL_BUTTON_LEFT) {
                 const int key = phoneKeyAt(e.button.x, e.button.y);
                 if (key == Phone::kLampButton) m_phoneKeys += Phone::kMessageChar;
                 else if (key >= 0) m_phoneKeys += Phone::kKeyChars[key];
             }
+            break;
+        case SDL_EVENT_MOUSE_WHEEL:
+            if (m_state == GameState::Cabinet) m_cabinetMove += e.wheel.y > 0.0f ? 1 : e.wheel.y < 0.0f ? -1 : 0;
             break;
         case SDL_EVENT_TEXT_INPUT:
             if (m_state == GameState::Terminal && m_console) m_console->type(e.text.text);
@@ -300,6 +308,10 @@ void Engine::processEvents() {
             }
             if (m_state == GameState::Phone) {
                 handlePhoneKey(e.key);
+                break;
+            }
+            if (m_state == GameState::Cabinet) {
+                handleCabinetKey(e.key);
                 break;
             }
             if (e.key.repeat) break;
@@ -693,11 +705,18 @@ void Engine::collectNoise() {
         const bool loud = (d.flags & (Door::kEventUnlatch | Door::kEventShut)) != 0;
         m_noises.push_back({d.position, cfg::kNoiseDoor * (loud ? 1.0f : 0.6f), NoiseKind::Door});
     }
+    // Filing-cabinet drawers rumbling out and slamming shut: heard by the player and by the Wanderer.
+    for (const CabinetEvent& c : m_chunks->cabinetEvents()) {
+        if (c.flags & FileCabinet::kEventOpen) m_sound->playEffect(SoundId::CabinetOpen, c.position, 0.5f, *m_world);
+        if (c.flags & FileCabinet::kEventClose) m_sound->playEffect(SoundId::CabinetClose, c.position, 0.55f, *m_world);
+        m_noises.push_back({c.position, cfg::kNoiseCabinet * ((c.flags & FileCabinet::kEventClose) ? 1.0f : 0.7f), NoiseKind::Door});
+    }
 }
 
 void Engine::startCaught(EntityKind by) {
     if (m_state == GameState::Terminal) leaveTerminal(false);
     if (m_state == GameState::Phone) leavePhone();
+    if (m_state == GameState::Cabinet) leaveCabinet();
     // It looms up in front of the player; the camera is wrenched to its face.
     m_caughtFace = m_entities->confront(by, m_player->feetPosition(), m_player->lookDirection());
     m_caughtTimer = 0.0f;
@@ -767,6 +786,12 @@ void Engine::update(float dt) {
         } else if (target.kind == Interactable::Kind::Phone) {
             m_prompt = "E  PICK UP PHONE";
             if (m_input.keyPressed(SDL_SCANCODE_E)) enterPhone(*target.phone);
+        } else if (target.kind == Interactable::Kind::Cabinet) {
+            m_prompt = "E  SEARCH FILING CABINET";
+            if (m_input.keyPressed(SDL_SCANCODE_E)) enterCabinet(*target.cabinet, FileCabinet::kDrawers - 1);
+        } else if (target.kind == Interactable::Kind::Item) {
+            m_prompt = "E  " + itemPrompt(*target.item);
+            if (m_input.keyPressed(SDL_SCANCODE_E)) takeItem(*target.item);
         }
     }
 
@@ -785,15 +810,20 @@ void Engine::update(float dt) {
 
     updateTerminal(dt);
     updatePhone(dt);
+    updateCabinet(dt);
     collectNoise();
+    updateGun(dt);
 
     // ---- Anomalies: they perceive what the player actually sees.
-    const bool blind = m_state == GameState::Terminal || m_state == GameState::Phone ||
+    const bool blind = m_state == GameState::Terminal || m_state == GameState::Phone || m_state == GameState::Cabinet ||
                        (m_state == GameState::Caught && m_fade > 0.5f);
     const float aspect = static_cast<float>(m_pixelWidth) / static_cast<float>(std::max(1, m_pixelHeight));
     m_entities->update(dt, viewCamera(), aspect, m_player->feetPosition(), m_focusLevel, blind, *m_chunks, *m_physics,
                        m_noises);
     if (const auto by = m_entities->takeCatch(); by && m_state != GameState::Caught) startCaught(*by);
+    if (const auto gone = m_entities->takeVaporised()) {
+        showMessage(*gone == EntityKind::Stalker ? "THE STALKER IS GONE. FOR GOOD." : "THE WANDERER IS GONE. FOR GOOD.", 5.0f);
+    }
     if (m_state == GameState::Caught) updateCaught(dt);
 
     // After every update so this frame's footstep / door / entity events are
@@ -801,7 +831,7 @@ void Engine::update(float dt) {
     m_sound->update(dt, m_simTime, *m_player, *m_chunks, *m_world);
     m_sound->updateEntities(dt, m_entities->audioState(), m_entities->sounds(), m_entities->fear(), *m_world);
 
-    // Crosshair ring fades in when a door, terminal or phone is within reach.
+    // Crosshair ring fades in when a door, terminal, phone, cabinet or part is within reach.
     m_crosshairHighlight += ((canUse ? 1.0f : 0.0f) - m_crosshairHighlight) * (1.0f - std::exp(-12.0f * dt));
 }
 
@@ -822,6 +852,13 @@ Camera Engine::viewCamera() const {
         cam.yaw += wrapAngle(m_phoneYaw - cam.yaw) * t;
         cam.pitch += (m_phonePitch - cam.pitch) * t;
         cam.fovYDegrees += (52.0f - cam.fovYDegrees) * t;
+    }
+    if (m_cabinetBlend > 0.0f) {
+        const float t = smooth01(m_cabinetBlend);
+        cam.position = glm::mix(cam.position, m_cabinetEye, t);
+        cam.yaw += wrapAngle(m_cabinetYaw - cam.yaw) * t;
+        cam.pitch += (m_cabinetPitch - cam.pitch) * t;
+        cam.fovYDegrees += (58.0f - cam.fovYDegrees) * t;
     }
     if (m_state == GameState::Caught && !m_respawned) {
         // The jumpscare: the head is wrenched round to face it, and shakes.
@@ -881,6 +918,19 @@ void Engine::drawHud() {
             }
         }
     }
+    if (m_cabinetBlend > 0.0f && m_cabinetId) {
+        // What is in the drawer, and the keys.
+        const glm::vec4 guide(0.8f, 0.8f, 0.75f, 0.6f * m_cabinetBlend);
+        const ItemSite* site = cabinetSite();
+        const bool part = site && site->item;
+        static const char* const kDrawerNames[FileCabinet::kDrawers] = {"BOTTOM DRAWER", "MIDDLE DRAWER", "TOP DRAWER"};
+        const std::string what = std::string(kDrawerNames[m_cabinetDrawer]) + (part ? ":  " + std::string(partName(site->item->type)) : ":  FILES");
+        hud.text(what, w * 0.5f, h * 0.1f, TextOverlay::Align::Center, 2.0f,
+                 glm::vec4(0.95f, 0.93f, 0.85f, (part ? 0.9f : 0.6f) * m_cabinetBlend), true);
+        const std::string keys = std::string("<ESC> Close    <W>/<S> Drawer") + (part ? "    <E> " + itemPrompt(*site) : "");
+        hud.text(keys, w * 0.5f, h - 40.0f * s, TextOverlay::Align::Center, 2.0f, guide, true);
+    }
+    drawInventory();
     if (m_messageTimer > 0.0f && !m_message.empty()) {
         const float a = std::min(1.0f, m_messageTimer / 1.0f) * std::min(1.0f, (5.0f - m_messageTimer) / 0.8f + 0.2f);
         hud.text(m_message, w * 0.5f, h * 0.62f, TextOverlay::Align::Center, 2.0f, glm::vec4(0.95f, 0.93f, 0.85f, a));
@@ -902,15 +952,22 @@ void Engine::render(float dt) {
     m_entityDraw.clear();
     m_entities->buildDrawList(m_entityDraw, cam);
 
+    buildViewModel(cam);
+
     FrameParams frame;
     frame.camera = cam;
     frame.time = m_simTime;
-    frame.crosshair = 1.0f - m_phoneBlend;
+    frame.crosshair = 1.0f - std::max(m_phoneBlend, m_cabinetBlend);
     frame.crosshairHighlight = m_state == GameState::Running ? m_crosshairHighlight : 0.0f;
     frame.fear = m_entities->fear();
     frame.fade = m_fade;
     frame.lightDisturbances = &m_entities->lightDisturbances();
     frame.entities = &m_entityDraw;
+    frame.bolts = &m_gun->bolts();
+    frame.glows = &m_gun->glows();
+    frame.muzzleGlow = m_gun->muzzleGlow();
+    frame.arcLight = m_gun->light();
+    frame.viewModel = &m_viewModel;
     m_renderer->render(frame, *m_chunks, *m_world);
 
     if (m_console && m_terminalBlend > 0.0f) {
@@ -1013,6 +1070,7 @@ void Engine::shutdown() {
     m_sound.reset(); // stops the audio thread before anything it reads goes away
     m_renderer.reset();
     m_entities.reset();
+    m_gun.reset();
     m_consoles.clear();
     m_call.reset();
     m_player.reset();
@@ -1185,6 +1243,125 @@ void Engine::setupDemo() {
         // Re-find it: teleporting may have reloaded its chunk.
         if (Phone* p = m_chunks->phoneById(id)) enterPhone(*p);
         m_phoneBlend = 1.0f;
+    } else if (demo == "cabinet") {
+        // The nearest filing cabinet with a part in a drawer (else the nearest
+        // one at all): stand in front of it and search that drawer.
+        const FileCabinet* best = nullptr;
+        int bestDrawer = FileCabinet::kDrawers - 1;
+        float bestDist = 1e9f;
+        bool bestHasPart = false;
+        for (Chunk* chunk : m_chunks->sortedChunksMutable()) {
+            if (chunk->coord().level != m_focusLevel) continue;
+            for (size_t i = 0; i < chunk->cabinets().size(); ++i) {
+                const FileCabinet& c = chunk->cabinets()[i];
+                int drawer = FileCabinet::kDrawers - 1;
+                bool hasPart = false;
+                for (int d = 0; d < FileCabinet::kDrawers && !hasPart; ++d) {
+                    const ItemSite* site = chunk->drawerSite(static_cast<int>(i), d);
+                    if (site && site->item) {
+                        hasPart = true;
+                        drawer = d;
+                    }
+                }
+                const float dist = glm::length(c.frontCenter() - feet);
+                if ((hasPart && !bestHasPart) || (hasPart == bestHasPart && dist < bestDist)) {
+                    best = &c;
+                    bestDist = dist;
+                    bestDrawer = drawer;
+                    bestHasPart = hasPart;
+                }
+            }
+        }
+        if (!best) {
+            std::cerr << "[Demo] No filing cabinet loaded\n";
+            return;
+        }
+        const uint64_t id = best->id();
+        glm::vec3 stand = best->frontCenter() + best->frontNormal() * 1.1f;
+        stand.y = world::levelFloorY(m_focusLevel);
+        teleportPlayer(stand, m_focusLevel, yawToward(best->frontCenter() - stand));
+        std::printf("[Demo] Filing cabinet %.1fm away, %s\n", bestDist, bestHasPart ? "with a part" : "no parts nearby");
+        if (FileCabinet* c = m_chunks->cabinetById(id)) enterCabinet(*c, bestDrawer); // re-found: teleporting may reload
+        m_cabinetBlend = 1.0f;
+        m_demoCabinet = id;
+        m_demoDrawer = bestDrawer;
+        m_demoReturn = m_player->feetPosition();
+        if (m_options.demoInput == "swap-persist") {
+            // Hold a nearly flat part of the same type, so taking this one swaps it in.
+            if (const ItemSite* site = m_chunks->drawerSite(id, bestDrawer); site && site->item) {
+                Item flat;
+                flat.id = 0xF1A7ull;
+                flat.type = site->item->type;
+                flat.charge = 0.07f;
+                m_inventory.give(flat);
+                std::printf("[Demo] Drawer holds %s at %.2f; holding one at %.2f\n", partName(site->item->type), site->item->charge,
+                            flat.charge);
+            }
+        }
+    } else if (demo == "part") {
+        // The nearest part lying out in the open (a desk top or a chair seat): walk up and look at it.
+        const ItemSite* best = nullptr;
+        float bestDist = 1e9f;
+        int counts[3] = {0, 0, 0};
+        for (Chunk* chunk : m_chunks->sortedChunksMutable()) {
+            if (chunk->coord().level != m_focusLevel) continue;
+            for (const ItemSite& site : chunk->items()) {
+                if (!site.item) continue;
+                ++counts[static_cast<int>(site.kind)];
+                if (site.kind == SiteKind::Drawer) continue;
+                const float d = glm::length(glm::vec3(site.world[3]) - feet);
+                if (d < bestDist) {
+                    bestDist = d;
+                    best = &site;
+                }
+            }
+        }
+        std::printf("[Demo] Parts on this storey's loaded chunks: %d on desks, %d on chairs, %d in drawers\n", counts[0], counts[1],
+                    counts[2]);
+        if (!best) {
+            std::cerr << "[Demo] No loose part loaded\n";
+            return;
+        }
+        const glm::vec3 at(best->world * glm::vec4(tesla::centerLocal(best->item->type), 1.0f));
+        std::printf("[Demo] %s on a %s, %.1fm away\n", partName(best->item->type), best->kind == SiteKind::Desk ? "desk" : "chair", bestDist);
+        // Approach from a side where nothing (a chair's backrest, a monitor) hides it.
+        glm::vec3 chosen(0.0f);
+        bool found = false, clear = false;
+        for (int k = 0; k < 16 && !clear; ++k) {
+            const float a = static_cast<float>(k) * 0.3926991f;
+            glm::vec3 stand = at + glm::vec3(std::cos(a), 0.0f, std::sin(a)) * 1.1f;
+            stand.y = world::levelFloorY(m_focusLevel);
+            if (!m_physics->isFree(Physics::bodyBox(stand + glm::vec3(0.0f, 0.01f, 0.0f), m_player->shape()), *m_chunks)) continue;
+            const glm::vec3 eye = stand + glm::vec3(0.0f, cfg::kStandHeight - cfg::kEyeBelowTop, 0.0f);
+            const glm::vec3 to = at + glm::vec3(0.0f, 0.04f, 0.0f) - eye;
+            float t = 0.0f;
+            clear = !m_physics->raycast(eye, glm::normalize(to), glm::length(to) - 0.12f, *m_chunks, t);
+            if (clear || !found) chosen = stand;
+            found = true;
+        }
+        if (found) {
+            teleportPlayer(chosen, m_focusLevel, yawToward(at - chosen));
+            m_player->setViewAngles(yawToward(at - chosen), pitchToward(at - m_player->eyePosition()));
+        }
+    } else if (demo == "assemble" || demo == "tesla" || demo == "tesla-stalker") {
+        // Every part in hand ("assemble": then put together; "tesla": the gun
+        // ready, and a target standing a few metres ahead).
+        const float charge = m_options.demoInput.empty() ? 1.0f : std::clamp(static_cast<float>(std::atof(m_options.demoInput.c_str())) / 100.0f, 0.0f, 1.0f);
+        for (int t = 0; t < kPartTypeCount; ++t) {
+            Item item;
+            item.id = rnd::hashCombine(0xDE30ull, static_cast<uint64_t>(t));
+            item.type = static_cast<PartType>(t);
+            item.charge = item.type == PartType::Battery ? charge : 1.0f;
+            m_inventory.give(item);
+        }
+        if (demo != "assemble") {
+            m_inventory.assemble();
+            m_gunRaise = 1.0f;
+            const bool stalker = demo == "tesla-stalker";
+            m_entities->setEnabled(stalker ? EntityKind::Wanderer : EntityKind::Stalker, false);
+            const glm::vec3 p = freeSpotAlong(fwd, 4.5f, 2.5f);
+            m_entities->spawnAt(stalker ? EntityKind::Stalker : EntityKind::Wanderer, p, m_focusLevel, std::atan2(-fwd.x, -fwd.z));
+        }
     } else if (demo == "explore") {
         // A long walk through the rooms (Stalker off: a catch would teleport
         // the player); for measuring how often the Wanderer is met.
@@ -1250,6 +1427,60 @@ void Engine::updateDemo(float dt) {
         const char c = m_options.demoInput[static_cast<size_t>(m_demoStep++)]; // dial, one key at a time
         if (c == 'h') m_phoneHangUp = true;                                    // ...or hang up
         else m_phoneKeys += c;
+    }
+    if (m_options.demo == "cabinet" && m_demoStep == 0 && m_demoTime > 1.5f &&
+        (m_options.demoInput == "take" || m_options.demoInput == "swap-persist")) {
+        m_cabinetUse = true; // take (or swap) what is in the drawer
+        m_demoStep = 1;
+    }
+    if (m_options.demo == "cabinet" && m_options.demoInput == "swap-persist") {
+        auto report = [this](const char* when) {
+            const ItemSite* site = m_chunks->drawerSite(m_demoCabinet, m_demoDrawer);
+            if (!m_chunks->cabinetById(m_demoCabinet)) std::printf("[Demo] %s: the cabinet's chunk is not loaded\n", when);
+            else if (!site || !site->item) std::printf("[Demo] %s: the drawer is empty\n", when);
+            else std::printf("[Demo] %s: the drawer holds %s at %.2f (id %llx)\n", when, partName(site->item->type), site->item->charge,
+                             static_cast<unsigned long long>(site->item->id));
+        };
+        if (m_demoStep == 1 && m_demoTime > 2.5f) {
+            report("After the swap");
+            m_cabinetLeave = true;
+            m_demoStep = 2;
+        } else if (m_demoStep == 2 && m_demoTime > 3.0f) {
+            const glm::vec3 far = m_demoReturn + glm::vec3(300.0f, 0.0f, 0.0f);
+            teleportPlayer(far, m_focusLevel, 0.0f);
+            teleportPlayer(m_chunks->findSpawnPoint(far, m_focusLevel, m_player->shape(), *m_physics), m_focusLevel, 0.0f);
+            report("300 m away");
+            m_demoStep = 3;
+        } else if (m_demoStep == 3 && m_demoTime > 4.0f) {
+            teleportPlayer(m_demoReturn, m_focusLevel, 0.0f);
+            report("Back again");
+            m_demoStep = 4;
+        }
+    }
+    if (m_options.demo == "assemble" && m_demoStep == 0 && m_demoTime > 0.8f) {
+        if (beginAssembly()) std::printf("[Demo] Assembling the gun\n");
+        m_demoStep = 1;
+    }
+    if (m_options.demo == "tesla" || m_options.demo == "tesla-stalker") {
+        // Aim at it and hold the trigger until nothing is left of it.
+        const bool stalker = m_options.demo == "tesla-stalker";
+        const Agent& target = stalker ? static_cast<const Agent&>(m_entities->stalker()) : m_entities->wanderer();
+        if (target.active() && !target.dying()) {
+            const glm::vec3 chest = target.feet() + glm::vec3(0.0f, 1.3f, 0.0f);
+            const glm::vec3 d = chest - m_player->eyePosition();
+            m_player->setViewAngles(yawToward(d), pitchToward(d));
+        }
+        m_demoTrigger = m_demoTime > 1.0f && target.active() && !target.dying();
+        const bool tick = std::floor(m_demoTime * 4.0f) != std::floor((m_demoTime - dt) * 4.0f);
+        if (tick && (target.active() || m_demoStep == 0)) {
+            std::printf("[Demo] t=%.2f %s health %.2f shock %.2f dissolve %.2f | charge %.2f discharging %d connected %d\n", m_demoTime,
+                        stalker ? "stalker" : "wanderer", target.health(), target.shock(), target.dissolve(), m_inventory.charge(),
+                        m_gun->discharging() ? 1 : 0, m_gun->connected() ? 1 : 0);
+        }
+        if (!target.active() && m_demoStep == 0 && m_entities->gone(stalker ? EntityKind::Stalker : EntityKind::Wanderer)) {
+            std::printf("[Demo] t=%.2f the %s is gone for good\n", m_demoTime, stalker ? "stalker" : "wanderer");
+            m_demoStep = 1;
+        }
     }
     if (m_options.demo == "doom" && m_demoStep == 0 && m_demoTime > 1.5f && m_console) {
         m_console->type("doom");

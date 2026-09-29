@@ -60,4 +60,10 @@ void addCylinder(MeshData& mesh, const glm::mat4& transform, float radius, float
 void addLimb(MeshData& mesh, const glm::vec3& a, const glm::vec3& b, float ra, float rb, MaterialId material,
              int sides = 10, int capRings = 3);
 
+/// Appends a torus lying in the local XZ plane (axis +Y) centred on the
+/// origin: major radius `majorRadius`, tube radius `minorRadius`. UVs run
+/// round the ring (u) and round the tube (v), in metres over the tile size.
+void addTorus(MeshData& mesh, const glm::mat4& transform, float majorRadius, float minorRadius, int ringSegments,
+              int tubeSegments, MaterialId material);
+
 } // namespace mesh

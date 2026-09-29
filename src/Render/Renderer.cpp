@@ -40,6 +40,7 @@ bool Renderer::init(int width, int height) {
     if (!m_post.init(width, height, cfg::kMsaaSamples)) return false;
     if (!m_hud.init()) return false;
     if (!m_entities.init()) return false;
+    if (!m_lightning.init()) return false;
     if (!m_terminal.init()) {
         std::cerr << "[Renderer] Terminal renderer initialisation failed\n";
         return false;
@@ -62,6 +63,13 @@ bool Renderer::init(int width, int height) {
     for (int i = 0; i < kPhoneLampCount; ++i) {
         m_phoneLampMeshes[static_cast<size_t>(i)].upload(Phone::buildLampMesh(static_cast<PhoneLamp>(i)), true);
     }
+    m_cabinetMesh.upload(FileCabinet::buildShellMesh(), true);
+    for (int v = 0; v < FileCabinet::kDrawerVariants; ++v) {
+        m_drawerMeshes[static_cast<size_t>(v)].upload(FileCabinet::buildDrawerMesh(v), true);
+    }
+    for (int i = 0; i < kPartMeshCount; ++i) {
+        m_partMeshes[static_cast<size_t>(i)].upload(tesla::buildMesh(static_cast<PartMesh>(i)), true);
+    }
 
     // Constant world shader state.
     m_worldShader.use();
@@ -81,6 +89,8 @@ bool Renderer::init(int width, int height) {
     m_worldShader.set("uAmbientDown", kAmbientDown);
     m_worldShader.set("uFogColor", kFogColor);
     m_worldShader.set("uFogDensity", cfg::kFogDensity);
+    m_worldShader.set("uDissolve", -1.0f);
+    m_worldShader.set("uArcLight", glm::vec4(0.0f));
     glUseProgram(0);
 
     const GLenum err = glGetError();
@@ -127,6 +137,9 @@ void Renderer::render(const FrameParams& frame, ChunkManager& chunks, const Worl
     m_worldShader.set("uViewProj", viewProj);
     m_worldShader.set("uCameraPos", camera.position);
     m_worldShader.set("uTime", static_cast<float>(frame.time));
+    m_worldShader.set("uArcLight", glm::vec4(frame.arcLight.position, frame.arcLight.intensity));
+    m_worldShader.set("uArcColor", frame.arcLight.color);
+    m_worldShader.set("uArcRange", std::max(frame.arcLight.range, 0.1f));
     m_materials.bind(kUnitAlbedo, kUnitSurface);
     m_lightGrid.bind(m_worldShader, kUnitLightGrid);
 
@@ -143,7 +156,10 @@ void Renderer::render(const FrameParams& frame, ChunkManager& chunks, const Worl
     for (auto& list : m_phoneInstances) list.clear();
     for (auto& list : m_phoneKeyInstances) list.clear();
     for (auto& list : m_phoneLampInstances) list.clear();
+    for (auto& list : m_drawerInstances) list.clear();
+    for (auto& list : m_partInstances) list.clear();
     m_doorInstances.clear();
+    m_cabinetInstances.clear();
 
     for (const Chunk* chunk : ordered) {
         if (!m_frustum.isVisible(chunk->bounds())) continue;
@@ -162,6 +178,19 @@ void Renderer::render(const FrameParams& frame, ChunkManager& chunks, const Worl
             m_phoneInstances[static_cast<size_t>(p.look())].push_back(p.modelMatrix());
             for (int k = 0; k < Phone::kKeyCount; ++k) m_phoneKeyInstances[static_cast<size_t>(k)].push_back(p.keyMatrix(k));
             m_phoneLampInstances[static_cast<size_t>(p.lamp())].push_back(p.lampMatrix());
+        }
+        const std::vector<FileCabinet>& cabinets = chunk->cabinets();
+        for (const FileCabinet& c : cabinets) {
+            m_cabinetInstances.push_back(c.modelMatrix());
+            for (int d = 0; d < FileCabinet::kDrawers; ++d) {
+                m_drawerInstances[static_cast<size_t>(c.drawerVariant(d))].push_back(c.drawerMatrix(d));
+            }
+        }
+        for (const ItemSite& site : chunk->items()) {
+            if (!site.item) continue;
+            // Parts in a shut drawer cannot be seen.
+            if (site.kind == SiteKind::Drawer && cabinets[static_cast<size_t>(site.cabinet)].drawerOpen(site.drawer) <= 0.0f) continue;
+            m_partInstances[static_cast<size_t>(tesla::meshFor(*site.item))].push_back(site.world);
         }
     }
 
@@ -193,14 +222,54 @@ void Renderer::render(const FrameParams& frame, ChunkManager& chunks, const Worl
         m_phoneLampMeshes[l].setInstances(m_phoneLampInstances[l]);
         m_phoneLampMeshes[l].drawInstanced();
     }
+    m_cabinetMesh.setInstances(m_cabinetInstances);
+    m_cabinetMesh.drawInstanced();
+    m_stats.cabinetsDrawn = m_cabinetInstances.size();
+    for (size_t v = 0; v < m_drawerMeshes.size(); ++v) {
+        m_drawerMeshes[v].setInstances(m_drawerInstances[v]);
+        m_drawerMeshes[v].drawInstanced();
+    }
+    for (size_t t = 0; t < m_partMeshes.size(); ++t) {
+        if (m_partInstances[t].empty()) continue;
+        m_partMeshes[t].setInstances(m_partInstances[t]);
+        m_partMeshes[t].drawInstanced();
+        m_stats.itemsDrawn += m_partInstances[t].size();
+    }
 
     // ---- Entities: lit bodies through the world shader, then the shadow creature ----------
     if (frame.entities) {
-        m_entities.drawLit(*frame.entities);
+        m_entities.drawLit(*frame.entities, m_worldShader);
         m_entities.drawShadow(*frame.entities, viewProj, camera.position, static_cast<float>(frame.time), kFogColor,
                               cfg::kFogDensity);
     }
     glBindVertexArray(0);
+
+    // ---- The Tesla gun: its discharges out in the world, then the gun itself on top ------------
+    const glm::vec3 camRight = camera.right();
+    const glm::vec3 camUp = glm::normalize(glm::cross(camRight, camera.forward()));
+    static const std::vector<Bolt> kNoBolts;
+    static const std::vector<Glow> kNoGlows;
+    if (frame.bolts || frame.glows) {
+        m_lightning.draw(frame.bolts ? *frame.bolts : kNoBolts, frame.glows ? *frame.glows : kNoGlows, viewProj,
+                         camera.position, camRight, camUp, cfg::kFogDensity);
+    }
+    if (frame.viewModel && !frame.viewModel->empty()) {
+        // In the hands: never clipped by the wall the player stands against,
+        // but lit by the room's own lights (it is drawn at its world position).
+        glClear(GL_DEPTH_BUFFER_BIT);
+        m_worldShader.use();
+        for (const ViewModelPart& part : *frame.viewModel) {
+            m_single.assign(1, part.model);
+            GpuMesh& mesh = m_partMeshes[static_cast<size_t>(part.mesh)];
+            mesh.setInstances(m_single);
+            mesh.drawInstanced();
+        }
+        glBindVertexArray(0);
+    }
+    if (frame.muzzleGlow.intensity > 0.0f) {
+        m_lightning.draw(kNoBolts, std::vector<Glow>{frame.muzzleGlow}, viewProj, camera.position, camRight, camUp,
+                         cfg::kFogDensity, false);
+    }
 
     // ---- Post-processing to the back buffer -----------------------------------------------
     m_post.present(static_cast<float>(frame.time), cfg::kExposure, cfg::kBloomStrength, cfg::kBloomThreshold,

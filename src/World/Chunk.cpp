@@ -10,6 +10,7 @@ Chunk::Chunk(ChunkBlueprint&& bp)
       m_seed(bp.seed),
       m_colliders(std::move(bp.colliders)),
       m_furniture(std::move(bp.furniture)),
+      m_items(std::move(bp.items)),
       m_lights(std::move(bp.lights)),
       m_bounds(bp.bounds) {
     m_staticMesh.upload(bp.staticMesh);
@@ -29,6 +30,13 @@ Chunk::Chunk(ChunkBlueprint&& bp)
         for (const AABB& local : Phone::localColliders()) m_furnitureColliders.push_back(local.transformed(p.model));
     }
 
+    m_cabinets.reserve(bp.cabinets.size());
+    for (const CabinetPlacement& c : bp.cabinets) {
+        m_cabinets.emplace_back(c.id, c.model);
+        for (const AABB& local : FileCabinet::localColliders()) m_furnitureColliders.push_back(local.transformed(c.model));
+    }
+    for (ItemSite& site : m_items) placeSite(site);
+
     m_doors.reserve(bp.doors.size());
     m_doorEdges.reserve(bp.doors.size());
     for (const DoorPlacement& d : bp.doors) {
@@ -42,8 +50,30 @@ uint64_t Chunk::edgeKey(int gx, int gz, world::EdgeAxis axis) {
            (static_cast<uint64_t>(static_cast<uint32_t>(gz)) << 1) ^ static_cast<uint64_t>(axis);
 }
 
+void Chunk::placeSite(ItemSite& site) const {
+    site.world = site.kind == SiteKind::Drawer
+                     ? m_cabinets[static_cast<size_t>(site.cabinet)].drawerMatrix(site.drawer) * site.local
+                     : site.local;
+}
+
 void Chunk::update(float dt, const AABB& playerBox) {
     for (Door& door : m_doors) door.update(dt, playerBox);
+    bool drawersMoving = false;
+    for (FileCabinet& c : m_cabinets) {
+        drawersMoving = drawersMoving || c.anyOpen() || c.openedDrawer() >= 0;
+        c.update(dt);
+    }
+    if (!drawersMoving) return;
+    for (ItemSite& site : m_items) {
+        if (site.kind == SiteKind::Drawer) placeSite(site);
+    }
+}
+
+ItemSite* Chunk::drawerSite(int cabinet, int drawer) {
+    for (ItemSite& site : m_items) {
+        if (site.kind == SiteKind::Drawer && site.cabinet == cabinet && site.drawer == drawer) return &site;
+    }
+    return nullptr;
 }
 
 void Chunk::gatherColliders(const AABB& region, std::vector<AABB>& out, bool includeDoors) const {

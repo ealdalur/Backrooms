@@ -18,6 +18,8 @@ extern const char* const kShadowVertex;
 /// The Stalker: a light-swallowing silhouette whose edges boil away into
 /// smoke (noise-dissolved, dithered), soot motes and two pinprick eyes.
 extern const char* const kShadowFragment;
+extern const char* const kLightningVertex;   ///< Tesla gun discharges (additive ribbons / glows).
+extern const char* const kLightningFragment;
 
 /// Full-screen triangle generated from gl_VertexID (no vertex buffer).
 extern const char* const kFullscreenVertex;

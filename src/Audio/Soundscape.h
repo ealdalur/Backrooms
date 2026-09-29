@@ -19,6 +19,10 @@
 //   * Phones: the earpiece of a lifted handset - the open line, one looping
 //     call-progress tone and whatever else comes down the wire - played at
 //     the listener's ear, not in the world.
+//   * The Tesla gun in the player's hands: its roaring discharge loop (level
+//     and pitch following the battery), cracks, clicks and warning beeps, and
+//     parts being handled; filing-cabinet drawers; the entities' screams of
+//     pain and death, and the sizzle of a body vaporising.
 // Positional sounds get distance attenuation, equal-power panning, head
 // shadow and occlusion (muffled and quieter when a wall is in the way, and
 // always when the source is on another storey).
@@ -77,6 +81,12 @@ public:
 
     /// The shock when an entity reaches the player.
     void playSting();
+
+    /// A sound in the player's hands (the gun, a part being handled): not
+    /// positional, slightly right of centre.
+    void playHeld(SoundId id, float gain, float pitch = 1.0f);
+    /// The discharge loop: `on` = false fades it out.
+    void setArcLoop(bool on, float gain, float pitch);
 
     /// The earpiece of the handset in the player's hand: the open line's hiss
     /// at `lineGain` and `tone` (a looping call-progress tone, SoundId::Count
@@ -149,6 +159,7 @@ private:
     VoiceHandle m_voice = 0;      ///< The Wanderer's current phrase.
     VoiceHandle m_monitor = 0;    ///< CRT hum of the terminal in use.
     VoiceHandle m_music = 0;      ///< DOOM's music, while it runs on that terminal.
+    VoiceHandle m_arc = 0;        ///< The Tesla gun's discharge loop.
     VoiceHandle m_phoneLine = 0;  ///< Earpiece: the open line.
     VoiceHandle m_phoneTone = 0;  ///< Earpiece: the current call-progress tone...
     SoundId     m_phoneToneId = SoundId::Count; ///< ...and which one it is.

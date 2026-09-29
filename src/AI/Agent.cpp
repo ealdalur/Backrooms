@@ -4,6 +4,8 @@
 #include "AI/Agent.h"
 
 #include "Core/Config.h"
+#include "Math/Random.h"
+#include "Render/EntityRenderer.h"
 #include "World/WorldGenerator.h"
 
 #include <algorithm>
@@ -176,4 +178,107 @@ void Agent::turnTowards(const glm::vec3& dir, float rate, float dt) {
     const float step = rate * dt;
     delta = std::clamp(delta, -step, step);
     m_yaw = std::fmod(m_yaw + delta, 2.0f * kPi);
+}
+
+// ---- Vitals ----------------------------------------------------------------------------------
+
+void Agent::applyShock(float damage) {
+    if (!m_active || dying()) return;
+    m_shock = 1.0f;
+    m_sinceShock = 0.0f;
+    m_health -= damage * m_vulnerability;
+    if (m_health <= 0.0f) {
+        m_health = 0.0f;
+        m_dissolve = 0.0f;
+        m_justDied = true;
+        m_velocity = glm::vec3(0.0f);
+    }
+}
+
+void Agent::vaporizeNow() {
+    if (!dying()) return;
+    m_dissolve = 1.0f;
+    m_destroyed = true;
+    m_active = false;
+    m_embers.clear();
+}
+
+Agent::VitalSigns Agent::updateVitals(float dt) {
+    VitalSigns signs;
+    m_vitalTime += dt;
+    m_sinceShock += dt;
+    // The arc re-connects every frame it holds; once it lets go the spasms die away in a moment.
+    m_shock = std::max(0.0f, m_shock - 4.0f * dt);
+    if (!dying() && m_sinceShock > cfg::kShockRegenDelay) m_health = std::min(1.0f, m_health + cfg::kShockRegenRate * dt);
+
+    if (shocked() && !dying()) {
+        m_painTimer -= dt;
+        if (m_painTimer <= 0.0f) {
+            signs.pain = true;
+            m_painTimer = 0.8f + 0.6f * rnd::toUnit(rnd::hashCombine(m_emberSeed++, 0x9A17ull));
+        }
+    } else {
+        m_painTimer = 0.0f; // the next shock screams at once
+    }
+    if (m_justDied) {
+        signs.died = true;
+        m_justDied = false;
+    }
+
+    // ---- Vaporising: the body sheds glowing embers as it comes apart.
+    for (Ember& e : m_embers) {
+        e.age += dt;
+        e.vel += glm::vec3(0.0f, 0.9f, 0.0f) * dt; // heat carries them up
+        e.vel *= std::exp(-1.2f * dt);
+        e.pos += e.vel * dt;
+    }
+    m_embers.erase(std::remove_if(m_embers.begin(), m_embers.end(), [](const Ember& e) { return e.age >= e.life; }),
+                   m_embers.end());
+    if (dying()) {
+        m_dissolve = std::min(1.0f, m_dissolve + dt / cfg::kVaporizeTime);
+        const std::vector<CreatureRig::Limb>& limbs = body().limbs();
+        m_emberTimer -= dt;
+        while (m_emberTimer <= 0.0f && !limbs.empty() && m_dissolve < 0.9f && m_embers.size() < 220) {
+            m_emberTimer += 1.0f / 70.0f;
+            rnd::Rng rng(rnd::hashCombine(m_emberSeed++, 0xE3B3ull));
+            const CreatureRig::Limb& l = limbs[rng.next() % limbs.size()];
+            const float t = rng.nextFloat();
+            const glm::vec3 jitter(rng.range(-1.0f, 1.0f), rng.range(-1.0f, 1.0f), rng.range(-1.0f, 1.0f));
+            Ember e;
+            e.pos = glm::mix(l.a, l.b, t) + jitter * glm::mix(l.ra, l.rb, t);
+            e.vel = glm::vec3(rng.range(-0.25f, 0.25f), rng.range(0.1f, 0.6f), rng.range(-0.25f, 0.25f));
+            e.age = 0.0f;
+            e.life = rng.range(0.6f, 1.6f);
+            e.size = rng.range(0.008f, 0.022f);
+            m_embers.push_back(e);
+        }
+        if (m_emberTimer < 0.0f) m_emberTimer = 0.0f;
+        if (m_dissolve >= 1.0f) {
+            // Nothing left of it.
+            m_destroyed = true;
+            m_active = false;
+            m_embers.clear();
+        }
+    }
+    return signs;
+}
+
+void Agent::convulse(CreatureRig& rig) const {
+    // Violent while the arc holds; a dying body keeps shuddering as it goes.
+    const float amount = std::max(m_shock, dying() ? 0.6f * (1.0f - m_dissolve) : 0.0f);
+    if (amount <= 0.0f) return;
+    const float t = m_vitalTime;
+    const float a = 0.045f * amount;
+    rig.warp([t, a](const glm::vec3& p) {
+        return p + a * glm::vec3(std::sin(p.y * 31.0f + t * 57.0f) + 0.5f * std::sin(p.z * 17.0f + t * 91.0f),
+                                 0.6f * std::sin(p.x * 27.0f + p.z * 13.0f + t * 63.0f),
+                                 std::sin(p.z * 29.0f + t * 49.0f) + 0.5f * std::sin(p.x * 19.0f + t * 83.0f));
+    });
+}
+
+void Agent::buildEmbers(EntityDrawList& list, const glm::vec3& camRight, const glm::vec3& camUp) const {
+    for (const Ember& e : m_embers) {
+        const float life = e.age / e.life;
+        list.addSprite(e.pos, e.size * (1.0f - 0.6f * life), EntityDrawList::Ember, 1.0f - life, camRight, camUp);
+    }
 }

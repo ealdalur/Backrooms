@@ -526,6 +526,136 @@ void generatePhoneKeys(Canvas& c) {
     });
 }
 
+// ----- Copper -------------------------------------------------------------------------
+// Enamelled magnet wire wound on a coil former: 64 round turns per repeat
+// along v (1 mm wire at the material's 64 mm tile), each a bright crown with
+// dark grooves between turns, a varnish tint that drifts from salmon to deep
+// brown and the odd tarnished patch. The same texture on thick tubing reads
+// as polished copper pipe with faint ribs.
+void generateCopper(Canvas& c) {
+    forEachTexel(c, [&](int x, int y, float u, float v) {
+        const float turn = fract(v * 64.0f);
+        const float profile = std::sqrt(std::max(0.0f, 1.0f - sq(turn * 2.0f - 1.0f))); // round wire cross-section
+        const float groove = 1.0f - smooth(0.0f, 0.25f, profile);
+        const float tint = noise::fbm(u * 3.0f, v * 3.0f, 3, 3, 4, 0xC0A1u);
+        const float tarnish = smooth(0.62f, 0.8f, noise::fbm(u * 8.0f, v * 8.0f, 8, 8, 4, 0xC0A2u));
+        const float streak = noise::fbm(u * 96.0f, v * 2.0f, 96, 2, 2, 0xC0A3u);
+        glm::vec3 col = glm::mix(glm::vec3(0.80f, 0.42f, 0.24f), glm::vec3(0.55f, 0.24f, 0.11f), tint);
+        col = glm::mix(col, glm::vec3(0.32f, 0.22f, 0.14f), tarnish * 0.6f);
+        col *= (0.78f + 0.22f * profile) * (0.95f + 0.05f * streak);
+        col *= 1.0f - 0.35f * groove;
+        c.put(x, y, col, 0.15f + 0.75f * profile, (0.35f + 0.65f * profile) * (1.0f - 0.6f * tarnish), 0.0f);
+    });
+}
+
+// ----- Aluminium ----------------------------------------------------------------------
+// Spun and polished sheet: fine circumferential brushing (u around), soft
+// milky oxidation patches and a few fingerprints' worth of haze.
+void generateAluminum(Canvas& c) {
+    forEachTexel(c, [&](int x, int y, float u, float v) {
+        const float brush = noise::fbm(u * 2.0f, v * 180.0f, 2, 180, 3, 0xA1A1u);
+        const float haze = smooth(0.5f, 0.85f, noise::fbm(u * 5.0f, v * 5.0f, 5, 5, 4, 0xA1A2u));
+        const float speck = noise::white(x, y, 0xA1A3u);
+        glm::vec3 col = glm::vec3(0.78f, 0.80f, 0.83f) * (0.90f + 0.10f * brush - 0.03f * speck);
+        col = glm::mix(col, glm::vec3(0.70f, 0.71f, 0.70f), haze * 0.4f);
+        c.put(x, y, col, 0.5f + 0.2f * brush, 0.85f - 0.45f * haze, 0.0f);
+    });
+}
+
+// ----- Manila ---------------------------------------------------------------------------
+// Buff file-folder card: short paper fibres, faint mottling and old stains.
+void generateManila(Canvas& c) {
+    forEachTexel(c, [&](int x, int y, float u, float v) {
+        const float mottle = noise::fbm(u * 6.0f, v * 6.0f, 6, 6, 4, 0x3A11u);
+        const float fibre = noise::fbm(u * 200.0f, v * 60.0f, 200, 60, 2, 0x3A12u);
+        const float stain = smooth(0.66f, 0.8f, noise::fbm(u * 4.0f, v * 4.0f, 4, 4, 4, 0x3A13u));
+        glm::vec3 col = glm::vec3(0.85f, 0.74f, 0.50f) * (0.93f + 0.07f * mottle + 0.04f * fibre);
+        col = glm::mix(col, glm::vec3(0.66f, 0.52f, 0.30f), stain * 0.5f);
+        c.put(x, y, col, 0.5f + 0.2f * fibre, 0.2f, 0.0f);
+    });
+}
+
+// ----- Tesla labels --------------------------------------------------------------------
+// Atlas of the gun parts' printed and electronic details in 4 x 4 cells (v up):
+//   (0,3) battery label: "LI-ION" over "36V 5AH" in black on a yellow band;
+//   (1,3) "DANGER / HIGH VOLTAGE" sticker: black on yellow in a black border;
+//   (2,3) driver panel: "DRSSTC" / "DRIVER" in white on dark grey;
+//   (0,2) circuit board: green solder mask, copper traces and pads;
+//   (3,3) green gauge LED lens, (3,2) red LED lens - both emissive where
+//         the mesh asks for it (see the world shader's MAT_TESLA).
+void generateTeslaLabels(Canvas& c) {
+    const int advance = font::kGlyphW + 1;
+    auto ink = [&](const char* s, float cu, float cv, float cx, float top, float pu, float pv) {
+        const int n = static_cast<int>(std::strlen(s));
+        const float x0 = cx - 0.5f * pu * static_cast<float>(n * advance - 1);
+        const int col = static_cast<int>(std::floor((cu - x0) / pu));
+        const int row = static_cast<int>(std::floor((top - cv) / pv));
+        if (col < 0 || row < 0 || row >= font::kGlyphH || col >= n * advance - 1 || col % advance >= font::kGlyphW) return false;
+        const uint8_t* rows = font::glyph(s[col / advance]);
+        return rows && (rows[row] & (0x10 >> (col % advance))) != 0;
+    };
+    forEachTexel(c, [&](int x, int y, float u, float v) {
+        const int ci = std::min(3, static_cast<int>(u * 4.0f)), cj = std::min(3, static_cast<int>(v * 4.0f));
+        const float cu = u * 4.0f - static_cast<float>(ci), cv = v * 4.0f - static_cast<float>(cj);
+        const float grain = 0.96f + 0.04f * noise::white(x, y, 0x7E51u);
+        const float wear = smooth(0.55f, 0.85f, noise::fbm(u * 12.0f, v * 12.0f, 12, 12, 4, 0x7E52u));
+        if (ci == 0 && cj == 3) {
+            // Battery label (120 x 45 mm).
+            const float aspect = 0.12f / 0.045f;
+            const float edge = std::min(std::min(cu, 1.0f - cu) * aspect, std::min(cv, 1.0f - cv));
+            glm::vec3 col = glm::vec3(0.93f, 0.72f, 0.08f);
+            if (cv < 0.22f) col = glm::vec3(0.06f);                   // black band along the bottom
+            if (edge < 0.04f) col = glm::vec3(0.05f);                  // printed border
+            const float pv = 0.36f / static_cast<float>(font::kGlyphH), pv2 = 0.18f / static_cast<float>(font::kGlyphH);
+            if (ink("LI-ION", cu, cv, 0.5f, 0.90f, pv / aspect, pv)) col = glm::vec3(0.05f);
+            if (ink("36V 5AH", cu, cv, 0.5f, 0.20f, pv2 / aspect, pv2)) col = glm::vec3(0.93f, 0.72f, 0.08f);
+            col = glm::mix(col, col * 0.7f, wear * 0.5f);
+            c.put(x, y, col * grain, 0.5f, 0.5f - 0.3f * wear, 0.0f);
+        } else if (ci == 1 && cj == 3) {
+            // Warning sticker (60 x 30 mm).
+            const float aspect = 2.0f;
+            const float edge = std::min(std::min(cu, 1.0f - cu) * aspect, std::min(cv, 1.0f - cv));
+            glm::vec3 col = edge < 0.07f ? glm::vec3(0.05f) : glm::vec3(0.95f, 0.80f, 0.10f);
+            const float pv = 0.26f / static_cast<float>(font::kGlyphH), pv2 = 0.2f / static_cast<float>(font::kGlyphH);
+            if (ink("DANGER", cu, cv, 0.5f, 0.84f, pv / aspect, pv) || ink("HIGH VOLTAGE", cu, cv, 0.5f, 0.40f, pv2 / aspect, pv2)) {
+                col = glm::vec3(0.05f);
+            }
+            c.put(x, y, col * grain * (1.0f - 0.25f * wear), 0.5f, 0.45f, 0.0f);
+        } else if (ci == 2 && cj == 3) {
+            // Driver panel (80 x 50 mm).
+            const float aspect = 1.6f;
+            glm::vec3 col = glm::vec3(0.16f, 0.17f, 0.18f) * (0.9f + 0.1f * wear);
+            const float pv = 0.24f / static_cast<float>(font::kGlyphH);
+            if (ink("DRSSTC", cu, cv, 0.5f, 0.82f, pv / aspect, pv) || ink("DRIVER", cu, cv, 0.5f, 0.46f, pv / aspect, pv)) {
+                col = glm::vec3(0.85f, 0.85f, 0.80f);
+            }
+            if (sq((cu - 0.2f) * aspect) + sq(cv - 0.14f) < 0.004f) col = glm::vec3(0.5f, 0.05f, 0.04f); // screw-terminal dots
+            if (sq((cu - 0.8f) * aspect) + sq(cv - 0.14f) < 0.004f) col = glm::vec3(0.05f, 0.05f, 0.05f);
+            c.put(x, y, col * grain, 0.5f, 0.35f, 0.0f);
+        } else if (ci == 0 && cj == 2) {
+            // Circuit board: traces on a periodic lattice, pads at their ends.
+            const float tx = fract(cu * 14.0f), ty = fract(cv * 14.0f);
+            const uint32_t h = rnd::hash2i(static_cast<int>(cu * 14.0f), static_cast<int>(cv * 14.0f), 0x9CB1u);
+            const bool horiz = (h & 1u) != 0u, vert = (h & 2u) != 0u, pad = (h & 12u) == 12u;
+            bool copper = (horiz && std::fabs(ty - 0.5f) < 0.08f) || (vert && std::fabs(tx - 0.5f) < 0.08f);
+            if (pad && sq(tx - 0.5f) + sq(ty - 0.5f) < 0.06f) copper = true;
+            glm::vec3 col = copper ? glm::vec3(0.72f, 0.60f, 0.30f) : glm::vec3(0.07f, 0.28f, 0.12f);
+            c.put(x, y, col * grain, copper ? 0.6f : 0.45f, copper ? 0.8f : 0.5f, 0.0f);
+        } else if (ci == 3 && (cj == 3 || cj == 2)) {
+            // Gauge LED lens: a domed rectangle in a black bezel.
+            const float aspect = 0.012f / 0.008f;
+            const float edge = std::min(std::min(cu, 1.0f - cu) * aspect, std::min(cv, 1.0f - cv));
+            const float lens = smooth(0.08f, 0.16f, edge);
+            const float hot = gauss(cu, 0.5f, 0.3f) * gauss(cv, 0.5f, 0.35f);
+            const glm::vec3 tint = cj == 3 ? glm::vec3(0.12f, 0.55f, 0.16f) : glm::vec3(0.55f, 0.07f, 0.04f);
+            const glm::vec3 col = glm::mix(glm::vec3(0.03f), tint * (0.6f + 0.4f * hot), lens);
+            c.put(x, y, col, 0.5f + 0.3f * lens, 0.9f, lens * (0.6f + 0.4f * hot));
+        } else {
+            c.put(x, y, glm::vec3(0.08f) * grain, 0.5f, 0.3f, 0.0f); // unused
+        }
+    });
+}
+
 } // namespace
 
 bool MaterialLibrary::build(int size) {
@@ -537,7 +667,8 @@ bool MaterialLibrary::build(int size) {
         generateWallpaper, generateCarpet, generateCeiling, generateWood,
         generateMetal,     generateLightPanel, generatePlastic, generateFabric,
         generateConcrete,  generateBeigePlastic, generateCrtScreen, generateFlesh,
-        generateStairSign, generatePhoneKeys,
+        generateStairSign, generatePhoneKeys, generateCopper, generateAluminum,
+        generateManila,    generateTeslaLabels,
     };
 
     // Synthesise every layer concurrently: each generator is independent and

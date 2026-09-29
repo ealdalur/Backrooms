@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 #include "World/WorldGenerator.h"
 
+#include "Actors/TeslaParts.h"
 #include "Math/Random.h"
 #include "Render/MeshBuilder.h"
 
@@ -33,6 +34,8 @@ constexpr uint64_t kSaltStairwell     = 0x57A1'000Aull;
 constexpr uint64_t kSaltTerminal      = 0x7E41'000Bull;
 constexpr uint64_t kSaltStairwellRoll = 0x57A1'000Cull;
 constexpr uint64_t kSaltPhone         = 0x9403'000Dull;
+constexpr uint64_t kSaltCabinet       = 0xCAB1'000Eull;
+constexpr uint64_t kSaltItem          = 0x17E3'000Full;
 
 constexpr float S  = world::kCellSize;
 constexpr float H  = world::kCeilingHeight;
@@ -646,7 +649,11 @@ void WorldGenerator::placeFurniture(ChunkBlueprint& bp, const glm::vec3& origin)
             // Terminals and phones use their own streams so furniture layouts are unaffected.
             rnd::Rng terminalRng(rnd::hashCoords(bp.seed, lx, lz, kSaltTerminal));
             rnd::Rng phoneRng(rnd::hashCoords(bp.seed, lx, lz, kSaltPhone));
+            // ...as do the gun's parts and the cabinets' ids.
+            rnd::Rng itemRng(rnd::hashCoords(bp.seed, lx, lz, kSaltItem));
             int deskCount = 0;
+            int cabinetCount = 0;
+            int siteCount = 0;
 
             const glm::vec3 cellMin = origin + glm::vec3(static_cast<float>(lx) * S, 0.0f, static_cast<float>(lz) * S);
             const glm::vec3 cellCenter = cellMin + glm::vec3(S * 0.5f, 0.0f, S * 0.5f);
@@ -663,8 +670,46 @@ void WorldGenerator::placeFurniture(ChunkBlueprint& bp, const glm::vec3& origin)
             // Orientation helpers: yaw mapping local +Z / +X onto a direction.
             auto yawFacing = [](const glm::vec3& dir) { return std::atan2(dir.x, dir.z); };
             auto yawAlongX = [](const glm::vec3& dir) { return std::atan2(-dir.z, dir.x); };
-            auto add = [&bp](FurnitureType t, const glm::vec3& p, float yaw) {
-                bp.furniture.push_back(Furniture::makeInstance(t, p, yaw));
+            // Occasionally a part of the Tesla coil gun rests somewhere (see Gameplay/Items).
+            auto maybeItem = [&](float chance, SiteKind kind, const glm::mat4& surface, int cabinet, int drawer) {
+                const uint64_t id = rnd::hashCoords(levelSeed(level), gx, gz, kSaltItem + static_cast<uint64_t>(siteCount++));
+                if (!itemRng.chance(chance)) return;
+                Item item;
+                item.id = id;
+                const float pick = itemRng.nextFloat();
+                const float rest = (1.0f - world::kBatteryShare) / 3.0f;
+                item.type = pick < world::kBatteryShare              ? PartType::Battery
+                            : pick < world::kBatteryShare + rest        ? PartType::Driver
+                            : pick < world::kBatteryShare + 2.0f * rest ? PartType::Coil
+                                                                         : PartType::TopLoad;
+                item.charge = item.type == PartType::Battery ? itemRng.range(world::kBatteryMinCharge, 1.0f) : 1.0f;
+                ItemSite site;
+                site.id = id;
+                site.kind = kind;
+                site.local = surface * tesla::restTransform(item.type, kind, itemRng.range(-3.14159f, 3.14159f));
+                site.cabinet = cabinet;
+                site.drawer = drawer;
+                site.item = item;
+                bp.items.push_back(site);
+            };
+
+            // Filing cabinets are actors (their drawers open); everything else is static furniture.
+            auto add = [&](FurnitureType t, const glm::vec3& p, float yaw) {
+                const FurnitureInstance inst = Furniture::makeInstance(t, p, yaw);
+                if (t != FurnitureType::FileCabinet) {
+                    bp.furniture.push_back(inst);
+                    if (t == FurnitureType::Chair) {
+                        maybeItem(world::kPartChairChance, SiteKind::Chair,
+                                  glm::translate(inst.model, glm::vec3(0.0f, 0.50f, 0.02f)), -1, -1);
+                    }
+                    return;
+                }
+                const uint64_t id = rnd::hashCoords(levelSeed(level), gx, gz, kSaltCabinet + static_cast<uint64_t>(cabinetCount++));
+                bp.cabinets.push_back({id, inst.model});
+                const int index = static_cast<int>(bp.cabinets.size()) - 1;
+                for (int d = 0; d < FileCabinet::kDrawers; ++d) {
+                    maybeItem(world::kPartDrawerChance, SiteKind::Drawer, FileCabinet::itemSurface(), index, d);
+                }
             };
 
             // Frame of a wall side: inner face midpoint, inward normal, along-wall axis.
@@ -686,8 +731,9 @@ void WorldGenerator::placeFurniture(ChunkBlueprint& bp, const glm::vec3& origin)
 
             // Often a desk has a telephone: beside the computer (turned towards
             // the chair), or anywhere along the desk if there is none.
+            // Returns where along the desk it stands (or a far-off value if there is none).
             auto maybePhone = [&](bool besideTerminal) {
-                if (!phoneRng.chance(world::kPhoneChance)) return;
+                if (!phoneRng.chance(world::kPhoneChance)) return 1e3f;
                 const float x = besideTerminal ? phoneRng.range(0.40f, 0.52f) : phoneRng.range(-0.40f, 0.50f);
                 const float z = phoneRng.range(-0.14f, 0.02f);
                 const float yaw = besideTerminal ? phoneRng.range(-0.45f, -0.12f) : -0.5f * x + phoneRng.range(-0.15f, 0.15f);
@@ -695,6 +741,22 @@ void WorldGenerator::placeFurniture(ChunkBlueprint& bp, const glm::vec3& origin)
                                                     glm::vec3(0.0f, 1.0f, 0.0f));
                 const uint64_t id = rnd::hashCoords(levelSeed(level), gx, gz, kSaltPhone + static_cast<uint64_t>(deskCount));
                 bp.phones.push_back({id, model});
+                return x;
+            };
+
+            // A part on the desk top, clear of the computer (left of centre) and the phone.
+            auto maybeDeskItem = [&](bool terminal, float phoneX) {
+                const glm::mat4 desk = bp.furniture.back().model;
+                float spots[3] = {-0.55f, 0.30f, 0.56f};
+                const int first = itemRng.rangeInt(0, 2);
+                for (int k = 0; k < 3; ++k) {
+                    const float x = spots[(first + k) % 3];
+                    if (terminal && x < 0.14f) continue;
+                    if (std::fabs(x - phoneX) < 0.27f) continue;
+                    maybeItem(world::kPartDeskChance, SiteKind::Desk,
+                              glm::translate(desk, glm::vec3(x, 0.75f, itemRng.range(-0.18f, 0.12f))), -1, -1);
+                    return;
+                }
             };
 
             // A desk against the wall, a chair pulled up to it, optional
@@ -704,7 +766,9 @@ void WorldGenerator::placeFurniture(ChunkBlueprint& bp, const glm::vec3& origin)
                 wallFrame(side, face, n, r);
                 const glm::vec3 base = face + r * rng.range(-0.5f, 0.5f);
                 add(FurnitureType::Desk, base + n * (0.375f + 0.03f), yawFacing(n));
-                maybePhone(maybeTerminal());
+                const bool terminal = maybeTerminal();
+                const float phoneX = maybePhone(terminal);
+                maybeDeskItem(terminal, phoneX);
                 ++deskCount;
                 add(FurnitureType::Chair,
                     base + n * (0.78f + rng.range(0.25f, 0.55f)) + r * rng.range(-0.3f, 0.3f),

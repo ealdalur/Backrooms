@@ -86,6 +86,22 @@ enum class SoundId : uint8_t {
     PhoneJenny,       ///< 867-5309: Jenny picks up, and she is sick of it.
     PhoneBeep,        ///< Voicemail signals; variant = phonesfx::Beep.
     PhoneMessage,     ///< Messages left in voicemail; variant = phonesfx::Message.
+    // The Tesla coil gun, filing cabinets and the entities under the arc (Audio/TeslaSounds).
+    PartPickup,       ///< Grabbing a part: a scuff, a hard clack, loose bits rattling inside.
+    PartSwap,         ///< Setting the held part down, then taking the other.
+    AssembleSnap,     ///< A part snapping into the gun: a noisy "chhk" (some with ratchet clicks).
+    WeaponPowerUp,    ///< Relay clack, the rising whine of the capacitors charging, a test spark.
+    TeslaArc,         ///< Seamless loop: the roaring, crackling buzz of the discharge.
+    TeslaZap,         ///< A sharp crack: the discharge breaking out, an arc landing.
+    TeslaDryClick,    ///< The trigger on a flat battery: a dry click and a relay tick (noise only).
+    BatteryLow,       ///< Piezo low-battery chirp: bee-boo.
+    CabinetOpen,      ///< A steel drawer rolling out on its runners to the stop.
+    CabinetClose,     ///< ...rolling back in and slamming shut.
+    WandererPain,     ///< Its electrified shriek.
+    WandererDeath,    ///< Its last wail, sagging into a gurgle.
+    StalkerPain,      ///< An inhuman, electrified screech.
+    StalkerDeath,     ///< The screech coming apart into hissing steam.
+    Vaporize,         ///< Frying crackle, a deep whump and steam: a body burning away.
     Count
 };
 

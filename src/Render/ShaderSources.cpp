@@ -56,7 +56,7 @@ layout(location = 0) out vec4 oColor;
 // ---- Materials -------------------------------------------------------------
 uniform sampler2DArray uAlbedo;          // rgb = albedo (sRGB decoded by hardware)
 uniform sampler2DArray uSurface;         // r = height, g = specular mask, b = emissive mask
-uniform vec4  uMaterialParams[16];       // x = spec, y = shininess, z = bump (m), w = emissive gain
+uniform vec4  uMaterialParams[24];       // x = spec, y = shininess, z = bump (m), w = emissive gain
 uniform float uTime;                     // simulation clock (animated terminal screens)
 
 // ---- Clustered lights (one 2D slice per loaded storey) ---------------------------
@@ -91,12 +91,21 @@ uniform vec3  uAmbientDown;              // indirect light arriving from below (
 uniform vec3  uFogColor;
 uniform float uFogDensity;
 
+// ---- The Tesla gun ---------------------------------------------------------------
+uniform vec4  uArcLight;                 // xyz = where the discharge's light comes from, w = intensity (0 = off)
+uniform vec3  uArcColor;
+uniform float uArcRange;
+uniform float uDissolve;                 // < 0: off; 0..1 how much of this body has vaporised
+uniform vec3  uDissolveFeet;             // base of the vaporising body...
+uniform float uDissolveHeight;           // ...and its height (it burns away from the head down)
+
 const int MAT_WALLPAPER = 0;
 const int MAT_CARPET    = 1;
 const int MAT_CEILING   = 2;
 const int MAT_CRT       = 10;
 const int MAT_SIGN      = 12;
 const int MAT_PHONE     = 13;
+const int MAT_TESLA     = 17;
 
 const uint EDGE_OPEN = 0u;
 const uint EDGE_WALL = 1u;
@@ -302,6 +311,37 @@ vec3 crtEmission(vec2 uv, vec3 seedPos, float rasterMask) {
     return phosphor * (lit * scan * flicker + 0.05) * rasterMask;
 }
 
+// ---- Vaporisation ------------------------------------------------------------------
+// A body burning away under the arc: a noise field (biased so the head goes
+// first and the feet last) is compared with a rising threshold. Below it the
+// surface is gone; just above it, a thin band glows white-blue hot, fading
+// through orange into charred flesh.
+// Returns the edge glow; discards what has already vaporised.
+vec3 vaporise(vec3 P, inout vec3 albedo) {
+    float h = clamp((P.y - uDissolveFeet.y) / max(uDissolveHeight, 0.1), 0.0, 1.0);
+    float n = fbm(P * 7.0 + vec3(0.0, -uTime * 0.7, 0.0));
+    float field = n * 0.65 + (1.0 - h) * 0.35;
+    float threshold = uDissolve * 1.15 - 0.05;
+    if (field < threshold) discard;
+    float edge = 1.0 - smoothstep(0.0, 0.08, field - threshold);
+    albedo *= mix(1.0, 0.18, smoothstep(0.0, 0.35, uDissolve));   // charred as it goes
+    float crackle = 0.75 + 0.25 * sin(uTime * 83.0 + P.y * 40.0);
+    return mix(vec3(9.0, 3.0, 0.5), vec3(7.0, 7.5, 10.0), edge * edge) * edge * crackle
+         + vec3(0.25, 0.35, 0.9) * (1.0 - smoothstep(0.0, 0.25, uDissolve)) * 0.6; // the arc still crawling over it
+}
+
+// ---- The discharge's own light: a flickering point light, diffuse only ------------
+vec3 arcLighting(vec3 P, vec3 N, vec3 albedo) {
+    if (uArcLight.w <= 0.0) return vec3(0.0);
+    vec3  Lv = uArcLight.xyz - P;
+    float d2 = dot(Lv, Lv);
+    float r = sqrt(d2) / uArcRange;
+    if (r >= 1.0) return vec3(0.0);
+    float window = 1.0 - r * r;
+    float NdotL = max(dot(N, Lv * inversesqrt(max(d2, 1e-6))), 0.0) * 0.85 + 0.15; // wraps round: the arcs are everywhere
+    return uArcColor * albedo * (uArcLight.w * window * window * NdotL / (d2 + 0.35));
+}
+
 void main() {
     float layer = float(vMaterial);
     vec4  params = uMaterialParams[vMaterial];
@@ -352,6 +392,9 @@ void main() {
         }
     }
 
+    vec3 vaporGlow = vec3(0.0);
+    if (uDissolve >= 0.0) vaporGlow = vaporise(vWorldPos, albedo);
+
     // Fade relief out with distance to avoid shimmering on far surfaces.
     vec3 N = geomN;
     float bump = params.z * clamp(1.0 - camDist / 35.0, 0.0, 1.0);
@@ -365,6 +408,8 @@ void main() {
     vec3 ambient = mix(uAmbientDown, uAmbient, N.y * 0.5 + 0.5);
     vec3 color = albedo * ambient * ao * 0.7;
     color += evaluateLights(vWorldPos, N, V, albedo, params.x * specMask, params.y) * mix(0.55, 1.0, ao);
+    color += arcLighting(vWorldPos, N, albedo);
+    color += vaporGlow;
 
     // Emissive diffuser panels follow their fixture's flicker.
     if (vLightIndex >= 0) {
@@ -385,6 +430,12 @@ void main() {
         float h = hash13(floor(vInstanceOrigin * 3.7) + 0.5);
         float lamp = vUV.x > 3.5 ? step(0.55, fract(uTime * (0.45 + 0.4 * h) + h * 13.0)) : (vUV.x > 1.5 ? 1.0 : 0.0);
         color += albedo * emissiveMask * params.w * lamp;
+    }
+
+    // The gun parts' gauge LEDs, by the same UV code: dark, lit (+2) or blinking (+4).
+    if (vMaterial == MAT_TESLA && emissiveMask > 0.0) {
+        float led = vUV.x > 3.5 ? step(0.5, fract(uTime * 2.2)) : (vUV.x > 1.5 ? 1.0 : 0.0);
+        color += albedo * emissiveMask * params.w * led;
     }
 
     // Humid, yellowish squared-exponential haze.
@@ -437,6 +488,9 @@ uniform vec3  uCameraPos;
 uniform float uTime;
 uniform vec3  uFogColor;
 uniform float uFogDensity;
+uniform float uDissolve;        // < 0: off; 0..1 how much of the body has vaporised (see the world shader)
+uniform vec3  uDissolveFeet;
+uniform float uDissolveHeight;
 
 float hash13(vec3 p3) {
     p3 = fract(p3 * 0.1031);
@@ -469,6 +523,14 @@ void main() {
         oColor = vec4(mix(c, uFogColor, fog), 1.0);
         return;
     }
+    if (vKind == 3) {
+        // Ember of a vaporising body: white-blue hot when fresh, cooling to orange.
+        float r = length(vUV);
+        if (r > 1.0) discard;
+        vec3 c = mix(vec3(4.0, 1.4, 0.3), vec3(3.5, 4.5, 9.0), vParam * vParam) * (1.0 - r * r) * (0.3 + vParam);
+        oColor = vec4(mix(c, uFogColor, fog), 1.0);
+        return;
+    }
     if (vKind == 1) {
         // Soot mote shed by the body.
         float a = (1.0 - smoothstep(0.15, 1.0, length(vUV))) * vParam;
@@ -487,7 +549,74 @@ void main() {
     float solid = 1.0 - smoothstep(0.30, 1.0, rim) * (0.35 + 1.1 * boil);
     if (solid < dither()) discard;
     vec3 col = vec3(0.0035, 0.003, 0.004) + vec3(0.018, 0.004, 0.012) * pow(rim, 5.0); // faint oily sheen
+    if (uDissolve >= 0.0) {
+        // Burning away from the head down, a glowing rim eating into the dark.
+        float h = clamp((vWorldPos.y - uDissolveFeet.y) / max(uDissolveHeight, 0.1), 0.0, 1.0);
+        float n = 0.6 * valueNoise(vWorldPos * 7.0 - vec3(0.0, uTime * 0.7, 0.0)) + 0.4 * valueNoise(vWorldPos * 17.0);
+        float field = n * 0.65 + (1.0 - h) * 0.35;
+        float threshold = uDissolve * 1.15 - 0.05;
+        if (field < threshold) discard;
+        float edge = 1.0 - smoothstep(0.0, 0.08, field - threshold);
+        col += mix(vec3(9.0, 2.5, 0.8), vec3(7.0, 7.5, 10.0), edge * edge) * edge;
+    }
     oColor = vec4(mix(col, uFogColor, fog), 1.0);
+}
+)GLSL";
+
+// ============================================================================
+// Electrical discharges (Tesla gun): additive, camera-facing ribbons and glows
+// ============================================================================
+const char* const kLightningVertex = R"GLSL(
+#version 330 core
+layout(location = 0) in vec3 aPosition;  // world space, already expanded to face the camera
+layout(location = 1) in vec3 aNormal;    // tint of the glow
+layout(location = 2) in vec2 aUV;        // x: -1..1 across the ribbon (glows: the quad corner), y: unused
+layout(location = 3) in vec2 aMatInfo;   // x = brightness, y = kind (0 ribbon, 1 glow ball)
+
+uniform mat4 uViewProj;
+
+out vec3 vWorldPos;
+out vec3 vTint;
+out vec2 vUV;
+out float vBright;
+flat out int vKind;
+
+void main() {
+    vWorldPos = aPosition;
+    vTint     = aNormal;
+    vUV       = aUV;
+    vBright   = aMatInfo.x;
+    vKind     = int(aMatInfo.y + 0.5);
+    gl_Position = uViewProj * vec4(aPosition, 1.0);
+}
+)GLSL";
+
+const char* const kLightningFragment = R"GLSL(
+#version 330 core
+in vec3 vWorldPos;
+in vec3 vTint;
+in vec2 vUV;
+in float vBright;
+flat in int vKind;
+
+layout(location = 0) out vec4 oColor;
+
+uniform vec3  uCameraPos;
+uniform float uFogDensity;
+
+void main() {
+    // Each ribbon is several times wider than the channel: a thin white-hot
+    // core (a sharp Gaussian) inside a wide, tinted glow (a soft one). The
+    // result is added onto the HDR scene, so the bloom pass turns the core
+    // into a blinding streak.
+    float x = vKind == 1 ? length(vUV) : abs(vUV.x);
+    if (x > 1.0) discard;
+    float core = exp(-x * x * (vKind == 1 ? 18.0 : 60.0));
+    float glow = exp(-x * x * 5.0) * (1.0 - x);
+    vec3  c = (vec3(1.0) * core * 2.4 + vTint * glow * 0.45) * vBright;
+    float camDist = length(uCameraPos - vWorldPos);
+    float fog = 1.0 - exp(-pow(camDist * uFogDensity, 2.0));
+    oColor = vec4(c * (1.0 - fog), 1.0);
 }
 )GLSL";
 

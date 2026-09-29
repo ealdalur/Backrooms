@@ -65,6 +65,11 @@ public:
     /// obstacle overhead (the ceiling, a door header...), or `maxUp`.
     float headroom(const glm::vec3& point, float halfWidth, float maxUp, const ICollisionWorld& world) const;
 
+    /// Casts a ray from `origin` along the unit `dir` up to `maxDist` against
+    /// every solid in `world`. On a hit, returns true with the distance in `t`
+    /// (0 if the ray starts inside a solid).
+    bool raycast(const glm::vec3& origin, const glm::vec3& dir, float maxDist, const ICollisionWorld& world, float& t) const;
+
 private:
     /// Moves along a single axis (0 = x, 1 = y, 2 = z) and clamps against the
     /// first obstacle entered. Returns true if the motion was obstructed.

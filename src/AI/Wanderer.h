@@ -20,6 +20,9 @@
 // between. It opens doors in its way (loudly). It never stops muttering:
 // the Soundscape loops its broken phrases from its head position, growing
 // louder as it closes in.
+//
+// Under the Tesla gun's arc it is rooted to the spot, convulsing and
+// shrieking - and once the arc lets go it knows exactly where it came from.
 // ---------------------------------------------------------------------------
 
 #include "AI/Agent.h"
@@ -56,8 +59,10 @@ public:
     /// Where its voice comes from.
     glm::vec3 headPosition() const { return m_head; }
 
-    /// Appends the (world-lit) body.
-    void buildGeometry(EntityDrawList& list) const;
+    const CreatureRig& body() const override { return m_rig; }
+
+    /// Appends the (world-lit) body - or the vaporising one and its embers.
+    void buildGeometry(EntityDrawList& list, const glm::vec3& camRight, const glm::vec3& camUp) const;
 
 private:
     bool listen(const std::vector<NoiseEvent>& noises, const NavGrid& nav);

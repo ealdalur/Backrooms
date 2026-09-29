@@ -180,4 +180,33 @@ void addLimb(MeshData& mesh, const glm::vec3& a, const glm::vec3& b, float ra, f
     }
 }
 
+void addTorus(MeshData& mesh, const glm::mat4& transform, float majorRadius, float minorRadius, int ringSegments,
+              int tubeSegments, MaterialId material) {
+    const float invTile = 1.0f / materialInfo(material).tileSize;
+    const float mat = static_cast<float>(material);
+    const glm::mat3 normalMat(transform);
+    const float twoPi = 6.28318530718f;
+    const uint32_t base = static_cast<uint32_t>(mesh.vertices.size());
+    for (int i = 0; i <= ringSegments; ++i) {
+        const float a = twoPi * static_cast<float>(i) / static_cast<float>(ringSegments);
+        const glm::vec3 radial(std::cos(a), 0.0f, -std::sin(a)); // CCW seen from +Y
+        for (int j = 0; j <= tubeSegments; ++j) {
+            const float b = twoPi * static_cast<float>(j) / static_cast<float>(tubeSegments);
+            const glm::vec3 n = radial * std::cos(b) + glm::vec3(0.0f, std::sin(b), 0.0f);
+            const glm::vec3 p = radial * majorRadius + n * minorRadius;
+            mesh.vertices.push_back({glm::vec3(transform * glm::vec4(p, 1.0f)), glm::normalize(normalMat * n),
+                                     glm::vec2(a * majorRadius * invTile, b * minorRadius * invTile), mat, -1.0f});
+        }
+    }
+    const uint32_t row = static_cast<uint32_t>(tubeSegments + 1);
+    for (int i = 0; i < ringSegments; ++i) {
+        for (int j = 0; j < tubeSegments; ++j) {
+            const uint32_t a = base + static_cast<uint32_t>(i) * row + static_cast<uint32_t>(j);
+            const uint32_t b = a + row; // next ring position
+            // Outward-facing, counter-clockwise: ring direction x tube direction points out.
+            mesh.indices.insert(mesh.indices.end(), {a, b, b + 1, a, b + 1, a + 1});
+        }
+    }
+}
+
 } // namespace mesh

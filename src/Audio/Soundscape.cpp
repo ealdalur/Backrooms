@@ -42,6 +42,13 @@ constexpr float kHeartGain       = 0.55f;
 constexpr float kStingGain       = 0.8f;
 constexpr float kMonitorHumGain  = 0.05f;
 constexpr float kTerminalMusicGain = 0.8f; // DOOM's music from the terminal's little speaker
+constexpr float kHeldPan         = 0.18f;   ///< The gun is held right of centre.
+constexpr float kArcGain         = 0.55f;
+constexpr float kWandererPainGain  = 0.8f;
+constexpr float kWandererDeathGain = 0.85f;
+constexpr float kStalkerPainGain   = 0.75f;
+constexpr float kStalkerDeathGain  = 0.8f;
+constexpr float kVaporizeGain      = 0.7f;
 // The handset is held to the right ear, right against it.
 constexpr float kEarpieceGain    = 0.55f;
 constexpr float kEarpiecePan     = 0.35f;
@@ -105,6 +112,21 @@ void Soundscape::updateEntities(float dt, const EntityAudioState& state, const s
             break;
         case EntitySound::Type::WandererStep:
             playAt(SoundId::WandererStep, s.position, kWandererStepGain * s.intensity, 0.06f, 0.15f, generator);
+            break;
+        case EntitySound::Type::WandererPain:
+            playAt(SoundId::WandererPain, s.position, kWandererPainGain, 0.05f, 0.3f, generator);
+            break;
+        case EntitySound::Type::WandererDeath:
+            playAt(SoundId::WandererDeath, s.position, kWandererDeathGain, 0.02f, 0.35f, generator);
+            break;
+        case EntitySound::Type::StalkerPain:
+            playAt(SoundId::StalkerPain, s.position, kStalkerPainGain, 0.06f, 0.3f, generator);
+            break;
+        case EntitySound::Type::StalkerDeath:
+            playAt(SoundId::StalkerDeath, s.position, kStalkerDeathGain, 0.02f, 0.35f, generator);
+            break;
+        case EntitySound::Type::Vaporize:
+            playAt(SoundId::Vaporize, s.position, kVaporizeGain, 0.03f, 0.3f, generator);
             break;
         }
     }
@@ -195,6 +217,31 @@ void Soundscape::setTerminalMusic(bool on, const glm::vec3& at, const WorldGener
 void Soundscape::playSting() {
     if (!m_enabled) return;
     play2D(SoundId::CatchSting, kStingGain, 0.0f, 1.0f, 0.3f);
+}
+
+void Soundscape::playHeld(SoundId id, float gain, float pitch) {
+    if (!m_enabled) return;
+    play2D(id, gain, kHeldPan, pitch * (1.0f + m_rng.range(-0.03f, 0.03f)), 0.2f);
+}
+
+void Soundscape::setArcLoop(bool on, float gain, float pitch) {
+    if (!m_enabled) return;
+    if (!on) {
+        if (m_arc) m_audio.stop(m_arc, 0.08f);
+        m_arc = 0;
+        return;
+    }
+    if (!m_arc || !m_audio.isPlaying(m_arc)) {
+        VoiceParams p;
+        p.loop = true;
+        p.gain = 0.0f; // the mixer's smoothing fades it in
+        p.pan = kHeldPan;
+        p.reverbSend = 0.3f;                 // it fills the room
+        p.startOffset = m_rng.nextFloat();   // never the same crackle twice
+        m_arc = m_audio.play(m_bank.get(SoundId::TeslaArc, 0), p);
+    }
+    m_audio.setVoice(m_arc, kArcGain * gain, kHeldPan, 20000.0f);
+    m_audio.setVoicePitch(m_arc, pitch);
 }
 
 void Soundscape::setPhoneLine(SoundId tone, float toneGain, float lineGain) {

@@ -143,3 +143,36 @@ bool Physics::isFree(const AABB& box, const ICollisionWorld& world) const {
     }
     return true;
 }
+
+bool Physics::raycast(const glm::vec3& origin, const glm::vec3& dir, float maxDist, const ICollisionWorld& world,
+                      float& t) const {
+    const glm::vec3 end = origin + dir * maxDist;
+    m_scratch.clear();
+    world.gatherColliders(AABB(glm::min(origin, end), glm::max(origin, end)).expanded(0.01f), m_scratch);
+    float best = maxDist;
+    bool hit = false;
+    for (const AABB& box : m_scratch) {
+        // Slab test: the ray's entry / exit distances through each pair of planes.
+        float t0 = 0.0f, t1 = best;
+        bool miss = false;
+        for (int axis = 0; axis < 3 && !miss; ++axis) {
+            if (std::fabs(dir[axis]) < 1e-8f) {
+                miss = origin[axis] < box.min[axis] || origin[axis] > box.max[axis];
+                continue;
+            }
+            const float inv = 1.0f / dir[axis];
+            float a = (box.min[axis] - origin[axis]) * inv;
+            float b = (box.max[axis] - origin[axis]) * inv;
+            if (a > b) std::swap(a, b);
+            t0 = std::max(t0, a);
+            t1 = std::min(t1, b);
+            miss = t0 > t1;
+        }
+        if (!miss && t0 <= best) {
+            best = t0;
+            hit = true;
+        }
+    }
+    t = best;
+    return hit;
+}

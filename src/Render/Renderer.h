@@ -2,18 +2,24 @@
 // ---------------------------------------------------------------------------
 // Renderer.h
 // Top-level render subsystem. Owns shaders, procedural materials, shared
-// furniture/door/terminal/phone meshes, the clustered light grid, the entity
-// renderer, the terminal CRT overlay and the HDR post chain, and draws the
-// loaded world from the player's camera each frame.
+// furniture/door/terminal/phone/cabinet/gun-part meshes, the clustered light
+// grid, the entity renderer, the discharge renderer, the terminal CRT overlay
+// and the HDR post chain, and draws the loaded world from the player's
+// camera each frame - then the gun in the player's hands over it.
 // ---------------------------------------------------------------------------
 
+#include "Actors/FileCabinet.h"
 #include "Actors/Furniture.h"
 #include "Actors/Phone.h"
 #include "Actors/Terminal.h"
+#include "Actors/TeslaParts.h"
+#include "Gameplay/Lightning.h"
+#include "Gameplay/TeslaGun.h"
 #include "Render/Camera.h"
 #include "Render/EntityRenderer.h"
 #include "Render/Frustum.h"
 #include "Render/LightGrid.h"
+#include "Render/LightningRenderer.h"
 #include "Render/MaterialLibrary.h"
 #include "Render/Mesh.h"
 #include "Render/PostProcess.h"
@@ -36,8 +42,11 @@ struct RenderStats {
     size_t doorsDrawn = 0;
     size_t terminalsDrawn = 0;
     size_t phonesDrawn = 0;
+    size_t cabinetsDrawn = 0;
+    size_t itemsDrawn = 0;
     size_t lights = 0;
 };
+
 
 /// Everything that varies per frame besides the world itself.
 struct FrameParams {
@@ -49,6 +58,12 @@ struct FrameParams {
     float  fade = 0.0f;                                        ///< 0..1, fade to black.
     const std::vector<LightDisturbance>* lightDisturbances = nullptr;
     const EntityDrawList*                entities = nullptr;
+    // The Tesla gun.
+    const std::vector<Bolt>*          bolts = nullptr;     ///< Discharges and spark streaks.
+    const std::vector<Glow>*          glows = nullptr;     ///< Where arcs land.
+    Glow                              muzzleGlow{glm::vec3(0.0f), 0.0f, 0.0f, glm::vec3(0.0f)}; ///< Corona round the spike.
+    ArcLight                          arcLight;            ///< The light the discharge throws.
+    const std::vector<ViewModelPart>* viewModel = nullptr; ///< Drawn last, over everything (depth cleared).
 };
 
 class Renderer {
@@ -83,8 +98,9 @@ private:
     PostProcess      m_post;
     TextOverlay      m_hud;
     Frustum          m_frustum;
-    EntityRenderer   m_entities;
-    TerminalRenderer m_terminal;
+    EntityRenderer    m_entities;
+    LightningRenderer m_lightning;
+    TerminalRenderer  m_terminal;
 
     std::array<GpuMesh, kFurnitureTypeCount>                m_furnitureMeshes;
     std::array<std::vector<glm::mat4>, kFurnitureTypeCount> m_furnitureInstances;
@@ -98,6 +114,13 @@ private:
     std::array<std::vector<glm::mat4>, Phone::kKeyCount>    m_phoneKeyInstances;
     std::array<GpuMesh, kPhoneLampCount>                    m_phoneLampMeshes;   ///< One per lamp state.
     std::array<std::vector<glm::mat4>, kPhoneLampCount>     m_phoneLampInstances;
+    GpuMesh                                                 m_cabinetMesh;
+    std::vector<glm::mat4>                                  m_cabinetInstances;
+    std::array<GpuMesh, FileCabinet::kDrawerVariants>                m_drawerMeshes;
+    std::array<std::vector<glm::mat4>, FileCabinet::kDrawerVariants> m_drawerInstances;
+    std::array<GpuMesh, kPartMeshCount>                     m_partMeshes;
+    std::array<std::vector<glm::mat4>, kPartMeshCount>      m_partInstances;
+    std::vector<glm::mat4>                                  m_single; ///< Scratch: one view-model instance.
 
     uint64_t    m_lightTopology = ~0ull; ///< ChunkManager version the light grid was built for.
     int         m_width = 1;

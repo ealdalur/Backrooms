@@ -15,13 +15,24 @@
 //              keypad, a mouse pointer appears to press the keys and the
 //              message lamp (the digit keys and M work too), and the
 //              earpiece plays the line.
+//   Cabinet  - searching a filing cabinet: the camera leans over the open
+//              drawer, W / S (or the wheel) roll another drawer out, E (or a
+//              click) takes - or swaps for - the part inside, Esc closes it.
+//              Head down in a drawer, the player sees nothing else.
+//
+// Running, the player scavenges the four parts of the Tesla coil gun (from
+// desks, chairs and cabinet drawers; one of each type can be carried and a
+// duplicate is swapped in place), puts them together with R, and fires with
+// the left button or F (see Core/EngineTesla.cpp).
 //   Caught   - an entity reached the player: jumpscare, blackout, and the
 //              player wakes up somewhere else.
 // ---------------------------------------------------------------------------
 
 #include "AI/NoiseEvent.h"
+#include "Actors/TeslaParts.h"
 #include "Core/Config.h"
 #include "Core/Input.h"
+#include "Gameplay/Inventory.h"
 #include "Render/Camera.h"
 #include "Render/EntityRenderer.h"
 #include "World/WorldConstants.h"
@@ -38,6 +49,7 @@
 class ChunkManager;
 class EntityDirector;
 enum class EntityKind : uint8_t;
+class FileCabinet;
 class Phone;
 class PhoneCall;
 class Physics;
@@ -46,7 +58,9 @@ class Renderer;
 class Soundscape;
 class Terminal;
 class TerminalConsole;
+class TeslaGun;
 class WorldGenerator;
+struct ItemSite;
 struct TerminalContext;
 namespace doom { struct Controls; }
 
@@ -59,10 +73,18 @@ struct EngineOptions {
     /// Developer scene set up at start: stairs, stairs-top, stairs-sign, climb, descend,
     /// stalker, ambush, caught, wanderer, terminal, doom (DOOM on the nearest terminal,
     /// scripted play), phone (picks up the nearest phone), explore (a long scripted walk,
-    /// Stalker off; --type <n> picks the route), idle (only logs entity activity).
+    /// Stalker off; --type <n> picks the route), idle (only logs entity activity),
+    /// cabinet (searches the nearest cabinet holding a part; --type take: and takes it;
+    /// --type swap-persist: swaps a nearly flat part of the same type in, walks away until
+    /// the chunk unloads, comes back and checks the drawer),
+    /// part (walks up to the nearest part lying on a desk or chair),
+    /// assemble (all four parts, put together), tesla / tesla-stalker (the gun,
+    /// fired at the Wanderer / the Stalker; --type <percent> sets the battery).
     std::string demo;
     std::string demoInput;               ///< Typed into the terminal in the "terminal" scene, dialled in "phone" ('h' hangs up, 'M' messages; "upper" in "stairs-sign").
     bool        noEntities = false;      ///< Disable the anomalies.
+    int         windowWidth = cfg::kWindowWidth;   ///< Initial window size (logical pixels).
+    int         windowHeight = cfg::kWindowHeight;
     std::string dumpSoundsDir;           ///< If set: write every synthesised sound there as WAV.
 };
 
@@ -80,7 +102,7 @@ public:
     int run();
 
 private:
-    enum class GameState { Running, Paused, Terminal, Phone, Caught };
+    enum class GameState { Running, Paused, Terminal, Phone, Cabinet, Caught };
 
     /// A point of a scripted walk. `door` marks the approach to a door that
     /// has to be opened first (the edge it hangs in follows).
@@ -122,6 +144,30 @@ private:
     Phone* activePhone() const;
     /// The key (or Phone::kLampButton) of the phone in use under a window position (logical pixels), or -1.
     int phoneKeyAt(float windowX, float windowY) const;
+
+    // ---- Filing cabinets (Core/EngineTesla.cpp) ----------------------------------------------
+    void enterCabinet(FileCabinet& cabinet, int drawer);
+    void leaveCabinet();
+    void updateCabinet(float dt);
+    void handleCabinetKey(const SDL_KeyboardEvent& key);
+    FileCabinet* activeCabinet() const;
+    /// The part in the open drawer of the cabinet being searched, if any.
+    ItemSite* cabinetSite() const;
+
+    // ---- Parts and the Tesla gun (Core/EngineTesla.cpp) --------------------------------------
+    /// Takes the part at a site (swapping in the held one of its type).
+    void takeItem(ItemSite& site);
+    /// Starts putting the gun together (all four parts held). False if it cannot.
+    bool beginAssembly();
+    /// "TAKE BATTERY PACK 74%" / "SWAP ..." for a site's part.
+    std::string itemPrompt(const ItemSite& site) const;
+    /// Assembly, raising / lowering the gun, firing, and their sounds and noise.
+    void updateGun(float dt);
+    /// Gun space -> world, in the player's hands for camera `cam` (raised,
+    /// dipped for a swap, shaking while it fires).
+    glm::mat4 gunTransform(const Camera& cam) const;
+    void buildViewModel(const Camera& cam);
+    void drawInventory();
 
     // ---- Entities / noise -----------------------------------------------------------------
     void collectNoise();
@@ -197,6 +243,27 @@ private:
     float       m_phoneNoiseTimer = 0.0f; ///< Until the howler next carries through the Backrooms.
     SDL_Cursor* m_pointerCursor = nullptr; ///< Hand shown over a key.
 
+    // Filing cabinet being searched.
+    uint64_t  m_cabinetId = 0;
+    int       m_cabinetDrawer = 2;     ///< Drawer rolled out (0 = bottom).
+    float     m_cabinetBlend = 0.0f;   ///< 0 = player view, 1 = leaning over the drawer.
+    glm::vec3 m_cabinetEye{0.0f};      ///< Current close-up (glides between drawers).
+    float     m_cabinetYaw = 0.0f;
+    float     m_cabinetPitch = 0.0f;
+    int       m_cabinetMove = 0;       ///< Drawers to move up (+) / down (-) at the next update.
+    bool      m_cabinetUse = false;    ///< Take the part at the next update.
+    bool      m_cabinetLeave = false;  ///< Close it at the next update.
+
+    // The Tesla gun.
+    Inventory                  m_inventory;
+    std::unique_ptr<TeslaGun>  m_gun;
+    float  m_assembleTimer = -1.0f;    ///< >= 0 while the parts are being put together.
+    int    m_assembleStep = 0;         ///< Parts seated so far.
+    float  m_swapDip = 0.0f;           ///< > 0 while the gun dips out of view for a hot swap.
+    float  m_gunRaise = 0.0f;          ///< 0 = lowered out of view, 1 = in the hands.
+    bool   m_demoTrigger = false;      ///< Developer scenes: the trigger held.
+    std::vector<ViewModelPart> m_viewModel;
+
     // Caught sequence.
     glm::vec3 m_caughtFace{0.0f};     ///< What the camera is wrenched towards.
     float     m_caughtTimer = 0.0f;
@@ -228,4 +295,7 @@ private:
     int    m_demoStep = 0;
     std::string m_lastEntityStates;
     std::string m_lastPhoneLog;              ///< Last logged line state ("phone" scene).
+    uint64_t    m_demoCabinet = 0;           ///< Cabinet searched in the "cabinet" scene...
+    int         m_demoDrawer = 0;            ///< ...its drawer...
+    glm::vec3   m_demoReturn{0.0f};          ///< ...and where the player stood.
 };

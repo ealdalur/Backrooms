@@ -149,6 +149,31 @@ bool Wanderer::handleDoors(float dt, const NavGrid& nav, ChunkManager& chunks, c
 bool Wanderer::update(float dt, const PlayerView& player, const NavGrid& nav, ChunkManager& chunks,
                       const Physics& physics, const std::vector<NoiseEvent>& noises, std::vector<EntitySound>& sounds) {
     if (!m_active) return false;
+    const VitalSigns vitals = updateVitals(dt);
+    if (vitals.pain) sounds.push_back({EntitySound::Type::WandererPain, m_head, 1.0f});
+    if (vitals.died) {
+        sounds.push_back({EntitySound::Type::WandererDeath, m_head, 1.0f});
+        sounds.push_back({EntitySound::Type::Vaporize, m_feet + glm::vec3(0.0f, 1.2f, 0.0f), 1.0f});
+    }
+    if (shocked() || dying()) {
+        // Current running through it: rooted to the spot, arms thrown up, every
+        // limb jerking. When it lets go, it knows where the pain came from.
+        integrate(dt, glm::vec3(0.0f), 14.0f, chunks, physics);
+        if (!dying()) {
+            m_alert = 1.0f;
+            m_target = glm::vec3(player.feet.x, world::levelFloorY(m_level), player.feet.z);
+            m_state = State::Hunting;
+            m_replan = 0.0f;
+            m_listenPause = 0.0f;
+        }
+        m_animTime += dt;
+        m_reach += (1.0f - m_reach) * (1.0f - std::exp(-6.0f * dt));
+        m_stride *= std::exp(-8.0f * dt);
+        pose();
+        convulse(m_rig);
+        convulse(m_mouth);
+        return false;
+    }
     listen(noises, nav);
     m_alert = std::max(0.0f, m_alert - 0.04f * dt);
 
@@ -316,8 +341,18 @@ void Wanderer::pose() {
     }
 }
 
-void Wanderer::buildGeometry(EntityDrawList& list) const {
+void Wanderer::buildGeometry(EntityDrawList& list, const glm::vec3& camRight, const glm::vec3& camUp) const {
     if (!m_active) return;
+    if (dying()) {
+        EntityDrawList::Dissolving& d = list.litDissolve;
+        m_rig.appendMesh(d.mesh, MaterialId::Flesh, 10);
+        m_mouth.appendMesh(d.mesh, MaterialId::DarkPlastic, 8);
+        d.amount = dissolve();
+        d.feet = m_feet;
+        d.height = 2.3f;
+        buildEmbers(list, camRight, camUp);
+        return;
+    }
     m_rig.appendMesh(list.lit, MaterialId::Flesh, 10);
     m_mouth.appendMesh(list.lit, MaterialId::DarkPlastic, 8);
 }
