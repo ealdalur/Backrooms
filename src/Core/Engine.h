@@ -12,8 +12,9 @@
 //              keyboard input goes to the console, and the world keeps
 //              running around the player (the Stalker loves this).
 //   Phone    - holding a desk phone's handset: the camera leans over its
-//              keypad, a mouse pointer appears to press the keys (the digit
-//              keys work too), and the earpiece plays the line.
+//              keypad, a mouse pointer appears to press the keys and the
+//              message lamp (the digit keys and M work too), and the
+//              earpiece plays the line.
 //   Caught   - an entity reached the player: jumpscare, blackout, and the
 //              player wakes up somewhere else.
 // ---------------------------------------------------------------------------
@@ -60,7 +61,7 @@ struct EngineOptions {
     /// scripted play), phone (picks up the nearest phone), explore (a long scripted walk,
     /// Stalker off; --type <n> picks the route), idle (only logs entity activity).
     std::string demo;
-    std::string demoInput;               ///< Typed into the terminal in the "terminal" scene, dialled in "phone" ('h' hangs up; "upper" in "stairs-sign").
+    std::string demoInput;               ///< Typed into the terminal in the "terminal" scene, dialled in "phone" ('h' hangs up, 'M' messages; "upper" in "stairs-sign").
     bool        noEntities = false;      ///< Disable the anomalies.
     std::string dumpSoundsDir;           ///< If set: write every synthesised sound there as WAV.
 };
@@ -119,7 +120,7 @@ private:
     void updatePhone(float dt);
     void handlePhoneKey(const SDL_KeyboardEvent& key);
     Phone* activePhone() const;
-    /// The key of the phone in use under a window position (logical pixels), or -1.
+    /// The key (or Phone::kLampButton) of the phone in use under a window position (logical pixels), or -1.
     int phoneKeyAt(float windowX, float windowY) const;
 
     // ---- Entities / noise -----------------------------------------------------------------
@@ -189,7 +190,7 @@ private:
     glm::vec3   m_phoneEye{0.0f};
     float       m_phoneYaw = 0.0f;
     float       m_phonePitch = 0.0f;
-    std::string m_phoneKeys;           ///< Keys pressed since the last update.
+    std::string m_phoneKeys;           ///< Keys pressed since the last update (Phone::kMessageChar: the lamp).
     bool        m_phoneHangUp = false; ///< Hang up at the next update.
     int         m_phoneHover = -1;     ///< Key under the mouse pointer.
     int         m_phonePickups = 0;

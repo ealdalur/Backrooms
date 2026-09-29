@@ -96,6 +96,8 @@ private:
     std::array<std::vector<glm::mat4>, kPhoneLookCount>     m_phoneInstances;
     std::array<GpuMesh, Phone::kKeyCount>                   m_phoneKeyMeshes;    ///< One per key: each carries its own label.
     std::array<std::vector<glm::mat4>, Phone::kKeyCount>    m_phoneKeyInstances;
+    std::array<GpuMesh, kPhoneLampCount>                    m_phoneLampMeshes;   ///< One per lamp state.
+    std::array<std::vector<glm::mat4>, kPhoneLampCount>     m_phoneLampInstances;
 
     uint64_t    m_lightTopology = ~0ull; ///< ChunkManager version the light grid was built for.
     int         m_width = 1;

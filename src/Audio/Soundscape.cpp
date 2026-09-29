@@ -232,10 +232,15 @@ void Soundscape::playEarpiece(SoundId id, int variant, float gain, float delay) 
     if (h) m_earpiece.push_back(h);
 }
 
-void Soundscape::stopEarpiece() {
+void Soundscape::stopEarpieceSounds() {
     if (!m_enabled) return;
     for (VoiceHandle h : m_earpiece) m_audio.stop(h, 0.01f);
     m_earpiece.clear();
+}
+
+void Soundscape::stopEarpiece() {
+    if (!m_enabled) return;
+    stopEarpieceSounds();
     if (m_phoneLine) m_audio.stop(m_phoneLine, 0.01f);
     if (m_phoneTone) m_audio.stop(m_phoneTone, 0.01f);
     m_phoneLine = m_phoneTone = 0;

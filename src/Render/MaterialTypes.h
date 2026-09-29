@@ -61,7 +61,7 @@ inline const MaterialInfo& materialInfo(MaterialId id) {
         {"CrtScreen",     1.00f, 0.90f, 120.0f, 0.0000f, 2.6f},
         {"Flesh",         0.50f, 0.35f,  20.0f, 0.0015f, 0.0f},
         {"StairSign",     1.00f, 0.40f,  60.0f, 0.0000f, 3.2f},
-        {"PhoneKeys",     1.00f, 0.50f,  48.0f, 0.0003f, 4.0f},
+        {"PhoneKeys",     1.00f, 0.25f,  48.0f, 0.0003f, 10.0f},
     };
     static_assert(kMaterialCount <= kMaxMaterials, "raise kMaxMaterials and the shader array");
     return kTable[static_cast<int>(id)];

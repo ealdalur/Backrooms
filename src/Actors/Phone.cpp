@@ -36,6 +36,11 @@ constexpr float kPressTime = 0.14f;
 constexpr float kCradleZ = -0.078f;
 constexpr float kCupX = 0.080f;
 
+// The message lamp (a button) in front of the cradle, and its "MSG" label.
+constexpr float kLampX = 0.080f, kLampZ = -0.040f;
+constexpr float kLampHalfW = 0.010f, kLampHalfD = 0.007f;
+constexpr float kLampTop = 0.004f;
+
 // Texture atlas of the PhoneKeys material: 4 x 4 cells; keys in columns 0-2,
 // the lamp and the number card in column 3.
 constexpr float kCell = 0.25f;
@@ -163,7 +168,7 @@ void addCoiledCord(MeshData& m, const glm::vec3 path[4], float pitch, MaterialId
 
 } // namespace
 
-Phone::Phone(uint64_t id, const glm::mat4& model) : m_id(id), m_model(model) {}
+Phone::Phone(uint64_t id, const glm::mat4& model) : m_id(id), m_model(model), m_messageWaiting(hasMessage()) {}
 
 PhoneLook Phone::look() const {
     const int base = charcoal() ? static_cast<int>(PhoneLook::Charcoal) : static_cast<int>(PhoneLook::Beige);
@@ -214,14 +219,9 @@ MeshData Phone::buildMesh(PhoneLook look) {
         }
     }
 
-    // Message lamp in front of the cradle. The off-hook look shifts its UVs by
-    // +2 in u: the shader lights it steadily ("line in use") instead of blinking.
-    box(m, I, {0.070f, hump, -0.047f}, {0.090f, hump + 0.004f, -0.033f}, dark, mesh::FaceSides);
-    {
-        const float du = offHook ? 2.0f : 0.0f;
-        atlasQuad(m, I, 0.070f, 0.090f, -0.047f, -0.033f, hump + 0.004f, {3 * kCell + 0.02f + du, 3 * kCell + 0.02f},
-                  {4 * kCell - 0.02f + du, 4 * kCell - 0.02f});
-    }
+    // The "MSG" label beside the message lamp (the lamp is its own mesh).
+    atlasQuad(m, I, 0.036f, 0.064f, kLampZ - 0.006f, kLampZ + 0.006f, hump + 0.0006f,
+              {3 * kCell + 0.004f, 1 * kCell + 0.004f}, {4 * kCell - 0.004f, 2 * kCell - 0.004f});
 
     // ---- Handset: earpiece and mouthpiece cups joined by an arched grip ----------------
     if (!offHook) {
@@ -262,13 +262,26 @@ MeshData Phone::buildKeyMesh(int key) {
     return m;
 }
 
+MeshData Phone::buildLampMesh(PhoneLamp lamp) {
+    // A lens button: dark sides reaching down into the hump (no gap when it is
+    // pressed), the red lens on top. The lens UVs carry the state for the
+    // shader: +2 in u lights it steadily, +4 makes it blink.
+    MeshData m;
+    const glm::mat4 I(1.0f);
+    box(m, I, {-kLampHalfW, -0.004f, -kLampHalfD}, {kLampHalfW, kLampTop, kLampHalfD}, MaterialId::DarkPlastic, mesh::FaceSides);
+    const float du = lamp == PhoneLamp::Lit ? 2.0f : lamp == PhoneLamp::Blinking ? 4.0f : 0.0f;
+    atlasQuad(m, I, -kLampHalfW, kLampHalfW, -kLampHalfD, kLampHalfD, kLampTop, {3 * kCell + 0.02f + du, 3 * kCell + 0.02f},
+              {4 * kCell - 0.02f + du, 4 * kCell - 0.02f});
+    return m;
+}
+
 const std::vector<AABB>& Phone::localColliders() {
     static const std::vector<AABB> kColliders = {AABB({-kHalfWidth, 0.0f, -0.12f}, {kHalfWidth, 0.11f, 0.12f})};
     return kColliders;
 }
 
 void Phone::press(int key) {
-    if (key < 0 || key >= kKeyCount) return;
+    if (key < 0 || key > kLampButton) return;
     m_pressedKey = key;
     m_pressTimer = kPressTime;
 }
@@ -290,6 +303,19 @@ void Phone::keyHitCorners(int key, glm::vec3 out[4]) const {
     const glm::vec3 local[4] = {{c.x - hx, kKeyTop, c.z + hs}, {c.x + hx, kKeyTop, c.z + hs},
                                 {c.x + hx, kKeyTop, c.z - hs}, {c.x - hx, kKeyTop, c.z - hs}};
     for (int i = 0; i < 4; ++i) out[i] = glm::vec3(toWorld * glm::vec4(local[i], 1.0f));
+}
+
+glm::mat4 Phone::lampMatrix() const {
+    const float y = kProfile[kDeckHigh].y - (m_pressedKey == kLampButton ? kKeyTravel : 0.0f);
+    return m_model * glm::translate(glm::mat4(1.0f), glm::vec3(kLampX, y, kLampZ));
+}
+
+void Phone::lampHitCorners(glm::vec3 out[4]) const {
+    const float y = kProfile[kDeckHigh].y + kLampTop;
+    const float hx = kLampHalfW + 0.004f, hz = kLampHalfD + 0.004f; // a little forgiving
+    const glm::vec3 local[4] = {{kLampX - hx, y, kLampZ + hz}, {kLampX + hx, y, kLampZ + hz},
+                                {kLampX + hx, y, kLampZ - hz}, {kLampX - hx, y, kLampZ - hz}};
+    for (int i = 0; i < 4; ++i) out[i] = glm::vec3(m_model * glm::vec4(local[i], 1.0f));
 }
 
 glm::vec3 Phone::center() const { return glm::vec3(m_model * glm::vec4(0.0f, 0.06f, 0.0f, 1.0f)); }

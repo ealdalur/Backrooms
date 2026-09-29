@@ -84,6 +84,8 @@ enum class SoundId : uint8_t {
     PhoneVoice,       ///< Voices on the line; variant = phonesfx::Voice.
     PhoneBreath,      ///< Someone breathing into a mouthpiece.
     PhoneJenny,       ///< 867-5309: Jenny picks up, and she is sick of it.
+    PhoneBeep,        ///< Voicemail signals; variant = phonesfx::Beep.
+    PhoneMessage,     ///< Messages left in voicemail; variant = phonesfx::Message.
     Count
 };
 

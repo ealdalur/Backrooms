@@ -59,6 +59,9 @@ bool Renderer::init(int width, int height) {
     for (int k = 0; k < Phone::kKeyCount; ++k) {
         m_phoneKeyMeshes[static_cast<size_t>(k)].upload(Phone::buildKeyMesh(k), true);
     }
+    for (int i = 0; i < kPhoneLampCount; ++i) {
+        m_phoneLampMeshes[static_cast<size_t>(i)].upload(Phone::buildLampMesh(static_cast<PhoneLamp>(i)), true);
+    }
 
     // Constant world shader state.
     m_worldShader.use();
@@ -139,6 +142,7 @@ void Renderer::render(const FrameParams& frame, ChunkManager& chunks, const Worl
     for (auto& list : m_terminalInstances) list.clear();
     for (auto& list : m_phoneInstances) list.clear();
     for (auto& list : m_phoneKeyInstances) list.clear();
+    for (auto& list : m_phoneLampInstances) list.clear();
     m_doorInstances.clear();
 
     for (const Chunk* chunk : ordered) {
@@ -157,6 +161,7 @@ void Renderer::render(const FrameParams& frame, ChunkManager& chunks, const Worl
         for (const Phone& p : chunk->phones()) {
             m_phoneInstances[static_cast<size_t>(p.look())].push_back(p.modelMatrix());
             for (int k = 0; k < Phone::kKeyCount; ++k) m_phoneKeyInstances[static_cast<size_t>(k)].push_back(p.keyMatrix(k));
+            m_phoneLampInstances[static_cast<size_t>(p.lamp())].push_back(p.lampMatrix());
         }
     }
 
@@ -183,6 +188,10 @@ void Renderer::render(const FrameParams& frame, ChunkManager& chunks, const Worl
     for (size_t k = 0; k < m_phoneKeyMeshes.size(); ++k) {
         m_phoneKeyMeshes[k].setInstances(m_phoneKeyInstances[k]);
         m_phoneKeyMeshes[k].drawInstanced();
+    }
+    for (size_t l = 0; l < m_phoneLampMeshes.size(); ++l) {
+        m_phoneLampMeshes[l].setInstances(m_phoneLampInstances[l]);
+        m_phoneLampMeshes[l].drawInstanced();
     }
 
     // ---- Entities: lit bodies through the world shader, then the shadow creature ----------

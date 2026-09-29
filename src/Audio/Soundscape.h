@@ -86,6 +86,8 @@ public:
     void playEarpiece(SoundId id, int variant, float gain, float delay);
     /// Hung up: everything in the earpiece stops at once.
     void stopEarpiece();
+    /// Cuts off the earpiece's one-shots (speech, beeps), leaving the line and its tone.
+    void stopEarpieceSounds();
 
     /// The synthesised sounds (lengths, variant counts).
     const SoundBank& bank() const { return m_bank; }

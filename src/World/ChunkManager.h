@@ -5,7 +5,7 @@
 // player: a full radius on the player's storey and a small one on the
 // storeys directly above and below (enough that a stairwell, and whatever
 // is visible through its entrances, is always loaded on both ends). Keeps
-// door and terminal states alive across unload/reload, answers collision
+// door, terminal and phone (heard message) states alive across unload/reload, answers collision
 // queries and finds interaction targets.
 // ---------------------------------------------------------------------------
 
@@ -92,6 +92,7 @@ private:
     std::unordered_map<ChunkCoord, std::unique_ptr<Chunk>, ChunkCoordHash> m_chunks;
     std::unordered_map<uint64_t, int>  m_doorMemory;     ///< Door id -> persisted state.
     std::unordered_map<uint64_t, bool> m_terminalMemory; ///< Terminal id -> powered.
+    std::unordered_map<uint64_t, bool> m_phoneMemory;    ///< Phone id -> message still waiting.
     std::vector<DoorEvent> m_doorEvents;
     uint64_t m_version = 0;
     size_t m_pending = 0;

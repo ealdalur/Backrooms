@@ -22,6 +22,11 @@
 // Some recordings are not recordings. And they notice the world: when the
 // Stalker is behind the player, or the Wanderer is close, they say so.
 //
+// Some phones have a message waiting (their lamp blinks). The message key -
+// the lamp itself - drops whatever the line is doing and calls the voicemail
+// system: "You have one new message", a beep, someone in distress, two beeps,
+// "End of message", and the dial tone again. Once it has played, it is gone.
+//
 // One number does get through: 867-5309. Jenny has been stuck in here for
 // years, everyone keeps calling, and she has had enough. She hangs up on
 // the player, which ends the call (hungUp).
@@ -44,7 +49,14 @@ struct PhoneContext {
     float wandererDistance = -1.0f;  ///< < 0 when the Wanderer is not around.
 };
 
-/// A sound the call asks for.
+/// The phone's voicemail box.
+struct PhoneMailbox {
+    int  message = -1;        ///< The phonesfx::Message waiting, or -1 for none.
+    bool miscounts = false;   ///< The system announces "nine hundred ninety-nine new messages".
+};
+
+/// A sound the call asks for. SoundId::Count in the earpiece means: silence
+/// everything still playing there (the line has moved on).
 struct PhoneSoundEvent {
     SoundId id;
     int     variant;  ///< < 0: any.
@@ -58,10 +70,17 @@ public:
     /// @param bank        For the length of every recording and voice.
     /// @param lineSeed    Decides what each number does (fixed per world).
     /// @param sessionSeed Varies everything else from one pick-up to the next.
-    PhoneCall(const SoundBank& bank, uint64_t lineSeed, uint64_t sessionSeed);
+    /// @param mailbox     What the phone's voicemail box holds.
+    PhoneCall(const SoundBank& bank, uint64_t lineSeed, uint64_t sessionSeed, const PhoneMailbox& mailbox);
 
     /// A keypad key ("123456789*0#"), from the keyboard or a click.
     void press(char key);
+    /// The message key (the lamp): calls the voicemail system.
+    void pressMessage();
+    /// The waiting message is being played back (its lamp burns steadily)...
+    bool messagePlaying() const;
+    /// ...and has now been heard to the end (its lamp goes out for good).
+    bool messageHeard() const { return m_messageHeard; }
 
     void update(float dt, const PhoneContext& ctx);
 
@@ -76,9 +95,9 @@ public:
 
     /// The words being heard on the line (empty if none), their visibility
     /// (0..1), and whether they come from one of the voices rather than the operator.
-    const std::string& caption() const { return m_caption; }
+    const std::string& caption() const;
     float captionAlpha() const;
-    bool captionAnomalous() const { return m_captionAnomalous; }
+    bool captionAnomalous() const;
 
     /// Returns and clears the sounds requested since the last call.
     std::vector<PhoneSoundEvent> takeSounds();
@@ -97,6 +116,7 @@ private:
         Ringing,
         Answered,  ///< Picked up at the other end - by one of them.
         Jenny,     ///< Picked up at 867-5309.
+        Voicemail, ///< Listening to the voicemail system.
         Busy,
         Recording, ///< Special information tones and / or an announcement.
         Dead,      ///< Nothing at all.
@@ -110,6 +130,8 @@ private:
     /// the sound). Returns its end time.
     float speak(SoundId id, int variant, float gain, float delay, const std::string& caption, bool anomalous,
                 float captionDelay = 0.0f);
+    /// Silences the earpiece and forgets its speech: the line has moved on.
+    void cancelEarpiece();
     /// One of the voices breaking through: interference, then the voice, the tone ducking under both.
     void phantom(phonesfx::Voice v, float delay = 0.0f);
     /// Plays an announcement `repeats` times (optionally after the SIT tones), then enters `next`.
@@ -121,6 +143,14 @@ private:
     bool numberComplete() const;
     void updatePhantoms(float dt, const PhoneContext& ctx);
     bool speaking() const { return m_clock < m_speechUntil; }
+
+    struct Caption {
+        std::string text;
+        float start, end;
+        bool  anomalous;
+    };
+    /// The caption on screen now (the latest to have started), or null.
+    const Caption* currentCaption() const;
 
     const SoundBank& m_bank;
     uint64_t m_lineSeed;
@@ -141,6 +171,10 @@ private:
     bool   m_jenny = false;       ///< This call is to 867-5309 (nothing else gets on the line).
     bool   m_hungUp = false;
 
+    PhoneMailbox m_mailbox;
+    float  m_messageEnd = 0.0f;   ///< Clock time the message being played back ends.
+    bool   m_messageHeard = false;
+
     phonesfx::Announcement m_announcement = phonesfx::Announcement::NotInService;
     bool   m_sit = false;
     int    m_repeatsLeft = 0;
@@ -153,9 +187,7 @@ private:
     float  m_warnCooldown = 0.0f;
     int    m_lastVoice = -1;
 
-    std::string m_caption;
-    float  m_captionStart = 0.0f, m_captionEnd = 0.0f;
-    bool   m_captionAnomalous = false;
+    std::vector<Caption> m_captions; ///< Lines scheduled or still showing, in start order.
 
     std::vector<PhoneSoundEvent> m_sounds;
 };

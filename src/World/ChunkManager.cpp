@@ -20,7 +20,7 @@ int ChunkManager::radiusFor(int levelOffset) const {
 
 void ChunkManager::loadChunk(const ChunkCoord& c) {
     auto chunk = std::make_unique<Chunk>(m_generator.generate(c));
-    // Restore doors the player opened and terminals switched on / off here.
+    // Restore doors the player opened, terminals switched on / off and messages heard here.
     for (Door& d : chunk->doors()) {
         auto it = m_doorMemory.find(d.id());
         if (it != m_doorMemory.end()) d.restoreState(it->second);
@@ -28,6 +28,10 @@ void ChunkManager::loadChunk(const ChunkCoord& c) {
     for (Terminal& t : chunk->terminals()) {
         auto it = m_terminalMemory.find(t.id());
         if (it != m_terminalMemory.end()) t.setPowered(it->second);
+    }
+    for (Phone& p : chunk->phones()) {
+        auto it = m_phoneMemory.find(p.id());
+        if (it != m_phoneMemory.end()) p.setMessageWaiting(it->second);
     }
     m_chunks.emplace(c, std::move(chunk));
     ++m_version;
@@ -40,6 +44,9 @@ void ChunkManager::rememberState(const Chunk& chunk) {
         else        m_doorMemory.erase(d.id());
     }
     for (const Terminal& t : chunk.terminals()) m_terminalMemory[t.id()] = t.powered();
+    for (const Phone& p : chunk.phones()) {
+        if (p.hasMessage()) m_phoneMemory[p.id()] = p.messageWaiting();
+    }
 }
 
 void ChunkManager::update(const glm::vec3& focus, int focusLevel, float dt, const AABB& playerBox, bool loadEverything) {

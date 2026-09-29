@@ -15,6 +15,9 @@
 //     and bursts of interference.
 //   * The handset at the desk: keys, lifting it off the cradle, and dropping
 //     it back into the cradle (a pitchless clunk and click).
+//   * Voicemail: the system's prompts (the operator's voice again), its beeps,
+//     and the messages left in it - people in distress, recorded close to the
+//     mouthpiece on a hissing, wobbling tape.
 //   * Jenny, at 867-5309: a young woman who has been trapped in here for
 //     years and is sick of the calls - picked up, ranted and slammed down.
 // Registered in SoundBank under the SoundId::Phone* ids.
@@ -43,6 +46,10 @@ enum class Announcement : uint8_t {
     HangUp,          ///< Left off the hook: "If you'd like to make a call..."
     NoOneLeft,       ///< (Not a real recording.) "There is no one left to call."
     StayOnLine,      ///< (Nor this.) "Please stay on the line."
+    OneNewMessage,   ///< Voicemail: "You have one new message."
+    NoNewMessages,   ///< Voicemail: "You have no new messages."
+    EndOfMessage,    ///< Voicemail: "End of message."
+    ManyMessages,    ///< (Wrong again.) "You have nine hundred ninety-nine new messages."
     Count
 };
 inline constexpr int kAnnouncementCount = static_cast<int>(Announcement::Count);
@@ -68,6 +75,28 @@ enum class Voice : uint8_t {
 inline constexpr int kVoiceCount = static_cast<int>(Voice::Count);
 const Line& voice(Voice v);
 
+/// Messages waiting in voicemail boxes, in the order of the PhoneMessage variants.
+enum class Message : uint8_t {
+    HowDidIGetHere, ///< A woman, crying.
+    NeverEnds,      ///< A man, frantic.
+    HelpMe,         ///< A child.
+    DontLookForMe,  ///< An old man, worn out.
+    DontPickUp,     ///< A whisper.
+    WhatLevel,      ///< A woman who can hear something coming.
+    Count
+};
+inline constexpr int kMessageCount = static_cast<int>(Message::Count);
+/// What a message says (for captions).
+const char* messageText(Message m);
+
+/// The voicemail system's beeps, in the order of the PhoneBeep variants.
+enum class Beep : uint8_t {
+    MessageStart, ///< Before a message plays.
+    MessageEnd,   ///< Two short beeps after it.
+    LineClick,    ///< The line switching over to the voicemail system.
+    Count
+};
+
 /// The one number that gets through (an early-80s hit's refrain).
 inline constexpr const char* kJennyNumber = "8675309";
 /// Jenny's answer (the PhoneJenny sound) and when, into it, she starts talking.
@@ -91,5 +120,7 @@ std::vector<Sound> makeStatic(uint64_t seed);
 std::vector<Sound> makeVoice(uint64_t seed);
 std::vector<Sound> makeBreath(uint64_t seed);
 std::vector<Sound> makeJenny(uint64_t seed);
+std::vector<Sound> makeBeep(uint64_t seed);
+std::vector<Sound> makeMessage(uint64_t seed);
 
 } // namespace phonesfx

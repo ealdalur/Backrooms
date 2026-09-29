@@ -10,6 +10,7 @@
 namespace {
 
 using phonesfx::Announcement;
+using phonesfx::Beep;
 using phonesfx::Voice;
 
 constexpr char  kKeys[] = "123456789*0#"; ///< Keypad order (the DTMF variants).
@@ -44,8 +45,8 @@ Voice pick(const Voice (&list)[N], rnd::Rng& rng, int avoid) {
 
 } // namespace
 
-PhoneCall::PhoneCall(const SoundBank& bank, uint64_t lineSeed, uint64_t sessionSeed)
-    : m_bank(bank), m_lineSeed(lineSeed), m_rng(sessionSeed) {
+PhoneCall::PhoneCall(const SoundBank& bank, uint64_t lineSeed, uint64_t sessionSeed, const PhoneMailbox& mailbox)
+    : m_bank(bank), m_lineSeed(lineSeed), m_rng(sessionSeed), m_mailbox(mailbox) {
     m_phantomTimer = m_rng.range(6.0f, 14.0f);
 }
 
@@ -71,12 +72,54 @@ float PhoneCall::speak(SoundId id, int variant, float gain, float delay, const s
     const float start = m_clock + delay;
     const float end = start + m_bank.duration(id, variant);
     m_speechUntil = std::max(m_speechUntil, end);
-    m_caption = caption;
-    m_captionStart = start + captionDelay;
-    m_captionEnd = end;
-    m_captionAnomalous = anomalous;
+    // Keep the queue in start order; drop lines long gone.
+    m_captions.erase(std::remove_if(m_captions.begin(), m_captions.end(),
+                                    [this](const Caption& c) { return c.end + 1.0f < m_clock; }),
+                     m_captions.end());
+    const Caption c{caption, start + captionDelay, end, anomalous};
+    m_captions.insert(std::upper_bound(m_captions.begin(), m_captions.end(), c,
+                                       [](const Caption& a, const Caption& b) { return a.start < b.start; }),
+                      c);
     return end;
 }
+
+void PhoneCall::cancelEarpiece() {
+    sound(SoundId::Count, -1, 0.0f);
+    m_captions.clear();
+    m_speechUntil = m_duckUntil = m_clock;
+}
+
+void PhoneCall::pressMessage() {
+    sound(SoundId::PhoneKey, -1, 0.35f, 0.0f, false);
+    if (m_state == State::Lifting || m_state == State::Voicemail || m_state == State::Jenny) return;
+    // The feature key drops whatever the line was doing and calls the system.
+    cancelEarpiece();
+    enter(State::Voicemail);
+    float at = m_clock + 0.25f;
+    sound(SoundId::PhoneBeep, static_cast<int>(Beep::LineClick), 0.6f, at - m_clock);
+    at += 0.45f;
+    auto say = [&](Announcement a) {
+        return speak(SoundId::PhoneOperator, static_cast<int>(a), 0.8f, at - m_clock, phonesfx::announcement(a).text, false);
+    };
+    if (m_mailbox.message < 0) {
+        at = say(Announcement::NoNewMessages);
+    } else {
+        at = say(m_mailbox.miscounts ? Announcement::ManyMessages : Announcement::OneNewMessage) + 0.35f;
+        sound(SoundId::PhoneBeep, static_cast<int>(Beep::MessageStart), 0.5f, at - m_clock);
+        at += m_bank.duration(SoundId::PhoneBeep, static_cast<int>(Beep::MessageStart)) + 0.3f;
+        const auto m = static_cast<phonesfx::Message>(m_mailbox.message);
+        at = speak(SoundId::PhoneMessage, m_mailbox.message, 0.85f, at - m_clock, phonesfx::messageText(m), true) + 0.3f;
+        sound(SoundId::PhoneBeep, static_cast<int>(Beep::MessageEnd), 0.5f, at - m_clock);
+        at += m_bank.duration(SoundId::PhoneBeep, static_cast<int>(Beep::MessageEnd));
+        m_messageEnd = at; // the lamp goes out as the playback ends
+        at += 0.3f;
+        at = say(Announcement::EndOfMessage);
+    }
+    m_wait = at + 0.8f - m_clock; // then back to a dial tone
+    m_speechUntil = std::max(m_speechUntil, at);
+}
+
+bool PhoneCall::messagePlaying() const { return m_state == State::Voicemail && m_mailbox.message >= 0; }
 
 void PhoneCall::phantom(Voice v, float delay) {
     // Interference forces its way in first; the voice surfaces out of it.
@@ -261,6 +304,13 @@ void PhoneCall::update(float dt, const PhoneContext& ctx) {
             m_hungUp = true;
         }
         break;
+    case State::Voicemail:
+        if (m_mailbox.message >= 0 && m_clock >= m_messageEnd) { // heard: the box is empty now
+            m_mailbox.message = -1;
+            m_messageHeard = true;
+        }
+        if (m_stateTime > m_wait) enter(State::DialTone);
+        break;
     case State::Busy:
         if (m_stateTime > 18.0f) record(Announcement::HangUp, false, 1, State::Howler);
         break;
@@ -337,9 +387,29 @@ float PhoneCall::lineGain() const {
     return g;
 }
 
+const PhoneCall::Caption* PhoneCall::currentCaption() const {
+    const Caption* current = nullptr;
+    for (const Caption& c : m_captions) {
+        if (c.start <= m_clock) current = &c;
+    }
+    return current;
+}
+
+const std::string& PhoneCall::caption() const {
+    static const std::string kNone;
+    const Caption* c = currentCaption();
+    return c ? c->text : kNone;
+}
+
+bool PhoneCall::captionAnomalous() const {
+    const Caption* c = currentCaption();
+    return c && c->anomalous;
+}
+
 float PhoneCall::captionAlpha() const {
-    if (m_caption.empty() || m_clock < m_captionStart) return 0.0f;
-    const float in = std::min(1.0f, (m_clock - m_captionStart) / 0.25f);
-    const float out = 1.0f - std::clamp((m_clock - m_captionEnd) / 0.8f, 0.0f, 1.0f);
+    const Caption* c = currentCaption();
+    if (!c) return 0.0f;
+    const float in = std::min(1.0f, (m_clock - c->start) / 0.25f);
+    const float out = 1.0f - std::clamp((m_clock - c->end) / 0.8f, 0.0f, 1.0f);
     return in * out;
 }

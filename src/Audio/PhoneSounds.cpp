@@ -42,10 +42,18 @@ const Line kAnnouncements[kAnnouncementCount] = {
      "W IY R S AA R IY || DH EH R IH Z | N OW W AH N | L EH F T || T UW K AO L"},
     {"Please stay on the line.",
      "P L IY Z || S T EY | AA N DH AH | L AY N"},
+    {"You have one new message.",
+     "Y UW HH AE V | W AH N N UW M EH S IH D ZH"},
+    {"You have no new messages.",
+     "Y UW HH AE V | N OW N UW M EH S IH D ZH IH Z"},
+    {"End of message.",
+     "EH N D AH V M EH S IH D ZH"},
+    {"You have nine hundred ninety-nine new messages.",
+     "Y UW HH AE V || N AY N HH AH N D R IH D | N AY N T IY N AY N || N UW M EH S IH D ZH IH Z"},
 };
 
 /// Who is speaking on the line.
-enum class Who : uint8_t { Woman, Child, OldMan, Whisperer, Chorus };
+enum class Who : uint8_t { Woman, Child, OldMan, Man, Whisperer, Chorus };
 
 struct VoiceLine {
     Line line;
@@ -89,6 +97,68 @@ const Phrase kJennyPhrases[] = {
     {"HH IY R", 285.0f, 185.0f, 0.0f, 1.25f},                      // here!
 };
 const char* const kJennyText = "Look, for the last time, I changed my number! I don't care if it's on the wall, stop calling here!";
+
+// Messages left in voicemail: said in pieces, with their own contours, by
+// people falling apart (the pauses are where they stop to breathe, or sob).
+struct MessageScript {
+    const char*   text;
+    Who           who;
+    float         tremor; ///< How badly the voice shakes.
+    const Phrase* phrases;
+    int           count;
+};
+const Phrase kHowDidIGetHere[] = {
+    {"HH AH L OW", 225.0f, 262.0f, 0.6f, 1.0f},                            // hello?
+    {"HH AW | D IH D | AY | G EH T | HH IY R", 238.0f, 272.0f, 0.55f, 1.1f}, // how did I get here?
+    {"AY | W AA Z | AE T | W ER K", 222.0f, 202.0f, 0.12f, 1.0f},           // I was at work,
+    {"AE N D | DH EH N", 214.0f, 188.0f, 0.9f, 0.9f},                       // and then...
+    {"P L IY Z", 252.0f, 232.0f, 0.2f, 1.1f},                               // please,
+    {"S AH M B AA D IY | K AO L | M IY | B AE K", 246.0f, 186.0f, 0.0f, 1.0f}, // somebody call me back.
+};
+const Phrase kNeverEnds[] = {
+    {"DH IH S | N EH V ER | EH N D Z", 172.0f, 140.0f, 0.4f, 1.3f},        // this never ends!
+    {"EH V R IY | R UW M | IH Z | DH AH | S EY M", 150.0f, 126.0f, 0.5f, 1.1f}, // every room is the same.
+    {"DH AH | L AY T S", 142.0f, 130.0f, 0.4f, 1.0f},                       // the lights...
+    {"DH AH | HH AH M IH NG", 136.0f, 120.0f, 0.55f, 1.0f},                 // the humming...
+    {"IH T | N EH V ER | EH N D Z", 178.0f, 118.0f, 0.0f, 1.35f},           // it never ends!
+};
+const Phrase kHelpMe[] = {
+    {"HH EH L P | M IY", 322.0f, 282.0f, 0.6f, 1.2f},                       // help me!
+    {"AY | K AE N T | F AY N D | DH AH | D AO R", 292.0f, 262.0f, 0.5f, 1.0f}, // I can't find the door.
+    {"IH T S | S OW | L AW D | IH N | HH IY R", 286.0f, 252.0f, 0.6f, 1.0f},  // it's so loud in here.
+    {"HH EH L P | M IY", 332.0f, 272.0f, 0.0f, 1.25f},                      // help me!
+};
+const Phrase kDontLookForMe[] = {
+    {"AY | D OW N T | N OW | W AH T | D EY | IH T | IH Z", 126.0f, 106.0f, 0.5f, 1.0f},  // I don't know what day it is.
+    {"AY V | B IH N | W AO K IH NG | F AO R | S OW | L AO NG", 121.0f, 100.0f, 0.7f, 1.0f}, // I've been walking for so long.
+    {"D OW N T | K AH M | L UH K IH NG | F AO R | M IY", 118.0f, 92.0f, 0.0f, 1.0f},      // don't come looking for me.
+};
+const Phrase kDontPickUp[] = {
+    {"IH F | Y UW | G EH T | DH IH S", 150.0f, 140.0f, 0.6f, 1.0f},         // if you get this...
+    {"D OW N T | P IH K | AH P | DH AH | F OW N", 150.0f, 130.0f, 0.7f, 1.1f}, // don't pick up the phone.
+    {"IH T S | L IH S AH N IH NG", 150.0f, 120.0f, 0.0f, 1.0f},             // it's listening.
+};
+const Phrase kWhatLevel[] = {
+    {"AY | F AW N D | AH | F OW N", 216.0f, 200.0f, 0.4f, 1.0f},            // I found a phone.
+    {"IH F | EH N IY W AH N | HH IY R Z | DH IH S", 226.0f, 212.0f, 0.5f, 1.0f}, // if anyone hears this...
+    {"AY M | AA N | L EH V AH L", 222.0f, 216.0f, 0.8f, 1.0f},              // I'm on level...
+    {"AY | D OW N T | N OW | W AH T | L EH V AH L", 228.0f, 196.0f, 0.6f, 1.05f}, // I don't know what level.
+    {"AY | K AE N | HH IY R | IH T | K AH M IH NG", 204.0f, 176.0f, 0.0f, 0.9f},  // I can hear it coming.
+};
+#define PHRASES(a) a, static_cast<int>(sizeof(a) / sizeof(a[0]))
+const MessageScript kMessages[kMessageCount] = {
+    {"hello? how did i get here? i was at work, and then... please, somebody call me back.", Who::Woman, 1.6f,
+     PHRASES(kHowDidIGetHere)},
+    {"this never ends! every room is the same. the lights... the humming... it never ends!", Who::Man, 0.8f,
+     PHRASES(kNeverEnds)},
+    {"help me! i can't find the door. it's so loud in here. help me!", Who::Child, 1.0f, PHRASES(kHelpMe)},
+    {"i don't know what day it is. i've been walking for so long. don't come looking for me.", Who::OldMan, 1.3f,
+     PHRASES(kDontLookForMe)},
+    {"if you get this... don't pick up the phone. it's listening.", Who::Whisperer, 0.0f, PHRASES(kDontPickUp)},
+    {"i found a phone. if anyone hears this... i'm on level... i don't know what level. i can hear it coming.", Who::Woman,
+     1.0f, PHRASES(kWhatLevel)},
+};
+#undef PHRASES
 
 // ----- Shared processing ------------------------------------------------------------
 
@@ -189,6 +259,16 @@ speech::Voice voiceOf(Who who, rnd::Rng& rng) {
         v.jitter = 0.05f;
         v.tremor = 1.3f;
         break;
+    case Who::Man:
+        v.pitchStart = rng.range(135.0f, 150.0f);
+        v.pitchEnd = v.pitchStart * rng.range(0.8f, 0.88f);
+        v.whisper = rng.range(0.05f, 0.15f);
+        v.breathiness = 0.3f;
+        v.tempo = rng.range(0.95f, 1.05f);
+        v.tract = 1.0f;
+        v.jitter = 0.03f;
+        v.tremor = 0.7f;
+        break;
     case Who::Whisperer:
     case Who::Chorus:
         v.pitchStart = 150.0f;
@@ -209,6 +289,8 @@ const Line& announcement(Announcement a) { return kAnnouncements[static_cast<siz
 const Line& voice(Voice v) { return kVoices[static_cast<size_t>(v)].line; }
 
 const char* jennyText() { return kJennyText; }
+
+const char* messageText(Message m) { return kMessages[static_cast<size_t>(m)].text; }
 
 // ============================================================================
 // The line and its tones
@@ -319,14 +401,15 @@ std::vector<Sound> makeSwitching(uint64_t seed) {
 std::vector<Sound> makeOperator(uint64_t seed) {
     // The recorded operator: a clear, brisk female voice from an announcement
     // machine (a faint click as it starts, the slightest wow of its tape),
-    // levelled and squeezed through the channel. The last two recordings are
-    // not recordings: the same voice, too slow, sagging in pitch, with
-    // something speaking under it.
+    // levelled and squeezed through the channel. The same voice runs the
+    // voicemail system. Some recordings are not recordings: the same voice,
+    // too slow, sagging in pitch, with something speaking under it.
     std::vector<Sound> out;
     for (int a = 0; a < kAnnouncementCount; ++a) {
         rnd::Rng rng(rnd::hashCombine(seed, static_cast<uint64_t>(a)));
         Noise noise(rng.next());
-        const bool wrong = a >= static_cast<int>(Announcement::NoOneLeft);
+        const Announcement id = static_cast<Announcement>(a);
+        const bool wrong = id == Announcement::NoOneLeft || id == Announcement::StayOnLine || id == Announcement::ManyMessages;
         speech::Voice v;
         v.seed = rng.next();
         v.pitchStart = 212.0f;
@@ -542,6 +625,93 @@ std::vector<Sound> makeJenny(uint64_t seed) {
     fadeEdges(b, 0.005f, 0.05f);
     normalize(b, 0.9f);
     return {{std::move(b), false}};
+}
+
+std::vector<Sound> makeBeep(uint64_t seed) {
+    // The voicemail system's signals, through the channel: a single beep
+    // before a message, two short ones after it, and the click of the line
+    // switching over to the system (enveloped noise: no pitch).
+    Buffer start = silence(0.4f);
+    addTone(start, 0.01f, 0.32f, 1000.0f, 1.0f);
+    Buffer end = silence(0.45f);
+    addTone(end, 0.01f, 0.12f, 850.0f, 1.0f);
+    addTone(end, 0.23f, 0.12f, 850.0f, 1.0f);
+    Buffer click = silence(0.12f);
+    Noise noise(seed);
+    addNoiseThunk(click, noise, 0.005f, 1.0f, 900.0f, 0.0005f, 0.008f);
+    addNoiseBurst(click, 0.005f, 0.0002f, 0.0015f, Biquad::highpass(2000.0f), 0.6f, noise);
+    std::vector<Sound> out;
+    for (Buffer* b : {&start, &end, &click}) {
+        telephoneBand(*b);
+        fadeEdges(*b, 0.001f, 0.01f);
+        normalize(*b, 0.5f);
+        out.push_back({std::move(*b), false});
+    }
+    return out;
+}
+
+std::vector<Sound> makeMessage(uint64_t seed) {
+    // Messages left in the voicemail boxes. Unlike the voices on the line
+    // they are close to the mouthpiece - but recorded: tape hiss under them,
+    // the tape wobbling, the machine clicking at either end. And the people
+    // leaving them are falling apart: shaking voices, and in the longer
+    // pauses a shuddering breath, or a sob.
+    std::vector<Sound> out;
+    for (int m = 0; m < kMessageCount; ++m) {
+        rnd::Rng rng(rnd::hashCombine(seed, static_cast<uint64_t>(m)));
+        Noise noise(rng.next());
+        const MessageScript& script = kMessages[m];
+        speech::Voice v = voiceOf(script.who, rng);
+        v.tremor = std::max(v.tremor, script.tremor);
+        const bool whisper = script.who == Who::Whisperer;
+
+        float t = 0.4f;
+        Buffer b = silence(t);
+        for (int i = 0; i < script.count; ++i) {
+            const Phrase& p = script.phrases[i];
+            v.seed = rng.next();
+            if (!whisper) {
+                v.pitchStart = p.pitchStart;
+                v.pitchEnd = p.pitchEnd;
+            }
+            const Buffer part = speech::say(p.phonemes, v);
+            const size_t at = samplesFor(t - 0.03f); // skip say()'s lead-in
+            if (b.size() < at + part.size()) b.resize(at + part.size(), 0.0f);
+            for (size_t s = 0; s < part.size(); ++s) b[at + s] += p.emphasis * part[s];
+            t += static_cast<float>(part.size()) / kRate - 0.15f + p.pause;
+            if (!whisper && p.pause >= 0.45f) {
+                // A shuddering intake of breath in the pause: a few quick, pitchless pulses.
+                b.resize(std::max(b.size(), samplesFor(t + 0.2f)), 0.0f);
+                const float breath = t - p.pause + 0.12f;
+                const int pulses = rng.rangeInt(2, 4);
+                for (int k = 0; k < pulses; ++k) {
+                    addNoiseBurst(b, breath + 0.08f * static_cast<float>(k), 0.03f, 0.03f, Biquad::highpass(1400.0f),
+                                  rng.range(0.1f, 0.16f), noise, 0.3f);
+                }
+            }
+        }
+        b.resize(samplesFor(t + 0.45f), 0.0f);
+        b = tapeWow(b, 0.01f, rng.range(0.5f, 1.1f), rng.next());
+        dropouts(b, rng, rng.rangeInt(0, 1));
+        bakeDistance(b, 5000.0f, 0.35f, 0.6f, 0.9f, 0.35f, 0.3f); // a small room around them
+        normalize(b, 1.0f);
+
+        // The tape: steady hiss, and the machine's clicks as it starts and stops.
+        Biquad hissLp = Biquad::lowpass(4000.0f);
+        for (float& s : b) s += 0.035f * hissLp.process(noise());
+        const float len = static_cast<float>(b.size()) / kRate;
+        for (float at : {0.08f, len - 0.2f}) {
+            addNoiseThunk(b, noise, at, 0.5f, 900.0f, 0.0005f, 0.006f);
+            addNoiseBurst(b, at, 0.0002f, 0.0015f, Biquad::highpass(2000.0f), 0.3f, noise);
+        }
+        telephoneBand(b);
+        fadeEdges(b, 0.01f, 0.05f);
+        // Level them by their speech, not by a stray click: each as loud as the others.
+        normalizeLoudness(b, 0.4f);
+        for (float& s : b) s = std::tanh(s);
+        out.push_back({std::move(b), false});
+    }
+    return out;
 }
 
 // ============================================================================

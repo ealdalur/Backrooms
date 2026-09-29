@@ -378,11 +378,12 @@ void main() {
     if (vMaterial == MAT_SIGN) {
         color += albedo * emissiveMask * params.w * (0.97 + 0.03 * sin(uTime * 377.0));
     }
-    // Phone message lamps: most are dark, some blink (a message is waiting),
-    // and the one off the hook burns steadily (its lamp UVs are offset by +2 in u).
+    // Phone message lamps: the lens UVs carry the state - dark (u < 1), lit
+    // steadily while a message plays (+2) or blinking while one waits (+4),
+    // each phone at its own pace.
     if (vMaterial == MAT_PHONE && emissiveMask > 0.0) {
         float h = hash13(floor(vInstanceOrigin * 3.7) + 0.5);
-        float lamp = vUV.x > 1.5 ? 1.0 : (h < 0.3 ? step(0.55, fract(uTime * (0.45 + 0.4 * h) + h * 13.0)) : 0.0);
+        float lamp = vUV.x > 3.5 ? step(0.55, fract(uTime * (0.45 + 0.4 * h) + h * 13.0)) : (vUV.x > 1.5 ? 1.0 : 0.0);
         color += albedo * emissiveMask * params.w * lamp;
     }
 

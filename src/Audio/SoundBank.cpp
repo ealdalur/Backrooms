@@ -996,7 +996,7 @@ void SoundBank::build() {
         phonesfx::makeLine, phonesfx::makeDialTone, phonesfx::makeRingback, phonesfx::makeBusy, phonesfx::makeReorder,
         phonesfx::makeHowler, phonesfx::makeDtmf, phonesfx::makeKey, phonesfx::makePickup, phonesfx::makeHangup,
         phonesfx::makeSwitching, phonesfx::makeSit, phonesfx::makeOperator, phonesfx::makeStatic, phonesfx::makeVoice,
-        phonesfx::makeBreath, phonesfx::makeJenny,
+        phonesfx::makeBreath, phonesfx::makeJenny, phonesfx::makeBeep, phonesfx::makeMessage,
     };
 
     // Every sound is independent: synthesise them all concurrently.
@@ -1029,7 +1029,7 @@ void SoundBank::writeWavFiles(const std::string& directory) const {
         "doom_item_up", "doom_weapon_up", "doom_door", "doom_switch", "doom_music",
         "phone_line", "phone_dial_tone", "phone_ringback", "phone_busy", "phone_reorder", "phone_howler",
         "phone_dtmf", "phone_key", "phone_pickup", "phone_hangup", "phone_switching", "phone_sit",
-        "phone_operator", "phone_static", "phone_voice", "phone_breath", "phone_jenny",
+        "phone_operator", "phone_static", "phone_voice", "phone_breath", "phone_jenny", "phone_beep", "phone_message",
     };
     static_assert(sizeof(kNames) / sizeof(kNames[0]) == kSoundIdCount, "one file name per SoundId");
     auto put16 = [](std::ofstream& f, uint16_t v) { f.put(static_cast<char>(v & 0xFF)).put(static_cast<char>(v >> 8)); };

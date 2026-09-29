@@ -280,7 +280,8 @@ void Engine::processEvents() {
             if (m_state == GameState::Paused && e.button.button == SDL_BUTTON_LEFT) setState(m_resumeState);
             else if (m_state == GameState::Phone && e.button.button == SDL_BUTTON_LEFT) {
                 const int key = phoneKeyAt(e.button.x, e.button.y);
-                if (key >= 0) m_phoneKeys += Phone::kKeyChars[key];
+                if (key == Phone::kLampButton) m_phoneKeys += Phone::kMessageChar;
+                else if (key >= 0) m_phoneKeys += Phone::kKeyChars[key];
             }
             break;
         case SDL_EVENT_TEXT_INPUT:
@@ -288,6 +289,7 @@ void Engine::processEvents() {
             if (m_state == GameState::Phone) {
                 for (const char* c = e.text.text; *c; ++c) {
                     if (Phone::keyIndex(*c) >= 0) m_phoneKeys += *c;
+                    else if (*c == 'm' || *c == 'M') m_phoneKeys += Phone::kMessageChar;
                 }
             }
             break;
@@ -383,7 +385,7 @@ void Engine::handleTerminalKey(const SDL_KeyboardEvent& key) {
 }
 
 void Engine::handlePhoneKey(const SDL_KeyboardEvent& key) {
-    // Digits, * and # arrive as text input; here only hanging up and a few globals.
+    // Digits, * and # (and M) arrive as text input; here only hanging up and a few globals.
     switch (key.scancode) {
     case SDL_SCANCODE_ESCAPE:
     case SDL_SCANCODE_E:
@@ -526,7 +528,11 @@ void Engine::enterPhone(Phone& phone) {
     phone.setOffHook(true);
     m_phoneId = phone.id();
     const uint64_t session = rnd::hashCombine(phone.id(), static_cast<uint64_t>(m_simTime * 1000.0) + static_cast<uint64_t>(++m_phonePickups));
-    m_call = std::make_unique<PhoneCall>(m_sound->bank(), rnd::hashCombine(m_options.seed, 0x9403'CA11ull), session);
+    PhoneMailbox mailbox; // which message it holds, and how the system counts, are fixed per phone
+    const uint64_t box = rnd::hashCombine(phone.id(), 0x3E55'A6E5ull);
+    if (phone.messageWaiting()) mailbox.message = static_cast<int>(box % static_cast<uint64_t>(phonesfx::kMessageCount));
+    mailbox.miscounts = (box >> 32) % 5u == 0u;
+    m_call = std::make_unique<PhoneCall>(m_sound->bank(), rnd::hashCombine(m_options.seed, 0x9403'CA11ull), session, mailbox);
     m_phoneKeys.clear();
     m_phoneHangUp = false;
     m_phoneHover = -1;
@@ -548,6 +554,7 @@ void Engine::enterPhone(Phone& phone) {
 void Engine::leavePhone() {
     if (Phone* phone = activePhone()) {
         phone->setOffHook(false);
+        phone->setLampLit(false); // a message cut off stays waiting
         m_sound->playEffect(SoundId::PhoneHangup, phone->center(), 0.55f, *m_world);
         m_noises.push_back({phone->center(), cfg::kNoiseTyping * 1.4f, NoiseKind::Machine});
     }
@@ -568,19 +575,15 @@ int Engine::phoneKeyAt(float windowX, float windowY) const {
     const glm::vec2 p(windowX * W / static_cast<float>(std::max(1, ww)), windowY * H / static_cast<float>(std::max(1, wh)));
     const Camera cam = viewCamera();
     const glm::mat4 viewProj = cam.projectionMatrix(W / std::max(H, 1.0f)) * cam.viewMatrix();
-    // Each key's share of the keypad, projected: the pointer must be inside it.
-    for (int k = 0; k < Phone::kKeyCount; ++k) {
-        glm::vec3 corners[4];
-        phone->keyHitCorners(k, corners);
+    // Is the pointer inside this world-space quad, projected onto the screen?
+    auto under = [&](const glm::vec3 corners[4]) {
         glm::vec2 s[4];
-        bool visible = true;
         for (int i = 0; i < 4; ++i) {
             const glm::vec4 clip = viewProj * glm::vec4(corners[i], 1.0f);
-            if (clip.w <= 1e-4f) visible = false;
-            const glm::vec2 ndc = glm::vec2(clip) / std::max(clip.w, 1e-4f);
+            if (clip.w <= 1e-4f) return false;
+            const glm::vec2 ndc = glm::vec2(clip) / clip.w;
             s[i] = glm::vec2((ndc.x * 0.5f + 0.5f) * W, (0.5f - 0.5f * ndc.y) * H);
         }
-        if (!visible) continue;
         int positive = 0, negative = 0;
         for (int i = 0; i < 4; ++i) {
             const glm::vec2 e = s[(i + 1) % 4] - s[i], d = p - s[i];
@@ -588,9 +591,17 @@ int Engine::phoneKeyAt(float windowX, float windowY) const {
             positive += cross > 0.0f;
             negative += cross < 0.0f;
         }
-        if (positive == 0 || negative == 0) return k;
+        return positive == 0 || negative == 0;
+    };
+    glm::vec3 corners[4];
+    // Each key's share of the keypad...
+    for (int k = 0; k < Phone::kKeyCount; ++k) {
+        phone->keyHitCorners(k, corners);
+        if (under(corners)) return k;
     }
-    return -1;
+    // ...and the message lamp.
+    phone->lampHitCorners(corners);
+    return under(corners) ? Phone::kLampButton : -1;
 }
 
 void Engine::updatePhone(float dt) {
@@ -608,8 +619,13 @@ void Engine::updatePhone(float dt) {
     }
     const glm::vec3 at = phone->center();
     for (char c : m_phoneKeys) {
-        phone->press(Phone::keyIndex(c));
-        m_call->press(c);
+        if (c == Phone::kMessageChar) {
+            phone->press(Phone::kLampButton);
+            m_call->pressMessage();
+        } else {
+            phone->press(Phone::keyIndex(c));
+            m_call->press(c);
+        }
         m_noises.push_back({at, cfg::kNoiseTyping * 0.6f, NoiseKind::Typing}); // the Wanderer hears you dialling
     }
     m_phoneKeys.clear();
@@ -621,10 +637,14 @@ void Engine::updatePhone(float dt) {
     m_call->update(dt, ctx);
     const bool log = m_options.demo == "phone"; // scripted verification of the line's behaviour
     for (const PhoneSoundEvent& e : m_call->takeSounds()) {
-        if (e.earpiece) m_sound->playEarpiece(e.id, e.variant, e.gain, e.delay);
+        if (e.id == SoundId::Count) m_sound->stopEarpieceSounds(); // the line moved on
+        else if (e.earpiece) m_sound->playEarpiece(e.id, e.variant, e.gain, e.delay);
         else m_sound->playEffect(e.id, at, e.gain, *m_world);
         if (log) std::printf("[Phone] t=%.2f sound %d variant %d (+%.2fs)\n", m_demoTime, static_cast<int>(e.id), e.variant, e.delay);
     }
+    // The lamp burns while its message plays, and goes out once it has been heard.
+    phone->setLampLit(m_call->messagePlaying());
+    if (m_call->messageHeard()) phone->setMessageWaiting(false);
     if (m_call->hungUp()) { // hung up on: the player's handset goes back down too
         if (log) std::printf("[Phone] t=%.2f the other end hung up\n", m_demoTime);
         leavePhone();
@@ -842,8 +862,8 @@ void Engine::drawHud() {
     }
     if (m_state == GameState::Phone && m_call) {
         const glm::vec4 guide(0.8f, 0.8f, 0.75f, 0.6f * m_phoneBlend);
-        hud.text("<ESC>/<E> Hang Up     <0-9> <*> <#> or CLICK the Keys to Dial", w * 0.5f, h - 40.0f * s,
-                 TextOverlay::Align::Center, 2.0f, guide, true);
+        hud.text("<ESC>/<E> Hang Up    <0-9> <*> <#> or CLICK the Keys to Dial    <M> or the Red Light: Messages",
+                 w * 0.5f, h - 40.0f * s, TextOverlay::Align::Center, 2.0f, guide, true);
         if (!m_call->dialed().empty()) {
             hud.text(m_call->dialed(), w * 0.5f, h - 76.0f * s, TextOverlay::Align::Center, 3.0f,
                      glm::vec4(0.95f, 0.93f, 0.85f, 0.8f * m_phoneBlend), true);
@@ -1135,12 +1155,15 @@ void Engine::setupDemo() {
         if (Terminal* t = m_chunks->terminalById(best->id())) enterTerminal(*t);
         m_terminalBlend = 1.0f;
     } else if (demo == "phone") {
-        // Nearest phone on this storey: pick it up (--type: then dial; 'h' hangs up).
+        // Nearest phone on this storey: pick it up (--type: then dial; 'h' hangs up,
+        // 'M' presses the message lamp - and picks a phone with a message waiting).
+        const bool wantMessage = m_options.demoInput.find(Phone::kMessageChar) != std::string::npos;
         Phone* best = nullptr;
         float bestDist = 1e9f;
         for (Chunk* chunk : m_chunks->sortedChunksMutable()) {
             if (chunk->coord().level != m_focusLevel) continue;
             for (Phone& p : chunk->phones()) {
+                if (wantMessage && !p.messageWaiting()) continue;
                 const float d = glm::length(p.center() - feet);
                 if (d < bestDist) {
                     bestDist = d;
