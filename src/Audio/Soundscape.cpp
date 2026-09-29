@@ -41,7 +41,7 @@ constexpr float kBreathRange     = 6.5f;
 constexpr float kHeartGain       = 0.55f;
 constexpr float kStingGain       = 0.8f;
 constexpr float kMonitorHumGain  = 0.05f;
-constexpr float kTerminalMusicGain = 1.0f; // DOOM's music from the terminal's little speaker
+constexpr float kTerminalMusicGain = 0.8f; // DOOM's music from the terminal's little speaker
 // The handset is held to the right ear, right against it.
 constexpr float kEarpieceGain    = 0.55f;
 constexpr float kEarpiecePan     = 0.35f;
