@@ -9,18 +9,24 @@
 //   Stalking - drops onto all fours and scuttles towards the player faster
 //              than they can run, routing through dark cells and around the
 //              player's field of view so it arrives from behind; the last
-//              few metres it creeps.
+//              few metres it creeps. It follows the player to other storeys
+//              up and down the stairwells, and opens the doors in its way.
 //   Frozen   - the instant it is seen it stops dead, mid-stride. Stare long
 //              enough (or come close) and...
 //   Fleeing  - ...it darts, very fast, to the nearest spot the player cannot
-//              see: behind a corner, a wall, a doorway.
+//              see that it can reach without stopping: behind a corner, a
+//              wall, through a doorway that stands open. Stared down for the
+//              third time, it bolts much farther - to a dark spot 10-20 m
+//              from the player, out of their sight - and lies low there for
+//              a long while before it hunts again.
 //   Lunging  - within reach and unseen, it rushes the player.
 //
 // "Seen" is a real perception test: the body's bounds against the player's
 // view frustum (frustum culling turned into an AI sense), line of sight past
-// walls and live door states, and darkness - in an unlit area it cannot be
-// made out beyond a few metres. It slips under closed doors and drains the
-// fluorescent tubes around it.
+// walls and live door states (in and around a stairwell, a true 3D sight
+// line past the flights, landing and slabs), and darkness - in an unlit area
+// it cannot be made out beyond a few metres. Closed doors stop it like
+// anything else: it opens them. It drains the fluorescent tubes around it.
 //
 // The Tesla gun's arc stops it dead: it rears up screeching, convulsing, and
 // the moment the arc lets go it darts for cover.
@@ -34,6 +40,7 @@
 
 #include <vector>
 
+class ChunkManager;
 struct EntityDrawList;
 
 class Stalker : public Agent {
@@ -46,8 +53,8 @@ public:
 
     /// Advances perception, behaviour and animation. Returns true if it
     /// reached the player this frame.
-    bool update(float dt, const PlayerView& player, const NavGrid& nav, const ICollisionWorld& world,
-                const Physics& physics, std::vector<EntitySound>& sounds);
+    bool update(float dt, const PlayerView& player, const NavGrid& nav, ChunkManager& chunks, const Physics& physics,
+                std::vector<EntitySound>& sounds);
 
     /// Cuts short its lurking: it starts hunting right away.
     void provoke();
@@ -58,8 +65,10 @@ public:
 
     State state() const { return m_state; }
     bool seen() const { return m_seen; }
-    /// Stared down too often here: it wants to vanish and resurface elsewhere.
-    bool wantsToResurface() const { return m_flees >= 3; }
+    /// Times it has been stared down since it last bolted far away.
+    int stareDowns() const { return m_flees; }
+    /// Bolting far away after one stare-down too many.
+    bool retreating() const { return m_retreating; }
     /// True when it is moving fast (skittering) rather than holding still.
     bool moving() const;
 
@@ -77,10 +86,18 @@ private:
         float     age, life, size;
     };
 
-    bool isSeenBy(const PlayerView& player, const NavGrid& nav) const;
+    bool isSeenBy(const PlayerView& player, const NavGrid& nav, const ICollisionWorld& world, const Physics& physics) const;
     NavProfile huntProfile(const PlayerView& player, const NavGrid& nav) const;
+    /// How it darts for cover: no stopping to open doors.
+    static NavProfile fleeProfile();
     bool findCover(const PlayerView& player, const NavGrid& nav, glm::vec3& out) const;
-    void startFleeing(const PlayerView& player, const NavGrid& nav, std::vector<EntitySound>& sounds);
+    /// Where it bolts after one stare-down too many: a dark spot kStalkerRetreatMin..Max
+    /// from the player, out of their sight, that it can dash to without stopping.
+    bool findRetreat(const PlayerView& player, const NavGrid& nav, glm::vec3& out) const;
+    /// Darts for cover. `stareDown`: the player's gaze drove it off (it counts those).
+    void startFleeing(const PlayerView& player, const NavGrid& nav, std::vector<EntitySound>& sounds, bool stareDown = false);
+    /// A straight rush at the player is possible (flat run on a storey, or a clear 3D line in a stairwell).
+    bool canRush(const PlayerView& player, const NavGrid& nav, const ICollisionWorld& world, const Physics& physics) const;
     void freeze();
     void animate(float dt, const PlayerView& player);
     void pose();
@@ -94,7 +111,8 @@ private:
     float    m_replan = 0.0f;
     float    m_skitter = 0.0f;
     int      m_coverTries = 0;
-    int      m_flees = 0;          ///< Times it has been driven into cover since it appeared.
+    int      m_flees = 0;          ///< Stare-downs since it last bolted far away.
+    bool     m_retreating = false;  ///< The current dash is the long one.
     bool     m_patient = false;    ///< Lying low after fleeing: waits out its timer.
     bool     m_burnt = false;      ///< The arc just had it: it runs as soon as it lets go.
 

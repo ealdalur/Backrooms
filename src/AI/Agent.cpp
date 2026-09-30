@@ -3,9 +3,11 @@
 // ---------------------------------------------------------------------------
 #include "AI/Agent.h"
 
+#include "Actors/Door.h"
 #include "Core/Config.h"
 #include "Math/Random.h"
 #include "Render/EntityRenderer.h"
+#include "World/ChunkManager.h"
 #include "World/WorldGenerator.h"
 
 #include <algorithm>
@@ -18,6 +20,7 @@ namespace {
 // (0.56 m) clears both jambs.
 constexpr float kArriveRadius = 0.25f;   ///< Waypoint reached within this horizontal distance.
 constexpr float kDoorApproach = 0.9f;    ///< Waypoints either side of narrow openings.
+constexpr float kDoorStandoff = 1.45f;   ///< Clear of a door panel's arc (0.9 m panel + a body's half width).
 constexpr float kPi = 3.14159265f;
 
 inline glm::vec2 xz(const glm::vec3& v) { return {v.x, v.z}; }
@@ -35,10 +38,153 @@ void Agent::place(const glm::vec3& feet, int level, float yaw) {
     m_velocity = glm::vec3(0.0f);
     m_grounded = false;
     m_stuck = 0.0f;
+    m_doorWait = 0.0f;
     clearPath();
 }
 
-bool Agent::planTo(const NavGrid& nav, const glm::vec3& goal, const NavProfile& profile) {
+bool Agent::planTo(const NavGrid& nav, const glm::vec3& goal, const NavProfile& profile, int goalLevel) {
+    // Already on a climb: finish it first; the rest is planned at the far end.
+    if (m_climbing) {
+        m_finalGoal = goal;
+        m_finalLevel = goalLevel;
+        m_finalProfile = profile;
+        return true;
+    }
+    const glm::ivec2 here = NavGrid::cellOf(m_feet);
+    // Standing in a stairwell (placed there, or a path was dropped mid-climb):
+    // on along its stair route to the end on the right storey.
+    if (nav.isStairwell(m_level, here)) {
+        StairLink link;
+        for (int dir : {1, -1}) {
+            if (!nav.findStairLink(m_level, dir, here, link, 1) || link.cell != here) continue;
+            m_finalGoal = goal;
+            m_finalLevel = goalLevel;
+            m_finalProfile = profile;
+            joinRoute(link, goalLevel > link.lower, false);
+            return true;
+        }
+    }
+    const glm::ivec2 goalCell = NavGrid::cellOf(goal);
+    if (goalLevel == m_level && nav.isStairwell(goalLevel, goalCell)) {
+        // The goal is on the stairs (the player is climbing them): in at this
+        // storey's entrance and along the flights after it.
+        for (int dir : {1, -1}) {
+            StairLink link;
+            if (!nav.findStairLink(m_level, dir, goalCell, link, 1) || link.cell != goalCell) continue;
+            if (!planFlat(nav, dir > 0 ? link.route.front() : link.route.back(), profile)) break;
+            m_link = std::move(link);
+            m_climbDir = dir;
+            m_climbPending = true;
+            m_finalGoal = goal;
+            m_finalLevel = goalLevel;
+            m_finalProfile = profile;
+            return true;
+        }
+    }
+    if (goalLevel == m_level) {
+        m_climbPending = false;
+        return planFlat(nav, goal, profile);
+    }
+
+    // Another storey: to the nearest stairwell going that way, then up (or down) it.
+    const int dir = goalLevel > m_level ? 1 : -1;
+    StairLink link;
+    if (!nav.findStairLink(m_level, dir, here, link)) {
+        clearPath();
+        return false;
+    }
+    const glm::vec3 entry = dir > 0 ? link.route.front() : link.route.back();
+    if (!planFlat(nav, entry, profile)) {
+        clearPath();
+        return false;
+    }
+    m_link = std::move(link);
+    m_climbDir = dir;
+    m_climbPending = true;
+    m_finalGoal = goal;
+    m_finalLevel = goalLevel;
+    m_finalProfile = profile;
+    return true;
+}
+
+void Agent::joinRoute(const StairLink& link, bool toUpper, bool fromStart) {
+    m_link = link;
+    m_climbDir = toUpper ? 1 : -1;
+    std::vector<glm::vec3> route = link.route;
+    if (!toUpper) std::reverse(route.begin(), route.end());
+    size_t first = 1; // from its start: already standing on the first point
+    if (!fromStart) { // somewhere along it: from the nearest point at about this height on
+        float best = 1e9f;
+        for (size_t i = 0; i < route.size(); ++i) {
+            const glm::vec3 d = route[i] - m_feet;
+            const float score = glm::length(glm::vec2(d.x, d.z)) + 2.0f * std::fabs(d.y);
+            if (score < best) {
+                best = score;
+                first = i;
+            }
+        }
+    }
+    m_path.assign(route.begin() + static_cast<std::ptrdiff_t>(std::min(first, route.size() - 1)), route.end());
+    m_pathIndex = 0;
+    m_pathCells = {link.outside, link.cell, link.outside}; // for the doors on the way in and out
+    m_climbPending = false;
+    m_climbing = true;
+}
+
+bool Agent::nextLeg(const NavGrid& nav) {
+    if (m_climbPending) {
+        joinRoute(m_link, m_climbDir > 0, true);
+        return hasPath();
+    }
+    if (m_climbing) {
+        m_climbing = false;
+        const NavProfile profile = m_finalProfile; // copied: planTo overwrites it
+        return planTo(nav, m_finalGoal, profile, m_finalLevel) && hasPath();
+    }
+    return false;
+}
+
+void Agent::updateLevel() {
+    const float base = world::levelFloorY(m_level);
+    const float band = cfg::kLevelSwitchBand * world::kLevelHeight;
+    if (m_feet.y > base + band) ++m_level;
+    else if (m_feet.y < base - band) --m_level;
+}
+
+bool Agent::handleDoors(float dt, const NavGrid& nav, ChunkManager& chunks, const Physics& physics) {
+    glm::ivec2 from, to;
+    int gx, gz;
+    world::EdgeAxis axis;
+    if (!nextCrossing(from, to) || !NavGrid::edgeBetween(from, to, gx, gz, axis)) return false;
+    Door* door = chunks.doorOnEdge(m_level, gx, gz, axis);
+    if (!door || door->state() == Door::State::Open) {
+        m_doorWait = 0.0f;
+        return false;
+    }
+    const glm::vec3 c = nav.crossing(m_level, from, to);
+    // Once waiting for a door it keeps waiting from a step further back.
+    if (glm::length(xz(c) - xz(m_feet)) > (m_doorWait > 0.0f ? 1.9f : 1.4f)) {
+        m_doorWait = 0.0f;
+        return false;
+    }
+    if (m_doorWait > 3.0f) return false; // something holds it shut: shove on regardless
+
+    // A closed door ahead: open it and wait for it to swing.
+    if (door->state() == Door::State::Closed || door->state() == Door::State::Closing) door->toggle(m_feet);
+    m_doorWait += dt;
+    glm::vec3 hold(0.0f);
+    if (door->swingsToward(m_feet)) { // it opens this way: step back out of its arc
+        const glm::vec3 through(static_cast<float>(to.x - from.x), 0.0f, static_cast<float>(to.y - from.y));
+        glm::vec3 d = c - through * kDoorStandoff - m_feet;
+        d.y = 0.0f;
+        if (glm::length(d) > 0.1f) hold = glm::normalize(d) * 1.2f;
+    }
+    integrate(dt, hold, 8.0f, chunks, physics);
+    turnTowards(c - m_feet, 3.0f, dt);
+    return true;
+}
+
+bool Agent::planFlat(const NavGrid& nav, const glm::vec3& goal, const NavProfile& profile) {
     const glm::ivec2 start = NavGrid::cellOf(m_feet);
     const glm::ivec2 goalCell = NavGrid::cellOf(goal);
     const bool reached = nav.findPath(m_level, start, goalCell, profile, m_pathCells);
@@ -73,8 +219,9 @@ bool Agent::clearRun(const NavGrid& nav, const glm::vec3& to) const {
 }
 
 glm::vec3 Agent::steerTarget(const NavGrid& nav) {
-    // String pulling: skip ahead while the next waypoint is directly reachable.
-    if (m_noShortcuts <= 0.0f) {
+    // String pulling: skip ahead while the next waypoint is directly reachable
+    // (never on the stairs: the route goes round the flights and the landing).
+    if (m_noShortcuts <= 0.0f && !m_climbing) {
         while (m_pathIndex + 1 < m_path.size() && clearRun(nav, m_path[m_pathIndex + 1])) ++m_pathIndex;
     }
     return m_path[m_pathIndex];
@@ -108,7 +255,7 @@ bool Agent::nextCrossing(glm::ivec2& from, glm::ivec2& to) const {
 
 bool Agent::followPath(float dt, float speed, float accel, const NavGrid& nav, const ICollisionWorld& world,
                        const Physics& physics) {
-    if (!hasPath()) {
+    if (!hasPath() && !nextLeg(nav)) {
         integrate(dt, glm::vec3(0.0f), accel, world, physics);
         return true;
     }
@@ -117,7 +264,7 @@ bool Agent::followPath(float dt, float speed, float accel, const NavGrid& nav, c
     d.y = 0.0f;
     if (reachedWaypoint()) {
         ++m_pathIndex;
-        if (!hasPath()) {
+        if (!hasPath() && !nextLeg(nav)) {
             integrate(dt, glm::vec3(0.0f), accel, world, physics);
             return true;
         }
@@ -141,7 +288,7 @@ bool Agent::followPath(float dt, float speed, float accel, const NavGrid& nav, c
         const float a = 1.2f * m_detourSide; // ~70 degrees off the blocked heading
         dir = glm::vec3(dir.x * std::cos(a) - dir.z * std::sin(a), 0.0f, dir.x * std::sin(a) + dir.z * std::cos(a));
     }
-    const bool last = m_pathIndex + 1 == m_path.size();
+    const bool last = m_pathIndex + 1 == m_path.size() && !usingStairs();
     const float v = last ? speed * std::clamp(dist / 1.0f, 0.3f, 1.0f) : speed; // ease into the goal
     integrate(dt, dir * v, accel, world, physics);
     turnTowards(dir, 7.0f, dt);
@@ -163,6 +310,7 @@ void Agent::integrate(float dt, const glm::vec3& desired, float accel, const ICo
     if (r.blockedZ) m_velocity.z = 0.0f;
     if (r.grounded && m_velocity.y < 0.0f) m_velocity.y = 0.0f;
     m_grounded = r.grounded;
+    updateLevel();
 
     // Stuck: trying to move but making (almost) no progress.
     const float wanted = glm::length(glm::vec2(desired.x, desired.z)) * dt;

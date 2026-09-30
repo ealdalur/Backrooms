@@ -1102,7 +1102,8 @@ void Engine::setupDemo() {
     const glm::vec3 feet = m_player->feetPosition();
     const glm::vec3 fwd = glm::normalize(glm::vec3(m_player->lookDirection().x, 0.0f, m_player->lookDirection().z));
 
-    if (demo == "stairs" || demo == "stairs-top" || demo == "stairs-sign" || demo == "climb" || demo == "descend") {
+    if (demo == "stairs" || demo == "stairs-top" || demo == "stairs-sign" || demo == "climb" || demo == "descend" ||
+        demo == "stairs-chase") {
         // Nearest stairwell rising from the start storey (spiral over chunk columns).
         const int level = m_focusLevel;
         const ChunkCoord home = ChunkCoord::fromWorld(feet.x, feet.z, level);
@@ -1140,8 +1141,8 @@ void Engine::setupDemo() {
                     } else {
                         teleportPlayer(route[0], level, yawToward(route[1] - route[0]));
                     }
-                    // Open the entrances on both storeys, from inside the stairwell
-                    // so they swing out of the way of the route.
+                    // Open the entrances on both storeys (stairwell doors always
+                    // swing out into the room, clear of the stairs).
                     const int side = stairs::entranceSide(s->rotation);
                     const int ex = gx + (side == 1 ? 1 : 0), ez = gz + (side == 3 ? 1 : 0);
                     const world::EdgeAxis axis = side < 2 ? world::EdgeAxis::West : world::EdgeAxis::South;
@@ -1154,9 +1155,32 @@ void Engine::setupDemo() {
                             d->takeEvents();
                         }
                     }
-                    if (demo == "climb") {
+                    if (demo == "climb" || demo == "stairs-chase") {
                         for (auto it = route.begin() + 1; it != route.end(); ++it) m_autopilot.push_back({*it});
                         m_autopilotIndex = 0;
+                    }
+                    if (demo == "stairs-chase") {
+                        // Something follows, from a few rooms back; the doors will be shut behind the player.
+                        // "wanderer-far": out of earshot, so it never hears the player go (the fallback brings it).
+                        const bool far = m_options.demoInput == "wanderer-far";
+                        const bool wanderer = far || m_options.demoInput == "wanderer";
+                        m_chaser = wanderer ? EntityKind::Wanderer : EntityKind::Stalker;
+                        m_entities->setEnabled(wanderer ? EntityKind::Stalker : EntityKind::Wanderer, false);
+                        glm::vec3 out = route[0] - route[1];
+                        out.y = 0.0f;
+                        out = glm::normalize(out);
+                        glm::vec3 spot = route[0];
+                        for (float d = far ? 30.0f : wanderer ? 7.0f : 10.0f; d >= 3.0f; d -= 0.5f) {
+                            const glm::vec3 p = route[0] + out * d;
+                            if (m_physics->isFree(Physics::bodyBox(p + glm::vec3(0.0f, 0.01f, 0.0f), {0.3f, 2.2f}), *m_chunks)) {
+                                spot = p;
+                                break;
+                            }
+                        }
+                        m_entities->spawnAt(m_chaser, spot, level, std::atan2(-out.x, -out.z), true);
+                        for (int k = 0; k < 2; ++k) m_chaseDoors[k] = {level + k, ex, ez, axis, false};
+                        std::printf("[Demo] The %s starts %.1fm from the stairwell\n", wanderer ? "Wanderer" : "Stalker",
+                                    glm::length(spot - route[0]));
                     } else if (demo == "descend") {
                         for (auto it = route.rbegin() + 1; it != route.rend(); ++it) m_autopilot.push_back({*it});
                         m_autopilotIndex = 0;
@@ -1300,6 +1324,50 @@ void Engine::setupDemo() {
                             flat.charge);
             }
         }
+    } else if (demo == "stalker-stare") {
+        // It stands a few metres ahead; the player keeps turning to face it wherever it is.
+        m_entities->setEnabled(EntityKind::Wanderer, false);
+        const glm::vec3 p = freeSpotAlong(fwd, 6.0f, 3.5f);
+        m_entities->spawnAt(EntityKind::Stalker, p, m_focusLevel, std::atan2(-fwd.x, -fwd.z));
+    } else if (demo == "stalker-door") {
+        // The nearest door on this storey, shut: the player stands on one side,
+        // looking away; the Stalker hunts them from the other.
+        int bestX = 0, bestZ = 0;
+        world::EdgeAxis bestAxis = world::EdgeAxis::West;
+        float bestDist = 1e9f;
+        const glm::ivec2 c = NavGrid::cellOf(feet);
+        for (int z = c.y - 6; z <= c.y + 6; ++z) {
+            for (int x = c.x - 6; x <= c.x + 6; ++x) {
+                for (world::EdgeAxis a : {world::EdgeAxis::West, world::EdgeAxis::South}) {
+                    const Door* d = m_chunks->doorOnEdge(m_focusLevel, x, z, a);
+                    if (!d || m_world->cellRole(m_focusLevel, x, z) != world::CellRole::Room) continue;
+                    const glm::ivec2 other = a == world::EdgeAxis::West ? glm::ivec2(x - 1, z) : glm::ivec2(x, z - 1);
+                    if (m_world->cellRole(m_focusLevel, other.x, other.y) != world::CellRole::Room) continue;
+                    const float dist = glm::length(d->doorwayCenter() - feet);
+                    if (dist < bestDist) {
+                        bestDist = dist;
+                        bestX = x;
+                        bestZ = z;
+                        bestAxis = a;
+                    }
+                }
+            }
+        }
+        const Door* door = m_chunks->doorOnEdge(m_focusLevel, bestX, bestZ, bestAxis);
+        if (!door) {
+            std::cerr << "[Demo] No door loaded\n";
+            return;
+        }
+        const glm::vec3 n = bestAxis == world::EdgeAxis::West ? glm::vec3(1.0f, 0.0f, 0.0f) : glm::vec3(0.0f, 0.0f, 1.0f);
+        glm::vec3 centre = door->doorwayCenter();
+        centre.y = world::levelFloorY(m_focusLevel);
+        const glm::vec3 stand = centre + n * 1.8f, lair = centre - n * 4.5f;
+        teleportPlayer(stand, m_focusLevel, yawToward(n)); // facing away from the door
+        m_entities->setEnabled(EntityKind::Wanderer, false);
+        m_entities->spawnAt(EntityKind::Stalker, lair, m_focusLevel, std::atan2(n.x, n.z), true);
+        m_chaser = EntityKind::Stalker;
+        m_chaseDoors[0] = {m_focusLevel, bestX, bestZ, bestAxis, true};
+        std::printf("[Demo] Door %.1fm away; the Stalker waits 4.5m behind it\n", bestDist);
     } else if (demo == "part") {
         // The nearest part lying out in the open (a desk top or a chair seat): walk up and look at it.
         const ItemSite* best = nullptr;
@@ -1441,6 +1509,63 @@ void Engine::updateDemo(float dt) {
         (m_options.demoInput == "take" || m_options.demoInput == "swap-persist")) {
         m_cabinetUse = true; // take (or swap) what is in the drawer
         m_demoStep = 1;
+    }
+    if (m_options.demo == "stalker-stare") {
+        const Stalker& st = m_entities->stalker();
+        if (st.active()) { // the head follows it (through the walls, too: only a clear view counts as seen)
+            const glm::vec3 d = st.feet() + glm::vec3(0.0f, 1.2f, 0.0f) - m_player->eyePosition();
+            m_player->setViewAngles(yawToward(d), pitchToward(d));
+        }
+        static bool wasRetreating = false;
+        if (st.retreating() != wasRetreating) {
+            std::printf("[Stare] t=%.2f %s, %.1fm from the player\n", m_demoTime,
+                        st.retreating() ? "third stare-down: it bolts far away" : "retreat over: it lies low",
+                        glm::length(st.feet() - m_player->feetPosition()));
+            wasRetreating = st.retreating();
+        }
+        static int lastStares = 0;
+        if (st.stareDowns() != lastStares) {
+            std::printf("[Stare] t=%.2f stare-downs: %d\n", m_demoTime, st.stareDowns());
+            lastStares = st.stareDowns();
+        }
+    }
+    if (m_options.demo == "stairs-chase" || m_options.demo == "stalker-door") {
+        // Shut each stairwell entrance behind the player: whatever follows must open it.
+        if (m_options.demo == "stairs-chase") {
+            for (int k = 0; k < 2; ++k) {
+                ChaseDoor& cd = m_chaseDoors[k];
+                const bool past = k == 0 ? m_autopilotIndex >= 3 : m_autopilotIndex >= m_autopilot.size();
+                if (cd.shut || !past) continue;
+                if (Door* d = m_chunks->doorOnEdge(cd.level, cd.gx, cd.gz, cd.axis); d && d->state() == Door::State::Open) {
+                    d->toggle(m_player->feetPosition());
+                    std::printf("[Demo] t=%.2f the level %d stairwell door swings shut behind the player\n", m_demoTime, cd.level);
+                }
+                cd.shut = true;
+            }
+        }
+        const bool tick = std::floor(m_demoTime * 2.0f) != std::floor((m_demoTime - dt) * 2.0f);
+        const Agent& chaser = m_chaser == EntityKind::Stalker ? static_cast<const Agent&>(m_entities->stalker()) : m_entities->wanderer();
+        if (tick && chaser.active()) {
+            std::string doors;
+            for (int k = 0; k < (m_options.demo == "stairs-chase" ? 2 : 1); ++k) {
+                const Door* d = m_chunks->doorOnEdge(m_chaseDoors[k].level, m_chaseDoors[k].gx, m_chaseDoors[k].gz, m_chaseDoors[k].axis);
+                char one[40];
+                std::snprintf(one, sizeof(one), " L%d %s", m_chaseDoors[k].level, !d ? "none" : d->openAmount() > 0.99f ? "open" : d->openAmount() > 0.0f ? "moving" : "shut");
+                doors += one;
+                if (d && d->openAmount() > 0.5f && m_options.demo == "stairs-chase") {
+                    // Which way it swung: the open panel lies out in the room, or in the stairwell.
+                    const glm::ivec2 stairCell = NavGrid::cellOf(m_autopilot.empty() ? glm::vec3(0.0f) : m_autopilot[1].pos);
+                    const glm::vec3 inside = NavGrid::cellCenter(stairCell, m_chaseDoors[k].level);
+                    const glm::vec3 panel = d->center() - d->doorwayCenter(), into = inside - d->doorwayCenter();
+                    doors += glm::dot(glm::vec2(panel.x, panel.z), glm::vec2(into.x, into.z)) < 0.0f ? " (out)" : " (IN)";
+                }
+            }
+            const glm::vec3 e = chaser.feet(), p = m_player->feetPosition();
+            std::printf("[Chase] t=%.2f %s L%d (%.1f %.2f %.1f) %s%s | player L%d (%.1f %.2f %.1f) %.1fm | doors%s\n", m_demoTime,
+                        m_chaser == EntityKind::Stalker ? "stalker" : "wanderer", chaser.level(), e.x, e.y, e.z,
+                        m_chaser == EntityKind::Stalker ? stalkerStateName(m_entities->stalker().state()) : wandererStateName(m_entities->wanderer().state()),
+                        chaser.usingStairs() ? " (stairs)" : "", m_focusLevel, p.x, p.y, p.z, glm::length(e - p), doors.c_str());
+        }
     }
     if (m_options.demo == "cabinet" && m_options.demoInput == "use-key") {
         // The use key, pressed for real: at once (the drawer is still rolling out, so it

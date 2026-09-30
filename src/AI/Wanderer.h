@@ -17,7 +17,10 @@
 // Hearing is audio propagation on the world's structure: each NoiseEvent
 // has an audible radius (footsteps scale with speed - crouch-walking is
 // nearly silent - doors and landings are loud), halved when walls stand in
-// between. It opens doors in its way (loudly). It never stops muttering:
+// between. The slab between storeys swallows sound, except up and down a
+// stairwell: a noise on the next storey reaches it through the nearest
+// stairwell (the long way round, muffled, more so past its closed doors),
+// and it climbs the stairs after it. It opens doors in its way (loudly). It never stops muttering:
 // the Soundscape loops its broken phrases from its head position, growing
 // louder as it closes in.
 //
@@ -68,19 +71,17 @@ private:
     bool listen(const std::vector<NoiseEvent>& noises, const NavGrid& nav);
     /// Plans a short aimless walk (that tends to lean towards the player).
     void pickRoamTarget(const NavGrid& nav, const glm::vec3& playerFeet);
-    /// Handles a closed door on the path; true while it is waiting for one.
-    bool handleDoors(float dt, const NavGrid& nav, ChunkManager& chunks, const Physics& physics);
     void animate(float dt, std::vector<EntitySound>& sounds);
     void pose();
 
     rnd::Rng  m_rng;
     State     m_state = State::Roaming;
-    glm::vec3 m_target{0.0f};     ///< Where it thinks the sound came from.
+    glm::vec3 m_target{0.0f};     ///< Where it thinks the sound came from...
+    int       m_targetLevel = 0;  ///< ...and on which storey (up or down a stairwell, perhaps).
     float     m_alert = 0.0f;
     float     m_timer = 0.0f;
     float     m_replan = 0.0f;
     float     m_listenPause = 0.0f; ///< Freezes to listen after hearing something.
-    float     m_doorWait = 0.0f;
     glm::vec3 m_heardDir{0.0f, 0.0f, 1.0f};
 
     // Animation.

@@ -2,8 +2,10 @@
 // ---------------------------------------------------------------------------
 // Door.h
 // An interactable wood-laminate office door hanging in a metal frame.
-// The door swings (smoothly eased) about a vertical hinge axis, always away
-// from the player who opened it, and exposes an AABB for collision.
+// The door swings (smoothly eased) about a vertical hinge axis, away from
+// whoever opened it - except doors given a fixed swing side (a stairwell's
+// entrance always swings out into the room, never into the stairs) - and
+// exposes an AABB for collision.
 // ---------------------------------------------------------------------------
 
 #include "Physics/AABB.h"
@@ -25,15 +27,21 @@ public:
     /// @param id        Globally unique, deterministic identifier (edge hash).
     /// @param hinge     World position of the hinge axis at floor level.
     /// @param closedDir Unit horizontal direction from hinge to latch when closed.
-    Door(uint64_t id, const glm::vec3& hinge, const glm::vec3& closedDir);
+    /// @param swingToward If non-zero, the door always swings towards this
+    ///                    (horizontal) side, whoever opens it.
+    Door(uint64_t id, const glm::vec3& hinge, const glm::vec3& closedDir, const glm::vec3& swingToward = glm::vec3(0.0f));
 
     /// Builds the shared door geometry (panel, lever handles, hinges, kick
     /// plates) in door-local space: hinge at the origin, panel along +X.
     static MeshData buildMesh();
 
-    /// Starts opening (away from `userPos`, the player or an entity) or
-    /// closing; reverses mid-swing.
+    /// Starts opening (away from `userPos`, the player or an entity, unless
+    /// its swing side is fixed) or closing; reverses mid-swing.
     void toggle(const glm::vec3& userPos);
+
+    /// True if opening it would swing the panel towards `userPos` (a door
+    /// with a fixed swing side, opened from that side): stand back.
+    bool swingsToward(const glm::vec3& userPos) const;
 
     /// Advances the swing animation. The door only pauses if its panel would
     /// actually intersect the player at the next step (it never pushes into
@@ -95,6 +103,7 @@ private:
     glm::vec3 m_normal;   ///< m_axis x up: positive swing side.
     float     m_progress = 0.0f; ///< 0 = closed, 1 = fully open.
     int       m_side     = 0;    ///< Swing side (+1 / -1), 0 when closed.
+    int       m_fixedSide = 0;   ///< Always swings to this side (+1 / -1), 0 = away from the user.
     bool      m_opening  = false;
     uint8_t   m_events   = 0;    ///< Pending kEvent* bits.
 };

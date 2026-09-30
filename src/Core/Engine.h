@@ -80,6 +80,11 @@ struct EngineOptions {
     /// the chunk unloads, comes back and checks the drawer; --type use-key: presses E to take
     /// the part, then again to close),
     /// part (walks up to the nearest part lying on a desk or chair),
+    /// stairs-chase (climbs the nearest stairwell, shutting its doors behind; the Stalker -
+    /// or with --type wanderer the Wanderer - has to follow on foot; --type wanderer-far: out of
+    /// earshot, so only the fallback brings it), stalker-door (the
+    /// Stalker hunts the player from behind a closed door), stalker-stare (the player keeps
+    /// turning to face the Stalker: stared down three times, it bolts far away),
     /// assemble (all four parts, put together), tesla / tesla-stalker (the gun,
     /// fired at the Wanderer / the Stalker; --type <percent> sets the battery).
     std::string demo;
@@ -298,6 +303,14 @@ private:
     int    m_demoStep = 0;
     std::string m_lastEntityStates;
     std::string m_lastPhoneLog;              ///< Last logged line state ("phone" scene).
+    /// A stairwell entrance door in the "stairs-chase" scene (shut behind the player on each storey).
+    struct ChaseDoor {
+        int             level = 0, gx = 0, gz = 0;
+        world::EdgeAxis axis = world::EdgeAxis::West;
+        bool            shut = false;
+    };
+    ChaseDoor   m_chaseDoors[2];
+    EntityKind  m_chaser{};                  ///< Who follows the player in the "stairs-chase" / "stalker-door" scenes.
     uint64_t    m_demoCabinet = 0;           ///< Cabinet searched in the "cabinet" scene...
     int         m_demoDrawer = 0;            ///< ...its drawer...
     glm::vec3   m_demoReturn{0.0f};          ///< ...and where the player stood.

@@ -18,7 +18,7 @@ inline constexpr const char* kWindowTitle  = "Backrooms";
 // ----- World ----------------------------------------------------------------
 inline constexpr uint64_t kDefaultWorldSeed = 0x0B4C'4000'1CEBull; // "Level 0"
 inline constexpr int      kChunkLoadRadius  = 3;  // Chebyshev radius, in chunks
-inline constexpr int      kChunkAdjacentRadius = 1; // Radius loaded on the storeys above and below
+inline constexpr int      kChunkAdjacentRadius = 2; // Radius loaded on the storeys above and below (entities walk them to follow you)
 inline constexpr int      kChunkBuildBudget = 2;  // Max new chunks built per frame
 inline constexpr float    kLevelSwitchBand  = 0.6f; // Fraction of a storey climbed before the focus storey changes
 
@@ -92,6 +92,11 @@ inline constexpr float kStalkerExposureLimit = 1.8f;   // Seconds of being watch
 inline constexpr float kStalkerDarkLevel     = 0.18f;  // Below this light level it cannot be made out...
 inline constexpr float kStalkerDarkSightDist = 7.0f;   // ...beyond this distance
 inline constexpr float kStalkerDrainRadius   = 7.5f;   // Lights within this radius sag and stutter
+inline constexpr int   kStalkerStareDowns    = 3;      // Stared down this many times, it bolts far away...
+inline constexpr float kStalkerRetreatMin    = 10.0f;  // ...to a dark spot this far from the player...
+inline constexpr float kStalkerRetreatMax    = 20.0f;  // ...but no farther, out of their sight...
+inline constexpr float kStalkerLieLowMin     = 7.0f;   // ...and lies low there this long...
+inline constexpr float kStalkerLieLowMax     = 18.0f;  // ...to this long before hunting again
 // The Wanderer: blind, hunts by sound, never stops talking.
 inline constexpr float kWandererFirstSpawn   = 20.0f;
 inline constexpr float kWandererRoamSpeed    = 1.0f;
@@ -104,6 +109,7 @@ inline constexpr float kWandererRelocateDist = 48.0f;  // Left farther behind th
 // Both.
 inline constexpr float kCatchDistance        = 0.85f;
 inline constexpr float kStalkerRelocateDist  = 70.0f;  // Farther than this: it resurfaces nearer
+inline constexpr float kFollowTimeout        = 30.0f;  // Left on another storey this long (no way through the stairs found): it resurfaces near the player
 // Audible radius (m) of player-made noise; walls halve it.
 inline constexpr float kNoiseFootstepRun     = 22.0f;  // Scaled by footstep intensity
 inline constexpr float kNoiseLanding         = 18.0f;

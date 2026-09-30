@@ -5,6 +5,7 @@
 
 #include "Core/Config.h"
 #include "Render/EntityRenderer.h"
+#include "World/ChunkManager.h"
 
 #include <algorithm>
 #include <cmath>
@@ -17,6 +18,15 @@ constexpr float kHeight = 1.9f;     ///< Collision height (it stoops under the c
 constexpr int   kMaxMotes = 70;
 
 inline glm::vec2 xz(const glm::vec3& v) { return {v.x, v.z}; }
+
+/// Nothing solid (walls, doors, furniture, flights of stairs, slabs) between two points.
+bool clearLine(const glm::vec3& a, const glm::vec3& b, const ICollisionWorld& world, const Physics& physics) {
+    const glm::vec3 d = b - a;
+    const float len = glm::length(d);
+    if (len < 1e-3f) return true;
+    float t = 0.0f;
+    return !physics.raycast(a, d / len, len - 0.05f, world, t);
+}
 
 /// Local body frame: +z forward (yaw), +y up, +x to the side.
 struct Frame {
@@ -42,6 +52,7 @@ void Stalker::place(const glm::vec3& feet, int level, float yaw) {
     m_exposure = 0.0f;
     m_coverTries = 0;
     m_flees = 0;
+    m_retreating = false;
     m_patient = false;
     m_crawl = 0.0f;
     m_stride = 0.0f;
@@ -79,8 +90,11 @@ LightDisturbance Stalker::lightDisturbance() const {
 
 // ---- Perception -------------------------------------------------------------------------
 
-bool Stalker::isSeenBy(const PlayerView& player, const NavGrid& nav) const {
-    if (player.viewBlocked || player.level != m_level) return false;
+bool Stalker::isSeenBy(const PlayerView& player, const NavGrid& nav, const ICollisionWorld& world, const Physics& physics) const {
+    if (player.viewBlocked) return false;
+    // In a stairwell the storeys meet: it can be seen up or down the flights.
+    const bool shaft = nav.isStairwell(m_level, NavGrid::cellOf(m_feet)) || nav.isStairwell(player.level, NavGrid::cellOf(player.feet));
+    if (player.level != m_level && !(shaft && std::abs(player.level - m_level) <= 1)) return false;
     // Frustum culling as a sense: is any part of the body inside the view volume?
     const AABB box = m_rig.limbs().empty() ? bodyBox() : m_rig.bounds();
     if (!player.frustum.isVisible(box)) return false;
@@ -92,17 +106,32 @@ bool Stalker::isSeenBy(const PlayerView& player, const NavGrid& nav) const {
     }
     const glm::vec3 samples[3] = {m_eyes[0], box.center(), m_feet + glm::vec3(0.0f, 0.3f, 0.0f)};
     for (const glm::vec3& p : samples) {
-        if (nav.lineOfSight(m_level, xz(player.eye), xz(p))) return true;
+        if (shaft ? clearLine(player.eye, p, world, physics) : nav.lineOfSight(m_level, xz(player.eye), xz(p))) return true;
     }
     return false;
+}
+
+bool Stalker::canRush(const PlayerView& player, const NavGrid& nav, const ICollisionWorld& world, const Physics& physics) const {
+    const bool shaft = nav.isStairwell(m_level, NavGrid::cellOf(m_feet)) || nav.isStairwell(player.level, NavGrid::cellOf(player.feet));
+    if (!shaft) return player.level == m_level && clearRun(nav, player.feet);
+    const glm::vec3 chest(0.0f, 0.9f, 0.0f);
+    return std::fabs(player.feet.y - m_feet.y) < 1.5f && clearLine(m_feet + chest, player.feet + chest, world, physics);
+}
+
+NavProfile Stalker::fleeProfile() {
+    NavProfile p;
+    p.avoidClosedDoors = true; // a shut door is as good as a wall to something darting for cover
+    return p;
 }
 
 NavProfile Stalker::huntProfile(const PlayerView& player, const NavGrid& nav) const {
     NavProfile p;
     p.darkPreference = 3.0f; // lit cells cost up to ~4x a dark one
-    p.passDoors = true;      // it slips under them
+    p.passDoors = true;      // it opens them...
+    p.doorCost = 1.5f;       // ...but would rather not stop to
     // Cells the player is looking at are expensive: it circles round and comes from behind.
     const int level = m_level;
+    if (player.level != level) return p; // on another storey the player's view does not reach this one
     p.cellCost = [player, level, &nav](const glm::ivec2& cell) {
         const glm::vec3 c = NavGrid::cellCenter(cell, level) + glm::vec3(0.0f, 1.2f, 0.0f);
         if (glm::length(c - player.eye) > 28.0f) return 0.0f;
@@ -120,7 +149,7 @@ bool Stalker::findCover(const PlayerView& player, const NavGrid& nav, glm::vec3&
     };
     std::vector<Item> queue{{NavGrid::cellOf(m_feet), 0}};
     std::vector<glm::ivec2> visited{queue[0].cell};
-    NavProfile profile;
+    const NavProfile profile = fleeProfile();
     const float y = world::levelFloorY(m_level);
     const glm::vec2 offsets[5] = {{0.0f, 0.0f}, {1.5f, 1.5f}, {-1.5f, 1.5f}, {1.5f, -1.5f}, {-1.5f, -1.5f}};
     float bestScore = 1e9f;
@@ -165,10 +194,60 @@ void Stalker::freeze() {
     m_timer = 0.0f;
 }
 
-void Stalker::startFleeing(const PlayerView& player, const NavGrid& nav, std::vector<EntitySound>& sounds) {
-    glm::vec3 cover;
-    if (findCover(player, nav, cover) && planTo(nav, cover, NavProfile{})) {
+bool Stalker::findRetreat(const PlayerView& player, const NavGrid& nav, glm::vec3& out) const {
+    // Breadth-first over the cells it can dash through (open ways only), out
+    // to the ring 10-20 m from the player: the darkest spot there they cannot
+    // see, not too long a dash away.
+    struct Item {
+        glm::ivec2 cell;
+        int        depth;
+    };
+    std::vector<Item> queue{{NavGrid::cellOf(m_feet), 0}};
+    std::vector<glm::ivec2> visited{queue[0].cell};
+    const NavProfile profile = fleeProfile();
+    const float y = world::levelFloorY(m_level);
+    const glm::vec2 offsets[5] = {{0.0f, 0.0f}, {1.5f, 1.5f}, {-1.5f, 1.5f}, {1.5f, -1.5f}, {-1.5f, -1.5f}};
+    float bestScore = 1e9f;
+    for (size_t head = 0; head < queue.size(); ++head) {
+        const Item it = queue[head];
+        const glm::vec3 centre = NavGrid::cellCenter(it.cell, m_level);
+        for (const glm::vec2& o : offsets) {
+            const glm::vec3 p(centre.x + o.x, y, centre.z + o.y);
+            const float toPlayer = glm::length(xz(p) - xz(player.feet));
+            if (toPlayer < cfg::kStalkerRetreatMin || toPlayer > cfg::kStalkerRetreatMax) continue;
+            const glm::vec2 line = xz(p) - xz(player.eye);
+            const glm::vec2 perp = glm::normalize(glm::vec2(-line.y, line.x)) * 0.35f;
+            const bool hidden = !nav.lineOfSight(m_level, xz(player.eye), xz(p)) &&
+                                !nav.lineOfSight(m_level, xz(player.eye), xz(p) + perp) &&
+                                !nav.lineOfSight(m_level, xz(player.eye), xz(p) - perp);
+            if (!hidden) continue;
+            const float score = nav.cellBrightness(m_level, it.cell) * 3.0f + static_cast<float>(it.depth) * 0.4f;
+            if (score < bestScore) {
+                bestScore = score;
+                out = p;
+            }
+        }
+        if (it.depth >= 8) continue;
+        const glm::ivec2 steps[4] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+        for (const glm::ivec2& s : steps) {
+            const glm::ivec2 nb = it.cell + s;
+            if (std::find(visited.begin(), visited.end(), nb) != visited.end()) continue;
+            if (!nav.canStep(m_level, it.cell, nb, profile)) continue;
+            visited.push_back(nb);
+            queue.push_back({nb, it.depth + 1});
+        }
+    }
+    return bestScore < 1e8f;
+}
+
+void Stalker::startFleeing(const PlayerView& player, const NavGrid& nav, std::vector<EntitySound>& sounds, bool stareDown) {
+    glm::vec3 target;
+    // Stared down once too often: instead of the nearest cover it bolts far away.
+    const bool retreat = stareDown && m_flees + 1 >= cfg::kStalkerStareDowns && findRetreat(player, nav, target) &&
+                         planTo(nav, target, fleeProfile());
+    if (retreat || (findCover(player, nav, target) && planTo(nav, target, fleeProfile()))) {
         m_state = State::Fleeing;
+        m_retreating = retreat;
         ++m_coverTries;
         sounds.push_back({EntitySound::Type::StalkerHiss, m_feet + glm::vec3(0.0f, 1.0f, 0.0f), 1.0f});
     } else {
@@ -176,16 +255,17 @@ void Stalker::startFleeing(const PlayerView& player, const NavGrid& nav, std::ve
     }
 }
 
-bool Stalker::update(float dt, const PlayerView& player, const NavGrid& nav, const ICollisionWorld& world,
-                     const Physics& physics, std::vector<EntitySound>& sounds) {
+bool Stalker::update(float dt, const PlayerView& player, const NavGrid& nav, ChunkManager& chunks, const Physics& physics,
+                     std::vector<EntitySound>& sounds) {
     if (!m_active) return false;
+    const ICollisionWorld& world = chunks; // doors included: it has to open them
     const VitalSigns vitals = updateVitals(dt);
     if (vitals.pain) sounds.push_back({EntitySound::Type::StalkerPain, m_eyes[0], 1.0f});
     if (vitals.died) {
         sounds.push_back({EntitySound::Type::StalkerDeath, m_eyes[0], 1.0f});
         sounds.push_back({EntitySound::Type::Vaporize, m_feet + glm::vec3(0.0f, 1.0f, 0.0f), 1.0f});
     }
-    m_seen = isSeenBy(player, nav);
+    m_seen = isSeenBy(player, nav, world, physics);
     if (shocked() || dying()) {
         // Caught in the arc: it rears up to its full height, screeching and
         // convulsing, unable to move.
@@ -217,7 +297,7 @@ bool Stalker::update(float dt, const PlayerView& player, const NavGrid& nav, con
         turnTowards(toPlayer, 1.2f, dt);
         if (m_seen) {
             m_exposure += dt;
-            if (m_exposure > 0.7f) startFleeing(player, nav, sounds);
+            if (m_exposure > 0.7f) startFleeing(player, nav, sounds, true);
         } else {
             m_exposure = std::max(0.0f, m_exposure - 0.5f * dt);
             m_timer -= dt;
@@ -238,17 +318,18 @@ bool Stalker::update(float dt, const PlayerView& player, const NavGrid& nav, con
         }
         m_replan -= dt;
         if (m_replan <= 0.0f || m_stuck > 1.0f) {
-            planTo(nav, player.feet, huntProfile(player, nav));
+            // Wherever the player is - up or down the stairs included.
+            planTo(nav, player.feet, huntProfile(player, nav), player.level);
             m_replan = 0.4f;
         }
-        {
+        if (!handleDoors(dt, nav, chunks, physics)) {
             // Rushes while far off, then creeps the last few metres before the lunge.
-            const float prowl = std::clamp((dist - 3.0f) / (cfg::kStalkerProwlDist - 3.0f), 0.0f, 1.0f);
+            const float prowl = sameLevel ? std::clamp((dist - 3.0f) / (cfg::kStalkerProwlDist - 3.0f), 0.0f, 1.0f) : 1.0f;
             followPath(dt, glm::mix(cfg::kStalkerCreepSpeed, cfg::kStalkerSpeed, prowl), 9.0f, nav, world, physics);
         }
         // The rush goes straight at the player, so it needs a straight run for
         // the whole body, not just a sight line through a doorway.
-        if (sameLevel && dist < cfg::kStalkerLungeRange && clearRun(nav, player.feet)) {
+        if (dist < cfg::kStalkerLungeRange && canRush(player, nav, world, physics)) {
             m_state = State::Lunging;
         }
         break;
@@ -258,7 +339,7 @@ bool Stalker::update(float dt, const PlayerView& player, const NavGrid& nav, con
         if (m_seen) {
             // Being stared at is intolerable - the closer, the worse.
             m_exposure += dt * (1.0f + std::max(0.0f, 6.0f - dist) * 0.5f);
-            if (m_exposure > cfg::kStalkerExposureLimit) startFleeing(player, nav, sounds);
+            if (m_exposure > cfg::kStalkerExposureLimit) startFleeing(player, nav, sounds, true);
         } else {
             m_timer += dt;
             if (m_timer > 0.12f) { // the moment you look away...
@@ -272,7 +353,16 @@ bool Stalker::update(float dt, const PlayerView& player, const NavGrid& nav, con
         // The dart happens even while watched: a blur round the corner.
         const bool arrived = followPath(dt, cfg::kStalkerDartSpeed, 16.0f, nav, world, physics);
         if (arrived || m_stuck > 0.6f) {
-            if (m_seen && m_coverTries < 3) {
+            if (m_retreating) {
+                // Far enough: it lies low for a long while, and its count of stare-downs starts over.
+                m_state = State::Lurking;
+                m_timer = m_rng.range(cfg::kStalkerLieLowMin, cfg::kStalkerLieLowMax);
+                m_exposure = 0.0f;
+                m_coverTries = 0;
+                m_patient = true;
+                m_flees = 0;
+                m_retreating = false;
+            } else if (m_seen && m_coverTries < 3) {
                 startFleeing(player, nav, sounds);
             } else {
                 m_state = State::Lurking;
@@ -292,10 +382,10 @@ bool Stalker::update(float dt, const PlayerView& player, const NavGrid& nav, con
         turnTowards(dir, 12.0f, dt);
         if (m_seen && dist > 1.1f) {
             freeze(); // turned round just in time
-        } else if (sameLevel && dist < cfg::kCatchDistance && std::fabs(toPlayer.y) < 1.2f) {
+        } else if (dist < cfg::kCatchDistance && std::fabs(toPlayer.y) < 1.2f) {
             caught = true;
         } else if (dist > cfg::kStalkerLungeRange * 2.0f || m_stuck > 0.25f ||
-                   (dist > cfg::kCatchDistance && !clearRun(nav, player.feet))) {
+                   (dist > cfg::kCatchDistance && !canRush(player, nav, world, physics))) {
             // Lost the straight run (the player stepped behind a wall or door
             // frame): back to the path, which goes round through the opening.
             m_state = State::Stalking;

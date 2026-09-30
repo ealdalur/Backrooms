@@ -5,6 +5,7 @@
 
 #include "Core/Config.h"
 #include "World/ChunkManager.h"
+#include "World/Stairwell.h"
 #include "World/WorldGenerator.h"
 
 #include <algorithm>
@@ -62,8 +63,51 @@ bool NavGrid::canStep(int level, const glm::ivec2& a, const glm::ivec2& b, const
     if (!edgeBetween(a, b, gx, gz, axis)) return false;
     const world::EdgeType type = m_generator.edge(level, gx, gz, axis);
     if (type == world::EdgeType::Wall) return false;
-    if (type == world::EdgeType::Door && !profile.passDoors) return false;
+    if (type == world::EdgeType::Door) {
+        if (!profile.passDoors) return false;
+        if (profile.avoidClosedDoors) {
+            const Door* door = m_chunks.doorOnEdge(level, gx, gz, axis);
+            if (!door || door->openAmount() < 0.9f) return false;
+        }
+    }
     return walkable(level, b);
+}
+
+bool NavGrid::isStairwell(int level, const glm::ivec2& cell) const {
+    return m_generator.cellRole(level, cell.x, cell.y) != world::CellRole::Room;
+}
+
+const Door* NavGrid::doorBetween(int level, const glm::ivec2& a, const glm::ivec2& b) const {
+    int gx, gz;
+    world::EdgeAxis axis;
+    if (!edgeBetween(a, b, gx, gz, axis)) return nullptr;
+    return m_chunks.doorOnEdge(level, gx, gz, axis);
+}
+
+bool NavGrid::findStairLink(int level, int dir, const glm::ivec2& near, StairLink& out, int radius) const {
+    const int lower = dir > 0 ? level : level - 1;
+    const int n = world::kChunkCells;
+    const int cx0 = world::floorDiv(near.x, n), cz0 = world::floorDiv(near.y, n);
+    int best = -1;
+    for (int dz = -radius; dz <= radius; ++dz) {
+        for (int dx = -radius; dx <= radius; ++dx) {
+            const auto s = m_generator.stairwell(lower, cx0 + dx, cz0 + dz);
+            if (!s) continue;
+            const glm::ivec2 cell((cx0 + dx) * n + s->lx, (cz0 + dz) * n + s->lz);
+            std::vector<glm::vec3> route = stairs::climbRoute(cell.x, cell.y, lower, s->rotation);
+            const glm::ivec2 outside = cellOf(route.front());
+            // Both ends must be somewhere an entity can stand (loaded, ordinary rooms).
+            if (!walkable(lower, outside) || !walkable(lower + 1, outside)) continue;
+            const int d = manhattan(near, outside);
+            if (best >= 0 && d >= best) continue;
+            best = d;
+            out.lower = lower;
+            out.cell = cell;
+            out.outside = outside;
+            out.route = std::move(route);
+        }
+    }
+    return best >= 0;
 }
 
 glm::vec3 NavGrid::crossing(int level, const glm::ivec2& a, const glm::ivec2& b) const {

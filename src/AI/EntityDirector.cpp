@@ -54,10 +54,6 @@ float segmentDistance2(const glm::vec3& p1, const glm::vec3& q1, const glm::vec3
 const char* entityName(EntityKind kind) { return kind == EntityKind::Stalker ? "Stalker" : "Wanderer"; }
 } // namespace
 
-void EntityDirector::NoDoorWorld::gatherColliders(const AABB& region, std::vector<AABB>& out) const {
-    m_chunks.gatherColliders(region, out, false);
-}
-
 EntityDirector::EntityDirector(const WorldGenerator& generator, const ChunkManager& chunks, uint64_t seed)
     : m_nav(generator, chunks),
       m_rng(rnd::hashCombine(seed, 0xE417'1735ull)),
@@ -139,16 +135,25 @@ bool EntityDirector::findSpawn(const PlayerView& view, float minDist, float maxD
     return bestScore < 1e8f;
 }
 
-bool EntityDirector::manageLifetime(Agent& agent, float& timer, const PlayerView& view, const ChunkManager& chunks,
-                                    bool canVanish, float maxDistance) {
+bool EntityDirector::manageLifetime(Agent& agent, float& timer, float& away, float dt, const PlayerView& view,
+                                    const ChunkManager& chunks, bool canVanish, float maxDistance) {
+    // On another storey it has to walk (the stairs): only if it cannot find
+    // its way for a long while does it give up and resurface near the player.
     const bool otherLevel = agent.level() != view.level;
-    const bool gone = otherLevel || glm::length(agent.feet() - view.feet) > maxDistance ||
+    away = otherLevel ? away + dt : 0.0f;
+    const bool stranded = away > cfg::kFollowTimeout;
+    const bool gone = stranded || (!otherLevel && glm::length(agent.feet() - view.feet) > maxDistance) ||
                       !chunks.isLoadedAt(agent.feet(), agent.level()) ||
-                      agent.feet().y < world::levelFloorY(agent.level()) - 3.0f || agent.stuckTime() > 4.0f;
+                      agent.feet().y < world::levelFloorY(agent.level()) - 3.0f ||
+                      (agent.stuckTime() > 4.0f && !agent.usingStairs());
     if (!gone || !canVanish) return false;
+    if (stranded) {
+        std::cout << "[Entities] The " << (&agent == &m_stalker ? "Stalker" : "Wanderer")
+                  << " found no way to the player's storey: it resurfaces near them\n";
+    }
     agent.deactivate();
-    // It follows the player to other storeys - after a while.
-    timer = otherLevel ? m_rng.range(8.0f, 16.0f) : m_rng.range(3.0f, 7.0f);
+    away = 0.0f;
+    timer = stranded ? m_rng.range(1.0f, 3.0f) : m_rng.range(3.0f, 7.0f);
     return true;
 }
 
@@ -188,27 +193,18 @@ void EntityDirector::update(float dt, const Camera& camera, float aspect, const 
     m_view.frustum.update(narrowed.projectionMatrix(aspect * 0.95f) * narrowed.viewMatrix());
 
     if (!m_holding) {
-        const NoDoorWorld noDoors(chunks);
-
-        // ---- The Stalker. Stared down too often, it vanishes while unseen and
-        //      resurfaces somewhere else - closer, and out of sight.
+        // ---- The Stalker. (Stared down too often, it bolts far away on its own - see Stalker.)
         if (m_stalkerEnabled) {
             if (m_stalker.active()) {
-                if (m_stalker.wantsToResurface() && !m_stalker.seen()) {
-                    m_stalker.deactivate();
-                    m_stalkerTimer = m_rng.range(4.0f, 9.0f);
-                    m_stalkerResurface = true;
-                } else if (!manageLifetime(m_stalker, m_stalkerTimer, m_view, chunks, !m_stalker.seen() && !m_stalker.dying(),
-                                           cfg::kStalkerRelocateDist) &&
-                           m_stalker.update(dt, m_view, m_nav, noDoors, physics, m_sounds)) {
+                if (!manageLifetime(m_stalker, m_stalkerTimer, m_stalkerAway, dt, m_view, chunks,
+                                    !m_stalker.seen() && !m_stalker.dying(), cfg::kStalkerRelocateDist) &&
+                    m_stalker.update(dt, m_view, m_nav, chunks, physics, m_sounds)) {
                     m_catch = EntityKind::Stalker;
                 }
             } else if ((m_stalkerTimer -= dt) <= 0.0f) {
                 glm::vec3 p;
-                const float minDist = m_stalkerResurface ? 10.0f : 22.0f, maxDist = m_stalkerResurface ? 20.0f : 40.0f;
-                if (findSpawn(m_view, minDist, maxDist, true, physics, chunks, p)) {
+                if (findSpawn(m_view, 22.0f, 40.0f, true, physics, chunks, p)) {
                     m_stalker.place(p, playerLevel, yawToward(p, playerFeet));
-                    m_stalkerResurface = false;
                 } else {
                     m_stalkerTimer = 2.0f;
                 }
@@ -218,7 +214,8 @@ void EntityDirector::update(float dt, const Camera& camera, float aspect, const 
         // ---- The Wanderer.
         if (m_wandererEnabled) {
             if (m_wanderer.active()) {
-                if (!manageLifetime(m_wanderer, m_wandererTimer, m_view, chunks, !m_wanderer.dying(), cfg::kWandererRelocateDist) &&
+                if (!manageLifetime(m_wanderer, m_wandererTimer, m_wandererAway, dt, m_view, chunks, !m_wanderer.dying(),
+                                    cfg::kWandererRelocateDist) &&
                     m_wanderer.update(dt, m_view, m_nav, chunks, physics, noises, m_sounds)) {
                     m_catch = EntityKind::Wanderer;
                 }

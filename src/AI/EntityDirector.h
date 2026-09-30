@@ -6,9 +6,13 @@
 //     suitable around the player (the Stalker in a dark spot the player
 //     cannot see; the Wanderer out of earshot somewhere ahead of where the
 //     player is heading, so the first thing they notice is its muttering);
-//   * resurfacing: entities are not bound to one storey - if the player
-//     leaves the area or changes level, they fade out and manifest again
-//     near the player a little later ("they always find you");
+//   * following: entities are not bound to one storey - when the player
+//     takes the stairs they come after them on foot, up or down the nearest
+//     stairwell (the Stalker hunts them there; the Wanderer only if it heard
+//     them go). Only if one is still stuck on another storey after
+//     kFollowTimeout does it fade out and manifest near the player instead;
+//     one left far behind on the same storey resurfaces nearer too ("they
+//     always find you");
 //   * perception: builds the player's real view frustum for the Stalker;
 //   * outputs for other systems: catches, light disturbances, entity sounds,
 //     the voice position, fear (0..1) and hints for the terminal voice;
@@ -95,25 +99,17 @@ public:
     const Wanderer& wanderer() const { return m_wanderer; }
 
 private:
-    /// Collision view that omits doors (the Stalker slips under them).
-    class NoDoorWorld : public ICollisionWorld {
-    public:
-        explicit NoDoorWorld(const ChunkManager& chunks) : m_chunks(chunks) {}
-        void gatherColliders(const AABB& region, std::vector<AABB>& out) const override;
-
-    private:
-        const ChunkManager& m_chunks;
-    };
-
     /// Tries to find a spot `minDist`..`maxDist` from the player on their
     /// storey, out of their sight, preferring darkness if asked and the
     /// direction `ahead` (unit, horizontal) if given.
     bool findSpawn(const PlayerView& view, float minDist, float maxDist, bool preferDark, const Physics& physics,
                    const ChunkManager& chunks, glm::vec3& out, const glm::vec3* ahead = nullptr);
     /// Removes an entity that drifted out of reach (farther than
-    /// `maxDistance`, on another storey, unloaded, stuck); true if it did.
-    bool manageLifetime(Agent& agent, float& timer, const PlayerView& view, const ChunkManager& chunks, bool canVanish,
-                        float maxDistance);
+    /// `maxDistance` on the player's storey, stranded on another storey for
+    /// kFollowTimeout, unloaded, stuck); true if it did. `away` accumulates
+    /// the time it has spent on a storey other than the player's.
+    bool manageLifetime(Agent& agent, float& timer, float& away, float dt, const PlayerView& view, const ChunkManager& chunks,
+                        bool canVanish, float maxDistance);
 
     NavGrid  m_nav;
     rnd::Rng m_rng;
@@ -126,8 +122,9 @@ private:
     bool     m_wandererGone = false;
     std::vector<EntityKind> m_vaporised;
     float    m_stalkerTimer;   ///< Countdown to the next (re)appearance.
-    bool     m_stalkerResurface = false; ///< Next appearance is a close-range resurfacing.
     float    m_wandererTimer;
+    float    m_stalkerAway = 0.0f;  ///< Seconds on a storey other than the player's.
+    float    m_wandererAway = 0.0f;
     std::optional<EntityKind> m_catch;
 
     PlayerView                    m_view;

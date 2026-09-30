@@ -464,6 +464,12 @@ void WorldGenerator::buildEdge(ChunkBlueprint& bp, const glm::vec3& origin, int 
         door.hinge = f.point(mid + hw - jw);
         door.closedDir = -f.alongDir();
     }
+    // A stairwell's door swings out into the room, whoever opens it: swung
+    // into the stairwell it would block the narrow lobby at the foot of the stairs.
+    const glm::ivec2 before = axis == EdgeAxis::West ? glm::ivec2(gx - 1, gz) : glm::ivec2(gx, gz - 1);
+    const glm::vec3 across = axis == EdgeAxis::West ? glm::vec3(1.0f, 0.0f, 0.0f) : glm::vec3(0.0f, 0.0f, 1.0f);
+    if (cellRole(level, before.x, before.y) != CellRole::Room) door.swingToward = across;  // stairs behind: open forwards
+    else if (cellRole(level, gx, gz) != CellRole::Room) door.swingToward = -across;       // stairs ahead: open backwards
     bp.doors.push_back(door);
 }
 

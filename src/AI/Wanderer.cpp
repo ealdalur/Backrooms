@@ -38,7 +38,7 @@ void Wanderer::place(const glm::vec3& feet, int level, float yaw) {
     m_alert = 0.0f;
     m_timer = 0.0f;
     m_listenPause = 0.0f;
-    m_doorWait = 0.0f;
+    m_targetLevel = level;
     m_reach = 0.0f;
     pose();
 }
@@ -60,31 +60,61 @@ glm::vec3 Wanderer::confront(const glm::vec3& playerFeet, const glm::vec3& playe
 
 bool Wanderer::listen(const std::vector<NoiseEvent>& noises, const NavGrid& nav) {
     const NoiseEvent* heard = nullptr;
-    float best = 0.0f;
+    float best = 0.0f, heardDist = 0.0f;
+    int heardLevel = m_level;
+    glm::vec3 heardFrom(0.0f); // where it seems to come from (a stairwell's entrance, for another storey)
     for (const NoiseEvent& n : noises) {
-        if (world::levelOf(n.position.y) != m_level) continue; // the slab swallows it
-        const float dist = glm::length(n.position - m_head);
-        if (dist < 2.5f) continue;                             // its own doors and steps
-        const bool clear = nav.lineOfSight(m_level, xz(n.position), xz(m_head));
-        const float radius = n.radius * (clear ? 1.0f : 0.5f);
+        const int level = world::levelOf(n.position.y);
+        float dist = 0.0f, radius = 0.0f;
+        glm::vec3 from = n.position;
+        if (level == m_level) {
+            dist = glm::length(n.position - m_head);
+            if (dist < 2.5f) continue; // its own doors and steps
+            const bool clear = nav.lineOfSight(m_level, xz(n.position), xz(m_head));
+            radius = n.radius * (clear ? 1.0f : 0.5f);
+        } else if (std::abs(level - m_level) == 1) {
+            // The slab swallows it - except up (or down) a stairwell: the long
+            // way round, through the shaft, muffled by its turns and its doors.
+            StairLink link;
+            if (!nav.findStairLink(m_level, level - m_level, NavGrid::cellOf(m_head), link, 1)) continue;
+            const bool up = level > m_level;
+            const glm::vec3 here = up ? link.route.front() : link.route.back(); // its entrance on this storey
+            const glm::vec3 there = up ? link.route.back() : link.route.front();
+            float shaft = 0.0f;
+            for (size_t i = 0; i + 1 < link.route.size(); ++i) shaft += glm::length(link.route[i + 1] - link.route[i]);
+            const bool inShaft = NavGrid::cellOf(n.position) == link.cell;
+            dist = glm::length(here + glm::vec3(0.0f, 1.6f, 0.0f) - m_head) +
+                   (inShaft ? glm::length(n.position - here) : shaft + glm::length(n.position - there));
+            radius = n.radius * 0.5f;
+            for (int lv : {link.lower, link.lower + 1}) {
+                const Door* door = nav.doorBetween(lv, link.outside, link.cell);
+                if (door && door->openAmount() < 0.5f) radius *= 0.5f;
+            }
+            from = here;
+        } else {
+            continue;
+        }
         if (dist >= radius) continue;
         const float strength = 1.0f - dist / radius;
         if (strength > best) {
             best = strength;
             heard = &n;
+            heardDist = dist;
+            heardLevel = level;
+            heardFrom = from;
         }
     }
     if (!heard) return false;
 
     // Blind: it knows roughly where the sound came from, less precisely from afar.
-    const float dist = glm::length(heard->position - m_head);
     const float angle = m_rng.range(0.0f, 2.0f * kPi);
-    const float error = m_rng.range(0.0f, dist * 0.12f);
-    m_target = glm::vec3(heard->position.x + std::cos(angle) * error, world::levelFloorY(m_level),
+    const float error = m_rng.range(0.0f, heardDist * 0.12f);
+    m_target = glm::vec3(heard->position.x + std::cos(angle) * error, world::levelFloorY(heardLevel),
                          heard->position.z + std::sin(angle) * error);
+    m_targetLevel = heardLevel;
     m_alert = std::min(1.0f, std::max(m_alert, 0.3f + best));
 
-    glm::vec3 dir = m_target - m_feet;
+    glm::vec3 dir = heardFrom - m_feet;
     dir.y = 0.0f;
     if (glm::length(dir) > 1e-3f) m_heardDir = glm::normalize(dir);
     // Caught off guard, it freezes for a moment and cocks its head to listen.
@@ -124,28 +154,6 @@ void Wanderer::pickRoamTarget(const NavGrid& nav, const glm::vec3& playerFeet) {
     planTo(nav, c + glm::vec3(m_rng.range(-1.5f, 1.5f), 0.0f, m_rng.range(-1.5f, 1.5f)), profile);
 }
 
-bool Wanderer::handleDoors(float dt, const NavGrid& nav, ChunkManager& chunks, const Physics& physics) {
-    glm::ivec2 from, to;
-    int gx, gz;
-    world::EdgeAxis axis;
-    if (!nextCrossing(from, to) || !NavGrid::edgeBetween(from, to, gx, gz, axis)) return false;
-    Door* door = chunks.doorOnEdge(m_level, gx, gz, axis);
-    if (!door || door->state() == Door::State::Open) {
-        m_doorWait = 0.0f;
-        return false;
-    }
-    const glm::vec3 c = nav.crossing(m_level, from, to);
-    if (glm::length(xz(c) - xz(m_feet)) > 1.4f) return false;
-    if (m_doorWait > 3.0f) return false; // something holds it shut: shove on regardless
-
-    // A closed door ahead: it fumbles it open (loudly) and waits for it to swing.
-    if (door->state() == Door::State::Closed || door->state() == Door::State::Closing) door->toggle(m_feet);
-    m_doorWait += dt;
-    integrate(dt, glm::vec3(0.0f), 8.0f, chunks, physics);
-    turnTowards(c - m_feet, 3.0f, dt);
-    return true;
-}
-
 bool Wanderer::update(float dt, const PlayerView& player, const NavGrid& nav, ChunkManager& chunks,
                       const Physics& physics, const std::vector<NoiseEvent>& noises, std::vector<EntitySound>& sounds) {
     if (!m_active) return false;
@@ -161,7 +169,8 @@ bool Wanderer::update(float dt, const PlayerView& player, const NavGrid& nav, Ch
         integrate(dt, glm::vec3(0.0f), 14.0f, chunks, physics);
         if (!dying()) {
             m_alert = 1.0f;
-            m_target = glm::vec3(player.feet.x, world::levelFloorY(m_level), player.feet.z);
+            m_target = glm::vec3(player.feet.x, world::levelFloorY(player.level), player.feet.z);
+            m_targetLevel = player.level;
             m_state = State::Hunting;
             m_replan = 0.0f;
             m_listenPause = 0.0f;
@@ -205,13 +214,14 @@ bool Wanderer::update(float dt, const PlayerView& player, const NavGrid& nav, Ch
             if (m_replan <= 0.0f) {
                 NavProfile profile;
                 profile.doorCost = 0.5f;
-                planTo(nav, m_target, profile);
+                planTo(nav, m_target, profile, m_targetLevel); // up or down the stairs if it came from there
                 m_replan = hunting ? 0.8f : 2.0f;
             }
             const float speed = hunting ? cfg::kWandererHuntSpeed : cfg::kWandererSearchSpeed;
             if (!handleDoors(dt, nav, chunks, physics)) {
                 const bool arrived = followPath(dt, speed, hunting ? 6.0f : 4.0f, nav, chunks, physics);
-                if (arrived || glm::length(xz(m_target) - xz(m_feet)) < 0.8f || m_stuck > 2.5f) {
+                const bool there = m_level == m_targetLevel && glm::length(xz(m_target) - xz(m_feet)) < 0.8f;
+                if (arrived || there || (m_stuck > 2.5f && !usingStairs())) {
                     m_state = State::Searching;
                     m_timer = m_rng.range(5.0f, 9.0f);
                     clearPath();
@@ -250,7 +260,7 @@ bool Wanderer::update(float dt, const PlayerView& player, const NavGrid& nav, Ch
     animate(dt, sounds);
 
     const glm::vec3 toPlayer = player.feet - m_feet;
-    return player.level == m_level && glm::length(xz(toPlayer)) < cfg::kCatchDistance && std::fabs(toPlayer.y) < 1.0f;
+    return glm::length(xz(toPlayer)) < cfg::kCatchDistance && std::fabs(toPlayer.y) < 1.0f;
 }
 
 // ---- Animation -------------------------------------------------------------------------------
