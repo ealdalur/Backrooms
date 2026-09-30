@@ -3,6 +3,8 @@
 // ---------------------------------------------------------------------------
 #include "Render/ShaderSources.h"
 
+#include <string>
+
 namespace shaders {
 
 // ============================================================================
@@ -42,7 +44,7 @@ void main() {
 // ============================================================================
 // World fragment shader
 // ============================================================================
-const char* const kWorldFragment = R"GLSL(
+const std::string kWorldFragmentStorage = std::string(R"GLSL(
 #version 330 core
 in vec3 vWorldPos;
 in vec3 vNormal;
@@ -276,7 +278,7 @@ vec3 evaluateLights(vec3 P, vec3 N, vec3 V, vec3 albedo, float specIntensity, fl
     return sum * uLightPower;
 }
 
-// ---- Live terminal screens ----------------------------------------------------------
+)GLSL") + R"GLSL(// ---- Live terminal screens ----------------------------------------------------------
 // Scrolling rows of pseudo-glyphs (3x5 dot patterns hashed per character),
 // scanlines and a faint raster glow, so every powered terminal in the world
 // visibly churns out text. The amber variant's UVs are offset by +2 in u.
@@ -445,6 +447,7 @@ void main() {
     oColor = vec4(color, 1.0);
 }
 )GLSL";
+const char* const kWorldFragment = kWorldFragmentStorage.c_str();
 
 // ============================================================================
 // The Stalker (shadow creature)
