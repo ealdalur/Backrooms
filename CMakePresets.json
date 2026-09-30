@@ -57,14 +57,14 @@
             "displayName": "gcc Release",
             "configurePreset": "gcc_Release",
             "configuration": "Release",
-            "jobs": 4
+            "jobs": 0
         },
         {
             "name": "gcc_Debug",
             "displayName": "gcc Debug",
             "configurePreset": "gcc_Debug",
             "configuration": "Debug",
-            "jobs": 4
+            "jobs": 0
         }
     ]
 }
