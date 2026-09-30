@@ -74,11 +74,11 @@ inline constexpr float kTerminalChance = 0.20f; ///< Probability that a placed d
 inline constexpr float kPhoneChance = 0.40f; ///< Probability that a placed desk carries a telephone.
 
 // Tesla coil parts ------------------------------------------------------------------
-// Rare finds: roughly one or two parts per chunk, most of them hidden in
-// filing cabinets. Their own random stream leaves every layout unchanged.
-inline constexpr float kPartDeskChance   = 0.035f; ///< A desk top carries a part.
-inline constexpr float kPartChairChance  = 0.025f; ///< A part left on a chair seat.
-inline constexpr float kPartDrawerChance = 0.03f;  ///< Per filing-cabinet drawer.
+// A few parts per chunk, most of them hidden in filing cabinets. Their own
+// random stream leaves every layout unchanged.
+inline constexpr float kPartDeskChance    = 0.10f; ///< A desk top with a clear spot carries a part.
+inline constexpr float kPartChairChance   = 0.05f; ///< A part left on a chair seat.
+inline constexpr float kPartCabinetChance = 0.20f; ///< A filing cabinet holds one, in a drawer picked at random (20/3% per drawer).
 inline constexpr float kBatteryShare     = 0.34f;  ///< Of all parts found, batteries (the consumable); the rest split evenly.
 inline constexpr float kBatteryMinCharge = 0.55f;  ///< Batteries lying around hold 55..100% charge.
 

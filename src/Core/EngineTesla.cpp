@@ -76,6 +76,7 @@ void Engine::enterCabinet(FileCabinet& cabinet, int drawer) {
     m_cabinetPitch = pitchToward(look);
     m_cabinetMove = 0;
     m_cabinetUse = false;
+    m_cabinetUseCloses = false;
     m_cabinetLeave = false;
     setState(GameState::Cabinet);
 }
@@ -84,6 +85,7 @@ void Engine::leaveCabinet() {
     if (FileCabinet* c = activeCabinet()) c->openDrawer(-1); // pushed shut
     m_cabinetMove = 0;
     m_cabinetUse = false;
+    m_cabinetUseCloses = false;
     m_cabinetLeave = false;
     if (m_state == GameState::Cabinet) setState(GameState::Running);
     // m_cabinetId stays set while the view blends back.
@@ -94,7 +96,12 @@ void Engine::handleCabinetKey(const SDL_KeyboardEvent& key) {
     case SDL_SCANCODE_ESCAPE:
         if (!key.repeat) m_cabinetLeave = true;
         break;
-    case SDL_SCANCODE_E:
+    case SDL_SCANCODE_E: // the use key: takes what is in the drawer - or, if nothing is, closes the cabinet
+        if (!key.repeat) {
+            m_cabinetUse = true;
+            m_cabinetUseCloses = true;
+        }
+        break;
     case SDL_SCANCODE_RETURN:
     case SDL_SCANCODE_SPACE:
         if (!key.repeat) m_cabinetUse = true;
@@ -141,6 +148,7 @@ void Engine::updateCabinet(float dt) {
         if (d != m_cabinetDrawer) {
             m_cabinetDrawer = d;
             cabinet->openDrawer(d);
+            m_cabinetUse = m_cabinetUseCloses = false; // a press meant for the last drawer
         }
     }
     // The view glides to the drawer that is out.
@@ -152,9 +160,18 @@ void Engine::updateCabinet(float dt) {
     m_cabinetPitch += (pitchToward(look) - m_cabinetPitch) * k;
 
     if (m_cabinetUse) {
-        m_cabinetUse = false;
         ItemSite* site = cabinetSite();
-        if (site && site->item && cabinet->drawerOpen(m_cabinetDrawer) > 0.7f) takeItem(*site);
+        if (site && site->item) {
+            // A part to take (or swap for): as soon as the drawer is far enough out.
+            if (cabinet->drawerOpen(m_cabinetDrawer) > 0.7f) {
+                takeItem(*site);
+                m_cabinetUse = m_cabinetUseCloses = false;
+            }
+        } else {
+            // Nothing to take here: the use key closes the cabinet.
+            if (m_cabinetUseCloses) m_cabinetLeave = true;
+            m_cabinetUse = m_cabinetUseCloses = false;
+        }
     }
     if (m_cabinetLeave) leaveCabinet();
 }

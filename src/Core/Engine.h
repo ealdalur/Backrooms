@@ -17,7 +17,8 @@
 //              earpiece plays the line.
 //   Cabinet  - searching a filing cabinet: the camera leans over the open
 //              drawer, W / S (or the wheel) roll another drawer out, E (or a
-//              click) takes - or swaps for - the part inside, Esc closes it.
+//              click) takes - or swaps for - the part inside; with nothing in
+//              the drawer to take, E closes the cabinet, as Esc always does.
 //              Head down in a drawer, the player sees nothing else.
 //
 // Running, the player scavenges the four parts of the Tesla coil gun (from
@@ -76,7 +77,8 @@ struct EngineOptions {
     /// Stalker off; --type <n> picks the route), idle (only logs entity activity),
     /// cabinet (searches the nearest cabinet holding a part; --type take: and takes it;
     /// --type swap-persist: swaps a nearly flat part of the same type in, walks away until
-    /// the chunk unloads, comes back and checks the drawer),
+    /// the chunk unloads, comes back and checks the drawer; --type use-key: presses E to take
+    /// the part, then again to close),
     /// part (walks up to the nearest part lying on a desk or chair),
     /// assemble (all four parts, put together), tesla / tesla-stalker (the gun,
     /// fired at the Wanderer / the Stalker; --type <percent> sets the battery).
@@ -251,7 +253,8 @@ private:
     float     m_cabinetYaw = 0.0f;
     float     m_cabinetPitch = 0.0f;
     int       m_cabinetMove = 0;       ///< Drawers to move up (+) / down (-) at the next update.
-    bool      m_cabinetUse = false;    ///< Take the part at the next update.
+    bool      m_cabinetUse = false;    ///< Take the part at the next update (waits while the drawer rolls out).
+    bool      m_cabinetUseCloses = false; ///< ...and that press was E: with no part to take, it closes the cabinet.
     bool      m_cabinetLeave = false;  ///< Close it at the next update.
 
     // The Tesla gun.

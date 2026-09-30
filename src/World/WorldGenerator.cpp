@@ -707,8 +707,10 @@ void WorldGenerator::placeFurniture(ChunkBlueprint& bp, const glm::vec3& origin)
                 const uint64_t id = rnd::hashCoords(levelSeed(level), gx, gz, kSaltCabinet + static_cast<uint64_t>(cabinetCount++));
                 bp.cabinets.push_back({id, inst.model});
                 const int index = static_cast<int>(bp.cabinets.size()) - 1;
+                // One roll for the whole cabinet; a part, if there is one, lies in one drawer picked at random.
+                const int partDrawer = itemRng.chance(world::kPartCabinetChance) ? itemRng.rangeInt(0, FileCabinet::kDrawers - 1) : -1;
                 for (int d = 0; d < FileCabinet::kDrawers; ++d) {
-                    maybeItem(world::kPartDrawerChance, SiteKind::Drawer, FileCabinet::itemSurface(), index, d);
+                    maybeItem(d == partDrawer ? 1.0f : 0.0f, SiteKind::Drawer, FileCabinet::itemSurface(), index, d);
                 }
             };
 

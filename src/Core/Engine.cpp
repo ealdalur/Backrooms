@@ -927,7 +927,9 @@ void Engine::drawHud() {
         const std::string what = std::string(kDrawerNames[m_cabinetDrawer]) + (part ? ":  " + std::string(partName(site->item->type)) : ":  FILES");
         hud.text(what, w * 0.5f, h * 0.1f, TextOverlay::Align::Center, 2.0f,
                  glm::vec4(0.95f, 0.93f, 0.85f, (part ? 0.9f : 0.6f) * m_cabinetBlend), true);
-        const std::string keys = std::string("<ESC> Close    <W>/<S> Drawer") + (part ? "    <E> " + itemPrompt(*site) : "");
+        // E takes what is in the drawer; with nothing to take, it closes the cabinet like Esc.
+        const std::string keys = part ? "<ESC> Close    <W>/<S> Drawer    <E> " + itemPrompt(*site)
+                                      : std::string("<ESC>/<E> Close    <W>/<S> Drawer");
         hud.text(keys, w * 0.5f, h - 40.0f * s, TextOverlay::Align::Center, 2.0f, guide, true);
     }
     drawInventory();
@@ -1303,8 +1305,15 @@ void Engine::setupDemo() {
         const ItemSite* best = nullptr;
         float bestDist = 1e9f;
         int counts[3] = {0, 0, 0};
+        int desks = 0, chairs = 0, cabinets = 0, chunks = 0;
         for (Chunk* chunk : m_chunks->sortedChunksMutable()) {
             if (chunk->coord().level != m_focusLevel) continue;
+            ++chunks;
+            cabinets += static_cast<int>(chunk->cabinets().size());
+            for (const FurnitureInstance& f : chunk->furniture()) {
+                desks += f.type == FurnitureType::Desk ? 1 : 0;
+                chairs += f.type == FurnitureType::Chair ? 1 : 0;
+            }
             for (const ItemSite& site : chunk->items()) {
                 if (!site.item) continue;
                 ++counts[static_cast<int>(site.kind)];
@@ -1316,8 +1325,8 @@ void Engine::setupDemo() {
                 }
             }
         }
-        std::printf("[Demo] Parts on this storey's loaded chunks: %d on desks, %d on chairs, %d in drawers\n", counts[0], counts[1],
-                    counts[2]);
+        std::printf("[Demo] Parts on this storey's %d loaded chunks: %d on %d desks, %d on %d chairs, %d in %d cabinets\n", chunks,
+                    counts[0], desks, counts[1], chairs, counts[2], cabinets);
         if (!best) {
             std::cerr << "[Demo] No loose part loaded\n";
             return;
@@ -1432,6 +1441,28 @@ void Engine::updateDemo(float dt) {
         (m_options.demoInput == "take" || m_options.demoInput == "swap-persist")) {
         m_cabinetUse = true; // take (or swap) what is in the drawer
         m_demoStep = 1;
+    }
+    if (m_options.demo == "cabinet" && m_options.demoInput == "use-key") {
+        // The use key, pressed for real: at once (the drawer is still rolling out, so it
+        // waits and then takes the part), then again with the drawer empty (it closes).
+        auto pressE = [this](const char* why) {
+            SDL_KeyboardEvent key{};
+            key.scancode = SDL_SCANCODE_E;
+            handleCabinetKey(key);
+            std::printf("[Demo] t=%.2f E pressed (%s)\n", m_demoTime, why);
+        };
+        if (m_demoStep == 0 && m_demoTime > 0.05f) {
+            pressE("drawer still rolling out");
+            m_demoStep = 1;
+        } else if (m_demoStep == 1 && m_demoTime > 2.5f) {
+            pressE("drawer now empty");
+            m_demoStep = 2;
+        }
+        static GameState lastState = GameState::Cabinet;
+        if (m_state != lastState) {
+            std::printf("[Demo] t=%.2f state %s\n", m_demoTime, m_state == GameState::Cabinet ? "Cabinet" : m_state == GameState::Running ? "Running" : "other");
+            lastState = m_state;
+        }
     }
     if (m_options.demo == "cabinet" && m_options.demoInput == "swap-persist") {
         auto report = [this](const char* when) {

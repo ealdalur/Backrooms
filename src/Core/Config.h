@@ -11,8 +11,8 @@
 namespace cfg {
 
 // ----- Window ---------------------------------------------------------------
-inline constexpr int         kWindowWidth  = 480;
-inline constexpr int         kWindowHeight = 240;
+inline constexpr int         kWindowWidth  = 1280;
+inline constexpr int         kWindowHeight = 720;
 inline constexpr const char* kWindowTitle  = "Backrooms";
 
 // ----- World ----------------------------------------------------------------
@@ -119,7 +119,7 @@ inline constexpr float kNoiseTesla           = 24.0f;  // The Tesla gun's roarin
 inline constexpr float kCabinetOpenTime  = 0.45f;  // Seconds to lean in to / away from a filing cabinet
 inline constexpr float kAssembleTime     = 2.4f;   // Putting the four parts together
 inline constexpr float kSwapDipTime      = 0.7f;   // The gun dips out of view while a part is hot-swapped
-inline constexpr float kBatteryLife      = 14.0f;  // Seconds of continuous discharge from a full battery
+inline constexpr float kBatteryLife      = 7.0f;   // Seconds of continuous discharge from a full battery
 inline constexpr float kLowBattery       = 0.2f;   // Below this charge the gauge blinks red and the gun beeps
 inline constexpr float kArcReachMin      = 1.6f;   // Discharge reach (m) on a nearly flat battery...
 inline constexpr float kArcReachMax      = 7.5f;   // ...and on a full one
