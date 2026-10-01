@@ -289,7 +289,7 @@ void Wanderer::animate(float dt, std::vector<EntitySound>& sounds) {
 }
 
 void Wanderer::pose() {
-    const Frame F = frameOf(m_feet, m_yaw);
+    const Frame F = frameOf(visualFeet(), m_yaw);
     const float t = m_animTime;
     const float stoop = 0.35f + 0.4f * m_reach + 0.3f * m_duck;
     const float crouch = 0.28f * m_duck; // knees bend, the whole body sinks
@@ -358,7 +358,7 @@ void Wanderer::buildGeometry(EntityDrawList& list, const glm::vec3& camRight, co
         m_rig.appendMesh(d.mesh, MaterialId::Flesh, 10);
         m_mouth.appendMesh(d.mesh, MaterialId::DarkPlastic, 8);
         d.amount = dissolve();
-        d.feet = m_feet;
+        d.feet = visualFeet();
         d.height = 2.3f;
         buildEmbers(list, camRight, camUp);
         return;

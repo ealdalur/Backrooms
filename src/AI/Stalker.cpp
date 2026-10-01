@@ -424,7 +424,7 @@ void Stalker::animate(float dt, const PlayerView& player) {
 }
 
 void Stalker::pose() {
-    const Frame F = frameOf(m_feet, m_yaw);
+    const Frame F = frameOf(visualFeet(), m_yaw);
     const float c = m_crawl, t = m_animTime;
     auto blend = [c](const glm::vec3& upright, const glm::vec3& crawling) { return glm::mix(upright, crawling, c); };
     m_rig.clear();
@@ -519,7 +519,7 @@ void Stalker::buildGeometry(EntityDrawList& list, const glm::vec3& camRight, con
     for (size_t i = first; i < target.vertices.size(); ++i) target.vertices[i].material = 0.0f;
     if (dying()) {
         list.shadowDissolve.amount = dissolve();
-        list.shadowDissolve.feet = m_feet;
+        list.shadowDissolve.feet = visualFeet();
         list.shadowDissolve.height = 2.3f;
         buildEmbers(list, camRight, camUp);
     }

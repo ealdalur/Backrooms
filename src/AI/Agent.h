@@ -6,8 +6,8 @@
 // stairs and stand on the floor slabs), plus path following over the NavGrid
 // with string pulling (waypoints that are directly visible are skipped, so
 // paths cut corners naturally instead of zig-zagging through cell centres),
-// stuck detection and door handling (a closed door on the path is opened -
-// from a step back if it swings this way - and waited for).
+// stuck detection and door handling (a closed door on the path is opened and
+// waited for).
 //
 // A goal on another storey is reached on foot, through the nearest
 // stairwell: a path to its entrance, the climb itself (its walking route,
@@ -43,6 +43,9 @@ public:
     float yaw() const { return m_yaw; }
     float height() const { return m_height; }
     glm::vec3 forward() const;
+    /// Where the body is drawn: the feet, with the instant step-ups and
+    /// step-downs of the stairs smoothed into one continuous slope.
+    glm::vec3 visualFeet() const { return m_feet + glm::vec3(0.0f, m_stepOffset, 0.0f); }
 
     /// World AABB of the body.
     AABB bodyBox() const;
@@ -122,8 +125,8 @@ protected:
     bool followPath(float dt, float speed, float accel, const NavGrid& nav, const ICollisionWorld& world,
                     const Physics& physics);
 
-    /// A closed door on the path ahead: opens it (stepping back out of its
-    /// arc if it swings this way) and waits for it. True while waiting.
+    /// A closed door on the path ahead: opens it and waits for it to swing.
+    /// True while waiting.
     bool handleDoors(float dt, const NavGrid& nav, ChunkManager& chunks, const Physics& physics);
 
     /// Accelerates towards a horizontal velocity, applies gravity and collides.
@@ -142,6 +145,8 @@ protected:
     float     m_height;
     bool      m_grounded = false;
     float     m_stuck = 0.0f;
+    float     m_stepOffset = 0.0f;   ///< Drawn height minus physical height (eases back to 0 after a step).
+    float     m_stepVelocity = 0.0f; ///< Its rate of change: the offset is a critically damped spring.
 
     std::vector<glm::vec3>  m_path;      ///< Waypoints (edge crossings, then the goal).
     std::vector<glm::ivec2> m_pathCells; ///< Cells the path runs through.

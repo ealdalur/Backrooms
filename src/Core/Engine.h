@@ -71,7 +71,8 @@ struct EngineOptions {
     int         startLevel = 0;          ///< Storey to spawn on.
     std::string screenshotPath;          ///< If set: capture a BMP after a delay, then exit.
     float       screenshotDelay = 3.0f;  ///< Seconds of simulation before the capture.
-    /// Developer scene set up at start: stairs, stairs-top, stairs-sign, climb, descend,
+    /// Developer scene set up at start: stairs, stairs-top, stairs-sign, climb, descend (--type door:
+    /// the player opens the shut entrance from outside first),
     /// stalker, ambush, caught, wanderer, terminal, doom (DOOM on the nearest terminal,
     /// scripted play), phone (picks up the nearest phone), explore (a long scripted walk,
     /// Stalker off; --type <n> picks the route), idle (only logs entity activity),
@@ -310,6 +311,7 @@ private:
         bool            shut = false;
     };
     ChaseDoor   m_chaseDoors[2];
+    glm::vec3   m_chaseWay{0.0f};            ///< Where the way goes past the door the "climb --type door" walk opens.
     EntityKind  m_chaser{};                  ///< Who follows the player in the "stairs-chase" / "stalker-door" scenes.
     uint64_t    m_demoCabinet = 0;           ///< Cabinet searched in the "cabinet" scene...
     int         m_demoDrawer = 0;            ///< ...its drawer...

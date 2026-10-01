@@ -40,7 +40,7 @@ Chunk::Chunk(ChunkBlueprint&& bp)
     m_doors.reserve(bp.doors.size());
     m_doorEdges.reserve(bp.doors.size());
     for (const DoorPlacement& d : bp.doors) {
-        m_doors.emplace_back(d.id, d.hinge, d.closedDir, d.swingToward);
+        m_doors.emplace_back(d.id, d.hinge, d.closedDir);
         m_doorEdges.push_back(edgeKey(d.gx, d.gz, d.axis));
     }
 }

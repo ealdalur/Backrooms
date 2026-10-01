@@ -30,14 +30,11 @@ AABB localPanel() {
 }
 } // namespace
 
-Door::Door(uint64_t id, const glm::vec3& hinge, const glm::vec3& closedDir, const glm::vec3& swingToward)
+Door::Door(uint64_t id, const glm::vec3& hinge, const glm::vec3& closedDir)
     : m_id(id),
       m_hinge(hinge),
       m_axis(glm::normalize(closedDir)),
-      m_normal(glm::normalize(glm::cross(m_axis, glm::vec3(0.0f, 1.0f, 0.0f)))) {
-    const float side = glm::dot(m_normal, swingToward);
-    m_fixedSide = side > 1e-4f ? 1 : side < -1e-4f ? -1 : 0;
-}
+      m_normal(glm::normalize(glm::cross(m_axis, glm::vec3(0.0f, 1.0f, 0.0f)))) {}
 
 MeshData Door::buildMesh() {
     using namespace mesh;
@@ -94,10 +91,10 @@ MeshData Door::buildMesh() {
 
 void Door::toggle(const glm::vec3& userPos) {
     if (m_progress <= 0.0f && !m_opening) {
-        // Swing away from the user: pick the side they are NOT on (or the fixed side).
+        // Swing away from the user: pick the side they are NOT on.
         const glm::vec3 closedCenter = m_hinge + m_axis * (world::kDoorPanelWidth * 0.5f);
         const float facing = glm::dot(m_normal, closedCenter - userPos);
-        m_side = m_fixedSide != 0 ? m_fixedSide : facing >= 0.0f ? 1 : -1;
+        m_side = facing >= 0.0f ? 1 : -1;
         m_opening = true;
         m_events |= kEventUnlatch | kEventSwing;
     } else {
@@ -198,12 +195,6 @@ glm::vec3 Door::doorwayCenter() const {
 Door::State Door::state() const {
     if (m_opening) return m_progress >= 1.0f ? State::Open : State::Opening;
     return m_progress <= 0.0f ? State::Closed : State::Closing;
-}
-
-bool Door::swingsToward(const glm::vec3& userPos) const {
-    if (m_fixedSide == 0) return false;
-    const glm::vec3 closedCenter = m_hinge + m_axis * (world::kDoorPanelWidth * 0.5f);
-    return glm::dot(m_normal, userPos - closedCenter) * static_cast<float>(m_fixedSide) > 0.0f;
 }
 
 int Door::persistentState() const { return m_opening ? m_side : 0; }

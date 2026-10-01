@@ -449,9 +449,27 @@ void WorldGenerator::buildEdge(ChunkBlueprint& bp, const glm::vec3& origin, int 
     addSolid(bp, origin, f.box(mid - hw + jw, mid + hw - jw, hd - jw, hd, frameDepth), MaterialId::GrayMetal,
              f.longFaces() | mesh::FaceNegY);
 
-    // Door leaf: hinge side chosen deterministically from the edge hash.
+    // Door leaf: hinge side chosen deterministically from the edge hash -
+    // except at a stairwell's entrance, where it is hinged on the side away
+    // from the stairs: pushed open into the stairwell (it swings away from
+    // whoever opens it), the door lies flat against the far side of the
+    // lobby, clear of the way to the flights.
     const uint64_t id = rnd::hashCoords(levelSeed(level), gx, gz, kSaltDoor + static_cast<uint64_t>(axis));
-    const bool hingeAtStart = (id & 1u) == 0u;
+    bool hingeAtStart = (id & 1u) == 0u;
+    const glm::ivec2 before = axis == EdgeAxis::West ? glm::ivec2(gx - 1, gz) : glm::ivec2(gx, gz - 1);
+    const glm::ivec2 after(gx, gz);
+    const glm::ivec2 stairCell = cellRole(level, before.x, before.y) != CellRole::Room ? before : after;
+    const CellRole stairRole = cellRole(level, stairCell.x, stairCell.y);
+    if (stairRole != CellRole::Room) {
+        const int lower = stairRole == CellRole::StairsLower ? level : level - 1;
+        if (const auto s = stairwell(lower, world::floorDiv(stairCell.x, kN), world::floorDiv(stairCell.y, kN))) {
+            // Where the way goes once through the door: to the foot of the first
+            // flight (the bottom storey), or from the head of the second (the top).
+            const std::vector<glm::vec3> route = stairs::climbRoute(stairCell.x, stairCell.y, lower, s->rotation);
+            const glm::vec3 way = route[stairRole == CellRole::StairsLower ? 2 : 8];
+            hingeAtStart = glm::dot(way - f.point(mid), f.alongDir()) > 0.0f; // the way leads to the end side
+        }
+    }
     DoorPlacement door;
     door.id = id;
     door.gx = gx;
@@ -464,12 +482,6 @@ void WorldGenerator::buildEdge(ChunkBlueprint& bp, const glm::vec3& origin, int 
         door.hinge = f.point(mid + hw - jw);
         door.closedDir = -f.alongDir();
     }
-    // A stairwell's door swings out into the room, whoever opens it: swung
-    // into the stairwell it would block the narrow lobby at the foot of the stairs.
-    const glm::ivec2 before = axis == EdgeAxis::West ? glm::ivec2(gx - 1, gz) : glm::ivec2(gx, gz - 1);
-    const glm::vec3 across = axis == EdgeAxis::West ? glm::vec3(1.0f, 0.0f, 0.0f) : glm::vec3(0.0f, 0.0f, 1.0f);
-    if (cellRole(level, before.x, before.y) != CellRole::Room) door.swingToward = across;  // stairs behind: open forwards
-    else if (cellRole(level, gx, gz) != CellRole::Room) door.swingToward = -across;       // stairs ahead: open backwards
     bp.doors.push_back(door);
 }
 

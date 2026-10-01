@@ -85,6 +85,15 @@ const DoomSfx kDoomSfx[] = {
 };
 static_assert(sizeof(kDoomSfx) / sizeof(kDoomSfx[0]) == static_cast<size_t>(doom::Sfx::Switch) + 1, "one entry per doom::Sfx");
 
+/// Whether an open door's panel stands in the way from its doorway to `way`
+/// (a point beyond the doorway): on the same side of the doorway as that point.
+bool doorBlocksWay(const Door& door, const glm::vec3& way) {
+    const glm::vec3 c = door.doorwayCenter();
+    const glm::vec2 panel(door.center().x - c.x, door.center().z - c.z);
+    const glm::vec2 to(way.x - c.x, way.z - c.z);
+    return glm::dot(panel, to) > 0.0f;
+}
+
 /// Splits text into lines of at most `width` characters at spaces.
 std::vector<std::string> wrapText(const std::string& text, size_t width) {
     std::vector<std::string> lines;
@@ -1141,19 +1150,27 @@ void Engine::setupDemo() {
                     } else {
                         teleportPlayer(route[0], level, yawToward(route[1] - route[0]));
                     }
-                    // Open the entrances on both storeys (stairwell doors always
-                    // swing out into the room, clear of the stairs).
+                    // Open the entrances on both storeys, from inside the stairwell
+                    // so they swing out of the way of the route - except, with
+                    // --type door, the one the walk starts at: the player opens
+                    // that one from outside, as a player would.
                     const int side = stairs::entranceSide(s->rotation);
                     const int ex = gx + (side == 1 ? 1 : 0), ez = gz + (side == 3 ? 1 : 0);
                     const world::EdgeAxis axis = side < 2 ? world::EdgeAxis::West : world::EdgeAxis::South;
                     const glm::vec3 inside((static_cast<float>(gx) + 0.5f) * world::kCellSize, 0.0f,
                                            (static_cast<float>(gz) + 0.5f) * world::kCellSize);
+                    const bool viaDoor = m_options.demoInput == "door" && (demo == "climb" || demo == "descend");
+                    const int startLevel = demo == "descend" ? level + 1 : level;
                     for (int l : {level, level + 1}) {
+                        if (viaDoor && l == startLevel) continue;
                         if (Door* d = m_chunks->doorOnEdge(l, ex, ez, axis)) {
                             d->toggle(inside);                       // picks the outward swing...
                             d->restoreState(d->persistentState());   // ...and snaps fully open
                             d->takeEvents();
                         }
+                    }
+                    if (viaDoor) { // walk up to the shut door and open it first
+                        m_autopilot.push_back({demo == "descend" ? route.back() : route.front(), true, startLevel, ex, ez, axis});
                     }
                     if (demo == "climb" || demo == "stairs-chase") {
                         for (auto it = route.begin() + 1; it != route.end(); ++it) m_autopilot.push_back({*it});
@@ -1184,6 +1201,11 @@ void Engine::setupDemo() {
                     } else if (demo == "descend") {
                         for (auto it = route.rbegin() + 1; it != route.rend(); ++it) m_autopilot.push_back({*it});
                         m_autopilotIndex = 0;
+                    }
+                    if (viaDoor) {
+                        // Report where the door ends up once open: against the far side of the lobby?
+                        m_chaseDoors[0] = {startLevel, ex, ez, axis, true};
+                        m_chaseWay = route[demo == "descend" ? 8 : 2];
                     }
                     return;
                 }
@@ -1510,6 +1532,18 @@ void Engine::updateDemo(float dt) {
         m_cabinetUse = true; // take (or swap) what is in the drawer
         m_demoStep = 1;
     }
+    if ((m_options.demo == "climb" || m_options.demo == "descend") && m_options.demoInput == "door" && m_chaseDoors[0].shut) {
+        const ChaseDoor& cd = m_chaseDoors[0];
+        const Door* d = m_chunks->doorOnEdge(cd.level, cd.gx, cd.gz, cd.axis);
+        if (d && d->state() == Door::State::Open && m_autopilot.size() > 1) {
+            // m_autopilot[1]: just inside the doorway, in the stairwell.
+            const glm::vec3 panel = d->center() - d->doorwayCenter(), inside = m_autopilot[1].pos - d->doorwayCenter();
+            std::printf("[Demo] t=%.2f the player opened the stairwell door from outside: it swung %s, %s\n", m_demoTime,
+                        glm::dot(glm::vec2(panel.x, panel.z), glm::vec2(inside.x, inside.z)) > 0.0f ? "in, away from them" : "OUT, towards them",
+                        doorBlocksWay(*d, m_chaseWay) ? "BLOCKING the way to the stairs" : "clear of the way to the stairs");
+            m_chaseDoors[0].shut = false;
+        }
+    }
     if (m_options.demo == "stalker-stare") {
         const Stalker& st = m_entities->stalker();
         if (st.active()) { // the head follows it (through the walls, too: only a clear view counts as seen)
@@ -1545,6 +1579,20 @@ void Engine::updateDemo(float dt) {
         }
         const bool tick = std::floor(m_demoTime * 2.0f) != std::floor((m_demoTime - dt) * 2.0f);
         const Agent& chaser = m_chaser == EntityKind::Stalker ? static_cast<const Agent&>(m_entities->stalker()) : m_entities->wanderer();
+        static float lastY = 0.0f, lastVisualY = 0.0f, jumpY = 0.0f, jumpVisualY = 0.0f;
+        if (chaser.active()) {
+            if (m_demoTime > dt) {
+                jumpY = std::max(jumpY, std::fabs(chaser.feet().y - lastY));
+                jumpVisualY = std::max(jumpVisualY, std::fabs(chaser.visualFeet().y - lastVisualY));
+            }
+            lastY = chaser.feet().y;
+            lastVisualY = chaser.visualFeet().y;
+        }
+        if (tick && chaser.active() && m_options.demo == "stairs-chase") {
+            std::printf("[Smooth] t=%.2f biggest height change in one frame: body %.3f m, drawn %.3f m (drawn height %.2f)\n",
+                        m_demoTime, jumpY, jumpVisualY, chaser.visualFeet().y);
+            jumpY = jumpVisualY = 0.0f;
+        }
         if (tick && chaser.active()) {
             std::string doors;
             for (int k = 0; k < (m_options.demo == "stairs-chase" ? 2 : 1); ++k) {
@@ -1552,12 +1600,9 @@ void Engine::updateDemo(float dt) {
                 char one[40];
                 std::snprintf(one, sizeof(one), " L%d %s", m_chaseDoors[k].level, !d ? "none" : d->openAmount() > 0.99f ? "open" : d->openAmount() > 0.0f ? "moving" : "shut");
                 doors += one;
-                if (d && d->openAmount() > 0.5f && m_options.demo == "stairs-chase") {
-                    // Which way it swung: the open panel lies out in the room, or in the stairwell.
-                    const glm::ivec2 stairCell = NavGrid::cellOf(m_autopilot.empty() ? glm::vec3(0.0f) : m_autopilot[1].pos);
-                    const glm::vec3 inside = NavGrid::cellCenter(stairCell, m_chaseDoors[k].level);
-                    const glm::vec3 panel = d->center() - d->doorwayCenter(), into = inside - d->doorwayCenter();
-                    doors += glm::dot(glm::vec2(panel.x, panel.z), glm::vec2(into.x, into.z)) < 0.0f ? " (out)" : " (IN)";
+                if (d && d->openAmount() > 0.5f && m_options.demo == "stairs-chase" && m_autopilot.size() > 7) {
+                    // Is the open panel in the way to the stairs (the foot of flight A below, the head of flight B above)?
+                    doors += doorBlocksWay(*d, m_autopilot[k == 0 ? 1 : 7].pos) ? " (BLOCKS)" : " (clear)";
                 }
             }
             const glm::vec3 e = chaser.feet(), p = m_player->feetPosition();

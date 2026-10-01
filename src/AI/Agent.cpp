@@ -20,7 +20,6 @@ namespace {
 // (0.56 m) clears both jambs.
 constexpr float kArriveRadius = 0.25f;   ///< Waypoint reached within this horizontal distance.
 constexpr float kDoorApproach = 0.9f;    ///< Waypoints either side of narrow openings.
-constexpr float kDoorStandoff = 1.45f;   ///< Clear of a door panel's arc (0.9 m panel + a body's half width).
 constexpr float kPi = 3.14159265f;
 
 inline glm::vec2 xz(const glm::vec3& v) { return {v.x, v.z}; }
@@ -38,6 +37,7 @@ void Agent::place(const glm::vec3& feet, int level, float yaw) {
     m_velocity = glm::vec3(0.0f);
     m_grounded = false;
     m_stuck = 0.0f;
+    m_stepOffset = m_stepVelocity = 0.0f;
     m_doorWait = 0.0f;
     clearPath();
 }
@@ -162,24 +162,16 @@ bool Agent::handleDoors(float dt, const NavGrid& nav, ChunkManager& chunks, cons
         return false;
     }
     const glm::vec3 c = nav.crossing(m_level, from, to);
-    // Once waiting for a door it keeps waiting from a step further back.
-    if (glm::length(xz(c) - xz(m_feet)) > (m_doorWait > 0.0f ? 1.9f : 1.4f)) {
+    if (glm::length(xz(c) - xz(m_feet)) > 1.4f) {
         m_doorWait = 0.0f;
         return false;
     }
     if (m_doorWait > 3.0f) return false; // something holds it shut: shove on regardless
 
-    // A closed door ahead: open it and wait for it to swing.
+    // A closed door ahead: open it (it swings away) and wait for it to swing.
     if (door->state() == Door::State::Closed || door->state() == Door::State::Closing) door->toggle(m_feet);
     m_doorWait += dt;
-    glm::vec3 hold(0.0f);
-    if (door->swingsToward(m_feet)) { // it opens this way: step back out of its arc
-        const glm::vec3 through(static_cast<float>(to.x - from.x), 0.0f, static_cast<float>(to.y - from.y));
-        glm::vec3 d = c - through * kDoorStandoff - m_feet;
-        d.y = 0.0f;
-        if (glm::length(d) > 0.1f) hold = glm::normalize(d) * 1.2f;
-    }
-    integrate(dt, hold, 8.0f, chunks, physics);
+    integrate(dt, glm::vec3(0.0f), 8.0f, chunks, physics);
     turnTowards(c - m_feet, 3.0f, dt);
     return true;
 }
@@ -311,6 +303,19 @@ void Agent::integrate(float dt, const glm::vec3& desired, float accel, const ICo
     if (r.grounded && m_velocity.y < 0.0f) m_velocity.y = 0.0f;
     m_grounded = r.grounded;
     updateLevel();
+
+    // A step moves the body instantly; the drawn body takes the opposite
+    // offset and a critically damped spring (as for the player's view) eases
+    // it back, with continuous velocity - so a flight of stairs reads as one
+    // smooth slope, up or down, instead of a staircase of jumps.
+    m_stepOffset = std::clamp(m_stepOffset - r.steppedUp, -0.6f, 0.6f);
+    const float w = 2.0f * cfg::kStepEaseRate;
+    for (float remaining = dt; remaining > 0.0f;) {
+        const float h = std::min(remaining, 1.0f / 240.0f);
+        m_stepVelocity += (-w * w * m_stepOffset - 2.0f * w * m_stepVelocity) * h;
+        m_stepOffset += m_stepVelocity * h;
+        remaining -= h;
+    }
 
     // Stuck: trying to move but making (almost) no progress.
     const float wanted = glm::length(glm::vec2(desired.x, desired.z)) * dt;

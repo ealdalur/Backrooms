@@ -32,7 +32,6 @@ struct DoorPlacement {
     glm::vec3       closedDir; ///< Hinge -> latch direction when closed.
     int32_t         gx, gz;    ///< Global edge coordinate the door hangs in...
     world::EdgeAxis axis;      ///< ...and its orientation.
-    glm::vec3       swingToward{0.0f}; ///< Non-zero: always swings to this side (stairwell doors open into the room).
 };
 
 /// Placement of a retro computer on a desk.
