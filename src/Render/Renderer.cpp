@@ -273,7 +273,7 @@ void Renderer::render(const FrameParams& frame, ChunkManager& chunks, const Worl
 
     // ---- Post-processing to the back buffer -----------------------------------------------
     m_post.present(static_cast<float>(frame.time), cfg::kExposure, cfg::kBloomStrength, cfg::kBloomThreshold,
-                   frame.crosshair, frame.crosshairHighlight, frame.fear, frame.fade);
+                   frame.crosshair, frame.crosshairHighlight, frame.fear, frame.fade, frame.dim);
     m_hud.begin(m_width, m_height);
 }
 

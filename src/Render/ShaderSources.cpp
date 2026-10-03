@@ -705,6 +705,7 @@ uniform float uCrosshair;           // 0..1, visibility of the crosshair (hidden
 uniform float uCrosshairHighlight;  // 0..1, ring shown when something is interactable
 uniform float uFear;                // 0..1, an entity is near / being watched
 uniform float uFade;                // 0..1, fade to black
+uniform float uDim;                 // 0..1, the game is held under a dialog: blurred and darkened
 
 // ACES filmic curve (Narkowicz 2015 fit).
 vec3 aces(vec3 x) {
@@ -722,6 +723,20 @@ void main() {
     vec2  split = fromCentre * (0.012 * uFear * length(fromCentre));
     vec3  hdr = vec3(texture(uScene, vUV + split).r, texture(uScene, vUV).g, texture(uScene, vUV - split).b);
     hdr += texture(uBloom, vUV).rgb * uBloomStrength;
+    if (uDim > 0.0) {
+        // Held under a dialog: a soft disc blur (golden-angle spiral of taps,
+        // its radius growing as the dialog fades in) so the text stands out.
+        vec2  px = vec2(1.0 / uResolution.x, 1.0 / uResolution.y) * (uResolution.y / 540.0);
+        vec3  sum = vec3(0.0);
+        const int kTaps = 32;
+        for (int i = 0; i < kTaps; ++i) {
+            float a = float(i) * 2.39996323;
+            float r = sqrt((float(i) + 0.5) / float(kTaps)) * 7.0 * uDim;
+            vec2  o = vec2(cos(a), sin(a)) * r * px;
+            sum += texture(uScene, vUV + o).rgb + texture(uBloom, vUV + o).rgb * uBloomStrength;
+        }
+        hdr = mix(hdr, sum / float(kTaps), uDim);
+    }
     vec3 c = aces(hdr * uExposure);
 
     // Soft optical vignette, closing in (and throbbing with the pulse) with fear.
@@ -738,12 +753,13 @@ void main() {
     float n = grainNoise(gl_FragCoord.xy + fract(uTime * 7.31) * vec2(113.1, 71.7));
     c += (n - 0.5) * (0.035 + 0.06 * uFear);
     c *= 1.0 - uFade;
+    c *= 1.0 - 0.65 * uDim;
 
     // Minimal crosshair: centre dot plus a ring when something can be used.
     float r = length(gl_FragCoord.xy - uResolution * 0.5);
     float dotMask = 1.0 - smoothstep(1.5, 2.5, r);
     float ringMask = uCrosshairHighlight * (1.0 - smoothstep(0.8, 1.6, abs(r - 7.0)));
-    c = mix(c, vec3(1.0), max(dotMask * 0.7, ringMask * 0.85) * uCrosshair * (1.0 - uFade));
+    c = mix(c, vec3(1.0), max(dotMask * 0.7, ringMask * 0.85) * uCrosshair * (1.0 - uFade) * (1.0 - uDim));
 
     oColor = vec4(clamp(c, 0.0, 1.0), 1.0);
 }

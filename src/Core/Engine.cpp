@@ -237,9 +237,10 @@ bool Engine::init() {
 void Engine::setState(GameState state) {
     m_state = state;
     // Holding a phone, a mouse pointer presses its keys.
-    SDL_SetWindowRelativeMouseMode(m_window, state != GameState::Paused && state != GameState::Phone);
+    SDL_SetWindowRelativeMouseMode(m_window, state != GameState::Paused && state != GameState::Phone &&
+                                                 state != GameState::QuitPrompt);
     if (state != GameState::Phone) SDL_SetCursor(SDL_GetDefaultCursor());
-    if (m_sound) m_sound->setPaused(state == GameState::Paused);
+    if (m_sound) m_sound->setPaused(state == GameState::Paused || state == GameState::QuitPrompt);
     if (state == GameState::Terminal || state == GameState::Phone) SDL_StartTextInput(m_window);
     else SDL_StopTextInput(m_window);
     m_input.reset();
@@ -284,13 +285,15 @@ void Engine::processEvents() {
             m_renderer->resize(m_pixelWidth, m_pixelHeight);
             break;
         case SDL_EVENT_WINDOW_FOCUS_LOST:
-            if (m_state != GameState::Paused && m_options.screenshotPath.empty()) {
+            // (Under the quit prompt the game is already holding still.)
+            if (m_state != GameState::Paused && m_state != GameState::QuitPrompt && m_options.screenshotPath.empty()) {
                 m_resumeState = m_state;
                 setState(GameState::Paused);
             }
             break;
         case SDL_EVENT_MOUSE_BUTTON_DOWN:
-            if (m_state == GameState::Paused && e.button.button == SDL_BUTTON_LEFT) setState(m_resumeState);
+            if (m_state == GameState::QuitPrompt) setState(m_quitResume); // a click is "any other key"
+            else if (m_state == GameState::Paused && e.button.button == SDL_BUTTON_LEFT) setState(m_resumeState);
             else if (m_state == GameState::Cabinet && e.button.button == SDL_BUTTON_LEFT) m_cabinetUse = true;
             else if (m_state == GameState::Phone && e.button.button == SDL_BUTTON_LEFT) {
                 const int key = phoneKeyAt(e.button.x, e.button.y);
@@ -311,6 +314,13 @@ void Engine::processEvents() {
             }
             break;
         case SDL_EVENT_KEY_DOWN:
+            if (m_state == GameState::QuitPrompt) {
+                // Only a fresh press counts: holding Esc a moment too long must not quit.
+                if (e.key.repeat) break;
+                if (e.key.scancode == SDL_SCANCODE_ESCAPE) m_quit = true;
+                else setState(m_quitResume);
+                break;
+            }
             if (m_state == GameState::Terminal) {
                 handleTerminalKey(e.key);
                 break;
@@ -326,7 +336,9 @@ void Engine::processEvents() {
             if (e.key.repeat) break;
             switch (e.key.scancode) {
             case SDL_SCANCODE_ESCAPE:
-                m_quit = true; // exit immediately
+                // Ask first: an Esc too many (leaving a cabinet, a phone...) is easy to press.
+                m_quitResume = m_state;
+                setState(GameState::QuitPrompt);
                 break;
             case SDL_SCANCODE_P:
                 if (m_state == GameState::Paused) {
@@ -772,7 +784,7 @@ void Engine::updateCaught(float dt) {
 // ---- Simulation --------------------------------------------------------------------------------------
 
 void Engine::update(float dt) {
-    if (m_state == GameState::Paused) return;
+    if (m_state == GameState::Paused || m_state == GameState::QuitPrompt) return;
     m_simTime += dt;
     m_lastDt = dt;
     m_noises.clear();
@@ -946,6 +958,19 @@ void Engine::drawHud() {
         const float a = std::min(1.0f, m_messageTimer / 1.0f) * std::min(1.0f, (5.0f - m_messageTimer) / 0.8f + 0.2f);
         hud.text(m_message, w * 0.5f, h * 0.62f, TextOverlay::Align::Center, 2.0f, glm::vec4(0.95f, 0.93f, 0.85f, a));
     }
+    if (m_dialogFade > 0.0f) {
+        // Centre screen, over the blurred and darkened game.
+        const float a = m_dialogFade;
+        const glm::vec4 title(1.0f, 0.97f, 0.88f, a), line(0.95f, 0.9f, 0.8f, 0.9f * a);
+        if (m_dialog == GameState::QuitPrompt) {
+            hud.text("Are you sure you want to quit the game?", w * 0.5f, h * 0.5f - 46.0f * s, TextOverlay::Align::Center, 3.0f, title);
+            hud.text("Press <ESC> to quit", w * 0.5f, h * 0.5f + 6.0f * s, TextOverlay::Align::Center, 2.0f, line);
+            hud.text("Press any other key to resume", w * 0.5f, h * 0.5f + 32.0f * s, TextOverlay::Align::Center, 2.0f, line);
+        } else {
+            hud.text("Paused", w * 0.5f, h * 0.5f - 46.0f * s, TextOverlay::Align::Center, 3.0f, title);
+            hud.text("Press <P> to resume", w * 0.5f, h * 0.5f + 6.0f * s, TextOverlay::Align::Center, 2.0f, line);
+        }
+    }
     if (m_debugHud) {
         const Stalker& st = m_entities->stalker();
         const Wanderer& wa = m_entities->wanderer();
@@ -964,6 +989,13 @@ void Engine::render(float dt) {
     m_entities->buildDrawList(m_entityDraw, cam);
 
     buildViewModel(cam);
+    // The pause screen and the quit prompt fade in (and out) over a fraction of a
+    // second - the simulation is stopped under them, so this runs on the real frame time.
+    const bool dialog = m_state == GameState::Paused || m_state == GameState::QuitPrompt;
+    if (dialog) m_dialog = m_state; // fading out, the last one stays on screen
+    const float dialogTarget = dialog ? 1.0f : 0.0f;
+    m_dialogFade += (dialogTarget - m_dialogFade) * (1.0f - std::exp(-14.0f * dt));
+    if (std::fabs(dialogTarget - m_dialogFade) < 0.002f) m_dialogFade = dialogTarget;
 
     FrameParams frame;
     frame.camera = cam;
@@ -972,6 +1004,7 @@ void Engine::render(float dt) {
     frame.crosshairHighlight = m_state == GameState::Running ? m_crosshairHighlight : 0.0f;
     frame.fear = m_entities->fear();
     frame.fade = m_fade;
+    frame.dim = m_dialogFade;
     frame.lightDisturbances = &m_entities->lightDisturbances();
     frame.entities = &m_entityDraw;
     frame.bolts = &m_gun->bolts();
@@ -1012,7 +1045,9 @@ void Engine::updateTitle(float dt) {
                   "%s | %.0f FPS | level %d chunk (%d, %d) | %zu chunks, %zu lights | sensitivity %.2f%s%s",
                   cfg::kWindowTitle, m_fps, c.level, c.x, c.z, m_chunks->chunkCount(), s.lights,
                   m_settings.mouseSensitivity, m_player->mouseDriveActive() ? " | MOUSE DRIVE" : "",
-                  m_state == GameState::Paused ? " | PAUSED - press P or click to resume, Esc to quit" : "");
+                  m_state == GameState::Paused       ? " | PAUSED - press P or click to resume, Esc to quit"
+                  : m_state == GameState::QuitPrompt ? " | QUIT? - Esc to quit, any other key to resume"
+                                                     : "");
     SDL_SetWindowTitle(m_window, title);
 }
 
@@ -1055,6 +1090,7 @@ int Engine::run() {
         runTime += dt;
 
         m_input.beginFrame();
+        if (m_options.demo == "quit-prompt") driveQuitPromptDemo(runTime);
         processEvents();
         update(dt);
         render(dt);
@@ -1471,6 +1507,47 @@ void Engine::setupDemo() {
     } else if (demo != "idle") { // "idle": nothing staged, entity activity is just logged
         std::cerr << "[Demo] Unknown demo '" << demo << "'\n";
     }
+}
+
+void Engine::driveQuitPromptDemo(double runTime) {
+    struct Step {
+        double       at;
+        SDL_Scancode key;
+        bool         repeat;
+        const char*  what;
+    };
+    static const Step kSteps[] = {
+        {0.5, SDL_SCANCODE_P, false, "P"},
+        {0.8, SDL_SCANCODE_P, false, "P"},
+        {1.0, SDL_SCANCODE_ESCAPE, false, "Esc"},
+        {2.0, SDL_SCANCODE_W, false, "W (any other key)"},
+        {3.0, SDL_SCANCODE_ESCAPE, false, "Esc"},
+        {3.5, SDL_SCANCODE_ESCAPE, true, "Esc held down (key repeat)"},
+        {4.5, SDL_SCANCODE_ESCAPE, false, "Esc"},
+    };
+    static size_t next = 0;
+    static bool reported = true;
+    auto stateName = [this] {
+        return m_state == GameState::QuitPrompt ? "the quit prompt"
+               : m_state == GameState::Paused   ? "paused"
+               : m_state == GameState::Running  ? "playing"
+                                                : "something else";
+    };
+    if (!reported) { // the previous key has been handled by now
+        std::printf("[Demo] -> %s\n", stateName());
+        reported = true;
+    }
+    if (next >= sizeof(kSteps) / sizeof(kSteps[0]) || runTime < kSteps[next].at) return;
+    SDL_Event e{};
+    e.type = SDL_EVENT_KEY_DOWN;
+    e.key.scancode = kSteps[next].key;
+    e.key.down = true;
+    e.key.repeat = kSteps[next].repeat;
+    e.key.windowID = SDL_GetWindowID(m_window);
+    SDL_PushEvent(&e);
+    std::printf("[Demo] t=%.2f pressing %s while %s\n", runTime, kSteps[next].what, stateName());
+    ++next;
+    reported = false;
 }
 
 doom::Controls Engine::demoDoomControls() const {

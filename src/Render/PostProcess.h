@@ -31,8 +31,9 @@ public:
     /// Resolves, blooms and composites into the default framebuffer.
     /// @param fear  0..1 dread effects (aberration, desaturation, closing vignette).
     /// @param fade  0..1 fade to black.
+    /// @param dim   0..1 the game held under a dialog: blurred and darkened.
     void present(float time, float exposure, float bloomStrength, float bloomThreshold, float crosshair, float crosshairHighlight,
-                 float fear, float fade);
+                 float fear, float fade, float dim = 0.0f);
 
 private:
     struct BloomMip {

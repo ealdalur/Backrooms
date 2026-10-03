@@ -56,6 +56,7 @@ struct FrameParams {
     float  crosshairHighlight = 0.0f;                         ///< 0..1, shows the "interactable" ring.
     float  fear = 0.0f;                                        ///< 0..1, drives the dread post effects.
     float  fade = 0.0f;                                        ///< 0..1, fade to black.
+    float  dim = 0.0f;                                         ///< 0..1, the game held under a dialog (blurred, darkened).
     const std::vector<LightDisturbance>* lightDisturbances = nullptr;
     const EntityDrawList*                entities = nullptr;
     // The Tesla gun.

@@ -7,7 +7,8 @@
 //
 // States:
 //   Running  - exploring.
-//   Paused   - P / focus loss; the simulation stops.
+//   Paused   - P / focus loss; the simulation stops behind a blurred,
+//              darkened screen reading "Paused" (P or a click resumes).
 //   Terminal - seated at a computer: the camera leans into the screen,
 //              keyboard input goes to the console, and the world keeps
 //              running around the player (the Stalker loves this).
@@ -27,6 +28,10 @@
 // the left button or F (see Core/EngineTesla.cpp).
 //   Caught   - an entity reached the player: jumpscare, blackout, and the
 //              player wakes up somewhere else.
+//   QuitPrompt - Esc pressed where it would quit the game: everything holds
+//              still behind a blurred, darkened screen asking "Are you sure
+//              you want to quit the game?" - Esc again quits, any other key
+//              (or a click) carries on where the player was.
 // ---------------------------------------------------------------------------
 
 #include "AI/NoiseEvent.h"
@@ -86,6 +91,7 @@ struct EngineOptions {
     /// earshot, so only the fallback brings it), stalker-door (the
     /// Stalker hunts the player from behind a closed door), stalker-stare (the player keeps
     /// turning to face the Stalker: stared down three times, it bolts far away),
+    /// quit-prompt (P, P, Esc, another key, Esc, a held Esc, Esc: checks the pause screen and the quit prompt),
     /// assemble (all four parts, put together), tesla / tesla-stalker (the gun,
     /// fired at the Wanderer / the Stalker; --type <percent> sets the battery).
     std::string demo;
@@ -110,7 +116,7 @@ public:
     int run();
 
 private:
-    enum class GameState { Running, Paused, Terminal, Phone, Cabinet, Caught };
+    enum class GameState { Running, Paused, Terminal, Phone, Cabinet, Caught, QuitPrompt };
 
     /// A point of a scripted walk. `door` marks the approach to a door that
     /// has to be opened first (the edge it hangs in follows).
@@ -196,6 +202,9 @@ private:
     void updateDemo(float dt);
     /// Scripted DOOM input for the "doom" scene.
     doom::Controls demoDoomControls() const;
+    /// The "quit-prompt" scene: real key events, pushed from the main loop
+    /// (the simulation - and with it the other scenes' scripting - holds still under the prompt).
+    void driveQuitPromptDemo(double runTime);
 
     EngineOptions m_options;
     Settings      m_settings;
@@ -203,6 +212,9 @@ private:
     Input         m_idleInput;  ///< No keys held: drives the body while seated / caught.
     GameState     m_state = GameState::Running;
     GameState     m_resumeState = GameState::Running; ///< State to return to after a pause.
+    GameState     m_quitResume = GameState::Running;  ///< State to return to if the player does not quit.
+    float         m_dialogFade = 0.0f;                ///< 0..1: the pause screen / quit prompt (and the blur behind it) fading in.
+    GameState     m_dialog = GameState::Paused;       ///< Which of the two is (or was last) shown.
     bool          m_quit = false;
 
     SDL_Window*   m_window = nullptr;
