@@ -450,6 +450,12 @@ TerminalContext Engine::terminalContext() const {
     ctx.stalkerBehind = m_entities->stalkerBehindPlayer();
     ctx.wandererDistance = m_entities->wandererDistance();
     ctx.world = m_world.get();
+    // The map's "north": the way the player faces sitting at this screen (screens face along the grid).
+    if (const Terminal* t = activeTerminal()) {
+        const glm::vec3 ahead = -t->screenNormal();
+        ctx.mapUp = std::fabs(ahead.x) > std::fabs(ahead.z) ? glm::ivec2(ahead.x > 0.0f ? 1 : -1, 0)
+                                                             : glm::ivec2(0, ahead.z > 0.0f ? 1 : -1);
+    }
     return ctx;
 }
 
@@ -1597,6 +1603,30 @@ void Engine::updateDemo(float dt) {
         m_console->type(m_options.demoInput.c_str());
         m_console->submit(terminalContext());
         m_demoStep = 1;
+    }
+    if (m_options.demo == "terminal" && m_demoStep == 1 && m_demoTime > 4.5f && m_console) {
+        // What is on the screen now, and - for the map - an independent check of
+        // its orientation against the camera's own conventions.
+        const TerminalScreen& screen = m_console->screen();
+        for (int r = 0; r < TerminalScreen::kRows; ++r) {
+            std::string row;
+            for (int c = 0; c < TerminalScreen::kCols; ++c) row += screen.at(c, r).ch;
+            row.erase(row.find_last_not_of(' ') + 1);
+            std::printf("[Screen] |%s\n", row.c_str());
+        }
+        if (const Terminal* t = activeTerminal()) {
+            const glm::vec3 ahead = -t->screenNormal();
+            Camera facing;
+            facing.yaw = yawToward(ahead);
+            const glm::ivec2 up = terminalContext().mapUp, right(-up.y, up.x);
+            const glm::ivec2 me = NavGrid::cellOf(m_player->feetPosition());
+            const bool upOk = NavGrid::cellOf(m_player->feetPosition() + ahead * world::kCellSize) == me + up;
+            const bool rightOk = NavGrid::cellOf(m_player->feetPosition() + facing.right() * world::kCellSize) == me + right;
+            std::printf("[Map] facing the screen = world (%.0f, %.0f); map up = cell step (%d, %d), map right = (%d, %d); "
+                        "up is straight ahead: %s, right is to the player's right: %s\n",
+                        ahead.x, ahead.z, up.x, up.y, right.x, right.y, upOk ? "yes" : "NO", rightOk ? "yes" : "NO");
+        }
+        m_demoStep = 2;
     }
     if (m_options.demo == "phone" && m_state == GameState::Phone && m_demoTime > 2.5f &&
         m_demoStep < static_cast<int>(m_options.demoInput.size()) && m_demoTime > 2.5f + 0.3f * static_cast<float>(m_demoStep)) {

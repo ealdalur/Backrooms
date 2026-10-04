@@ -51,6 +51,8 @@ struct TerminalContext {
     bool      stalkerBehind = false;    ///< Close, and outside the player's view.
     float     wandererDistance = -1.0f; ///< < 0 when the Wanderer is not around.
     const WorldGenerator* world = nullptr;
+    /// Grid direction (cells) the player faces sitting at this screen: up - "north" - on the map.
+    glm::ivec2 mapUp{0, -1};
     doom::Controls doom;                ///< Held keys, while DOOM runs.
 };
 

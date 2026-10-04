@@ -516,14 +516,30 @@ void TerminalConsole::cmdMap(const Args&, const TerminalContext& ctx) {
         print("MAP DATA UNAVAILABLE.");
         return;
     }
-    // Floor plan of the cells around the terminal, north up.
+    // Floor plan of the cells around the terminal, seen from above and turned
+    // so that "north" - up on the map - is the way the player faces sitting at
+    // this screen (walls run along the grid, so a quarter turn is exact).
     // Walls: - |   doors: = :   arches: . (gaps are open plan)
     // @ this terminal   ^ stairs up   v stairs down
     const int R = 4; // 9 x 9 cells: 19 rows, plus title and legend
     const float S = world::kCellSize;
-    const int px = static_cast<int>(std::floor(ctx.playerFeet.x / S));
-    const int pz = static_cast<int>(std::floor(ctx.playerFeet.z / S));
+    const glm::ivec2 me(static_cast<int>(std::floor(ctx.playerFeet.x / S)), static_cast<int>(std::floor(ctx.playerFeet.z / S)));
+    const glm::ivec2 up = ctx.mapUp;
+    const glm::ivec2 right(-up.y, up.x); // up turned clockwise seen from above: a true overhead view, not a mirror image
     const WorldGenerator& w = *ctx.world;
+    // Map cell (cx, cy) - cx to the right, cy up - in world cells.
+    auto cellAt = [&](int cx, int cy) { return me + right * cx + up * cy; };
+    // The edge between two adjacent world cells.
+    auto edgeBetween = [&](const glm::ivec2& a, const glm::ivec2& b) {
+        const glm::ivec2 d = b - a;
+        if (d.x != 0) return w.edge(ctx.level, std::max(a.x, b.x), a.y, world::EdgeAxis::West);
+        return w.edge(ctx.level, a.x, std::max(a.y, b.y), world::EdgeAxis::South);
+    };
+    // The grid vertex at the top-left corner (on the map) of map cell (cx, cy).
+    auto cornerOf = [&](int cx, int cy) {
+        const glm::ivec2 toCorner = up - right; // each component is +-1
+        return cellAt(cx, cy) + (toCorner + glm::ivec2(1)) / 2;
+    };
     auto edgeChar = [](world::EdgeType t, bool horizontal) {
         switch (t) {
         case world::EdgeType::Wall:    return horizontal ? '-' : '|';
@@ -538,28 +554,30 @@ void TerminalConsole::cmdMap(const Args&, const TerminalContext& ctx) {
     print(title, TerminalScreen::Bright);
     // Three characters per cell: a corner and two edge characters on the
     // edge rows, a wall and a centred marker on the cell rows.
-    auto edgeRow = [&](int gz) {
+    auto edgeRow = [&](int cy) { // the edges along the top of map row cy
         std::string row = "      ";
-        for (int gx = px - R; gx <= px + R + 1; ++gx) {
-            row += w.vertexHasWall(ctx.level, gx, gz) ? '+' : ' ';
-            if (gx <= px + R) row += std::string(2, edgeChar(w.edge(ctx.level, gx, gz, world::EdgeAxis::South), true));
+        for (int cx = -R; cx <= R + 1; ++cx) {
+            const glm::ivec2 v = cornerOf(cx, cy);
+            row += w.vertexHasWall(ctx.level, v.x, v.y) ? '+' : ' ';
+            if (cx <= R) row += std::string(2, edgeChar(edgeBetween(cellAt(cx, cy), cellAt(cx, cy + 1)), true));
         }
         return row;
     };
-    for (int gz = pz + R; gz >= pz - R; --gz) {
-        print(edgeRow(gz + 1), TerminalScreen::Normal, 0.0f, 0.03f);
+    for (int cy = R; cy >= -R; --cy) {
+        print(edgeRow(cy), TerminalScreen::Normal, 0.0f, 0.03f);
         std::string row = "      ";
-        for (int gx = px - R; gx <= px + R + 1; ++gx) {
-            row += edgeChar(w.edge(ctx.level, gx, gz, world::EdgeAxis::West), false);
-            if (gx > px + R) break;
-            const world::CellRole role = w.cellRole(ctx.level, gx, gz);
-            row += (gx == px && gz == pz) ? '@' : role == world::CellRole::StairsLower ? '^'
+        for (int cx = -R; cx <= R + 1; ++cx) {
+            row += edgeChar(edgeBetween(cellAt(cx - 1, cy), cellAt(cx, cy)), false);
+            if (cx > R) break;
+            const glm::ivec2 c = cellAt(cx, cy);
+            const world::CellRole role = w.cellRole(ctx.level, c.x, c.y);
+            row += (cx == 0 && cy == 0) ? '@' : role == world::CellRole::StairsLower ? '^'
                                               : role == world::CellRole::StairsUpper ? 'v' : ' ';
             row += ' ';
         }
         print(row, TerminalScreen::Normal, 0.0f, 0.03f);
     }
-    print(edgeRow(pz - R), TerminalScreen::Normal, 0.0f, 0.03f);
+    print(edgeRow(-R - 1), TerminalScreen::Normal, 0.0f, 0.03f);
     print("@ YOU   ^ STAIRS UP   v STAIRS DOWN   = : DOORS   . ARCHES", TerminalScreen::Dim);
 }
 
