@@ -1004,7 +1004,7 @@ void WorldGenerator::scrawlWalls(ChunkBlueprint& bp, const glm::vec3& origin) co
                 layout.slant = rng.range(-0.05f, 0.05f) * note.wobble;
                 const glm::vec3 anchor = face + right * (along - 0.5f * width) + up * (top - note.charHeight);
                 decals::addText(bp.staticMesh, note.lines, anchor, right, up, note.ink, layout, rng.next());
-                bp.clues.push_back({face + right * along + up * (top - 0.5f * height), n, note.clue});
+                bp.clues.push_back({face + right * along + up * (top - 0.5f * height), n, note.clue, note.doomNote});
             }
         }
     }

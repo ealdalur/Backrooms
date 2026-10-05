@@ -282,8 +282,11 @@ void Engine::setupPuzzleDemo() {
     };
 
     if (demo == "clue") {
-        // In front of the nearest phone number on a wall (--type <n>: the n-th nearest writing of any kind).
-        const int nth = m_options.demoInput.empty() ? -1 : std::atoi(m_options.demoInput.c_str());
+        // In front of the nearest phone number on a wall (--type <n>: the n-th nearest writing of any kind;
+        // --type doom: the nearest note about DOOM).
+        const bool doom = m_options.demoInput == "doom";
+        const int nth = m_options.demoInput.empty() || doom ? -1 : std::atoi(m_options.demoInput.c_str());
+        int doomNotes = 0;
         std::vector<std::pair<float, const ClueSpot*>> spots;
         int chunks = 0, writings = 0, numbers = 0;
         for (Chunk* chunk : m_chunks->sortedChunksMutable()) {
@@ -292,12 +295,14 @@ void Engine::setupPuzzleDemo() {
             for (const ClueSpot& c : chunk->clues()) {
                 ++writings;
                 numbers += c.clue ? 1 : 0;
-                if (nth < 0 && !c.clue) continue;
+                doomNotes += c.doomNote ? 1 : 0;
+                if (doom ? !c.doomNote : nth < 0 && !c.clue) continue;
                 spots.emplace_back(glm::length(c.position - feet), &c);
             }
         }
         std::sort(spots.begin(), spots.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
-        std::printf("[Demo] %d loaded chunks on this storey: %d writings, %d of them the number\n", chunks, writings, numbers);
+        std::printf("[Demo] %d loaded chunks on this storey: %d writings, %d of them the number, %d the note about DOOM\n", chunks,
+                    writings, numbers, doomNotes);
         const size_t index = static_cast<size_t>(std::max(nth, 0));
         const ClueSpot* best = index < spots.size() ? spots[index].second : nullptr;
         const float bestDist = best ? spots[index].first : 0.0f;
@@ -308,7 +313,7 @@ void Engine::setupPuzzleDemo() {
         const glm::vec3 at = best->position;
         glm::vec3 stand = at + best->normal * 1.2f;
         stand.y = world::levelFloorY(m_focusLevel);
-        std::printf("[Demo] The number is on a wall %.1fm away\n", bestDist);
+        std::printf("[Demo] %s on a wall %.1fm away\n", doom ? "The note about DOOM is" : nth < 0 ? "The number is" : "That writing is", bestDist);
         teleportPlayer(stand, m_focusLevel, yawToward(at - stand));
         m_player->setViewAngles(yawToward(at - stand), pitchToward(at - m_player->eyePosition()));
     } else if (demo == "hexstream" || demo == "exit-map") {

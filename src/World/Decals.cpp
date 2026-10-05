@@ -26,7 +26,12 @@ const char* pick(rnd::Rng& rng, const char* const (&options)[N]) {
 }
 
 // Despair, warnings and tallies...
+/// Someone found the terminals' hidden game (type DOOM at a prompt), and is
+/// coping. Written in a calm hand: ballpoint or felt-tip, never blood.
+const char* const kDoomNote = "bro, the computers\ncan run DOOM!\nmaybe this isn't\nso bad...";
+
 const char* const kMessages[] = {
+    kDoomNote,
     "HELP ME",
     "help",
     "I WAS HERE",
@@ -236,10 +241,18 @@ Scrawl scrawl(rnd::Rng& rng, const std::string& clue, float maxWidth) {
         s.charHeight = s.ink == Ink::Marker ? rng.range(0.09f, 0.12f) : rng.range(0.065f, 0.08f);
         s.wobble = 0.8f;
     } else {
-        text = rng.chance(0.15f) ? gibberish(rng) : std::string(pick(rng, kMessages));
+        const char* message = nullptr;
+        if (rng.chance(0.15f)) {
+            text = gibberish(rng);
+        } else {
+            message = pick(rng, kMessages);
+            text = message;
+        }
+        s.doomNote = message == kDoomNote;
         const float r = rng.nextFloat();
         s.ink = r < 0.28f ? Ink::Marker : r < 0.40f ? Ink::Pen : r < 0.52f ? Ink::Pencil : r < 0.63f ? Ink::SprayRed
               : r < 0.74f ? Ink::SprayBlack : Ink::Blood;
+        if (s.doomNote) s.ink = r < 0.5f ? Ink::Marker : Ink::Pen; // the same draw: nothing else written moves
         switch (s.ink) {
         case Ink::Pen:        s.charHeight = rng.range(0.05f, 0.075f); s.wobble = 1.0f; break;
         case Ink::Pencil:     s.charHeight = rng.range(0.05f, 0.08f);  s.wobble = 1.1f; break;
@@ -249,6 +262,7 @@ Scrawl scrawl(rnd::Rng& rng, const std::string& clue, float maxWidth) {
         case Ink::Marker:
         default:              s.charHeight = rng.range(0.08f, 0.14f);  s.wobble = 1.0f; break;
         }
+        if (s.doomNote) s.charHeight = std::max(s.charHeight, 0.07f); // a note meant to be read
     }
     const float advance = atlas::kAdvance * s.charHeight / kFontRows;
     s.lines = wrap(text, std::max(4, static_cast<int>(maxWidth / advance)));

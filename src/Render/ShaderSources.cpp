@@ -195,7 +195,13 @@ vec3 perturbNormal(vec3 N, vec3 pos, vec2 uv, float layer, float bumpScale) {
     vec3 r2 = cross(N, dpdx);
     float det = dot(dpdx, r1);
     vec3 grad = sign(det) * (dBs * r1 + dBt * r2);
-    return normalize(abs(det) * N - grad);
+    // A surface seen edge-on (it lies in a plane through the eye: a wall end
+    // pointing at the camera, a leaf turned sideways) has degenerate screen
+    // derivatives: det and grad vanish, and normalising the zero vector gives
+    // NaN - black pixels along such edges. There is no relief to see there anyway.
+    vec3 n = abs(det) * N - grad;
+    float len2 = dot(n, n);
+    return (len2 > 1e-24 && len2 < 1e24) ? n * inversesqrt(len2) : N; // (false for NaN as well)
 }
 
 // ---- Analytic ambient occlusion from the wall layout --------------------------------
@@ -364,7 +370,7 @@ vec3 writingInk(vec2 uvIn, float layer, out float coverage, out float spec, out 
         coverage = hand * (0.88 + 0.12 * grain);
         col = vec3(0.025, 0.025, 0.03);
     } else if (ink == 1) {                // ballpoint
-        coverage = (1.0 - smoothstep(0.16 - aaHand, 0.16 + aaHand, d.r)) * 0.92;
+        coverage = (1.0 - smoothstep(0.19 - aaHand, 0.19 + aaHand, d.r)) * 0.95;
         col = vec3(0.06, 0.09, 0.32);
         spec = 0.35;
     } else if (ink == 2) {                // pencil: grainy, faint, a graphite sheen

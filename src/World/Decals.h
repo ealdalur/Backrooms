@@ -68,7 +68,8 @@ struct Scrawl {
     Ink   ink = Ink::Marker;
     float charHeight = 0.1f;
     float wobble = 1.0f;
-    bool  clue = false; ///< The phone number.
+    bool  clue = false;     ///< The phone number.
+    bool  doomNote = false; ///< The note about DOOM on the terminals.
 };
 
 /// What gets written (and how), given the room left on the wall. `clue` is

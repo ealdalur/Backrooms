@@ -58,6 +58,7 @@ struct ClueSpot {
     glm::vec3 position; ///< Middle of the writing.
     glm::vec3 normal;   ///< The way the wall faces.
     bool      clue;     ///< It is the phone number.
+    bool      doomNote; ///< It is the note about DOOM.
 };
 
 /// Everything the generator produces for a chunk (no GL objects).
