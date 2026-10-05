@@ -173,9 +173,9 @@ void Soundscape::updateEntities(float dt, const EntityAudioState& state, const s
     m_audio.setVoicePitch(m_heart, 1.0f + 0.9f * fear);
 }
 
-void Soundscape::playEffect(SoundId id, const glm::vec3& at, float gain, const WorldGenerator& generator) {
+void Soundscape::playEffect(SoundId id, const glm::vec3& at, float gain, const WorldGenerator& generator, float refDistance) {
     if (!m_enabled) return;
-    playAt(id, at, gain, 0.04f, 0.1f, generator);
+    playAt(id, at, gain, 0.04f, 0.1f, generator, 0.0f, refDistance);
 }
 
 void Soundscape::setMonitorHum(bool on, const glm::vec3& at, const WorldGenerator& generator) {
@@ -342,8 +342,8 @@ Soundscape::Spatial Soundscape::spatialize(const glm::vec3& source, float refDis
 }
 
 void Soundscape::playAt(SoundId id, const glm::vec3& source, float gain, float pitchJitter, float reverbSend,
-                        const WorldGenerator& generator, float delay) {
-    const Spatial s = spatialize(source, 1.5f, generator);
+                        const WorldGenerator& generator, float delay, float refDistance) {
+    const Spatial s = spatialize(source, refDistance, generator);
     VoiceParams p;
     p.gain = gain * s.gain;
     p.pan = s.pan;

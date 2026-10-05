@@ -222,7 +222,7 @@ bool Engine::init() {
                     secret.memoryAddress.c_str(), secret.ipAddress.c_str(), secret.floorDelta, secret.chunkDelta.x, secret.chunkDelta.y,
                     PuzzleChain::stageName(m_puzzle->stage()));
     }
-    m_nextRing = 110.0f;
+    m_nextRing = 45.0f; // the first phone rings soon, so the player learns that they do
 
     // Load the neighbourhood of the origin, find a free spot and spawn there.
     const int level = m_options.startLevel;

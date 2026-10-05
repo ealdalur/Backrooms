@@ -101,6 +101,9 @@ public:
     /// light and sound occlusion.
     bool isLightBlocked(int level, const glm::vec2& a, const glm::vec2& b) const;
 
+    /// How many such walls the segment a->b crosses (counting stops at `stopAt`).
+    int wallsBetween(int level, const glm::vec2& a, const glm::vec2& b, int stopAt = 1 << 30) const;
+
     /// Generates all CPU-side content of a chunk.
     ChunkBlueprint generate(const ChunkCoord& c) const;
 

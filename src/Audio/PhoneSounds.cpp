@@ -698,22 +698,27 @@ std::vector<Sound> makeClue(uint64_t seed) {
 }
 
 std::vector<Sound> makeBell(uint64_t seed) {
-    // A desk phone ringing: the striker hammering between two small bell
+    // A desk phone ringing: the striker hammering between two steel bell
     // gongs some twenty times a second for two seconds (one ring of the
-    // cadence), the plastic case buzzing along. Heard in the room.
+    // cadence), the hollow plastic case booming and buzzing along. The gongs
+    // are big enough to ring low (their fundamentals under 1 kHz), so the
+    // ring still carries muffled through a wall, the way a real one does.
     rnd::Rng rng(seed);
     Noise noise(rng.next());
     const float ring = 2.0f;
     Buffer b = silence(ring + 0.6f);
-    const Mode gongA[] = {{1180.0f, 0.5f, 1.0f}, {2960.0f, 0.25f, 0.45f}, {4170.0f, 0.12f, 0.25f}};
-    const Mode gongB[] = {{1290.0f, 0.5f, 1.0f}, {3150.0f, 0.25f, 0.4f}, {4480.0f, 0.12f, 0.22f}};
+    // Inharmonic bell partials over each fundamental.
+    const Mode gongA[] = {{640.0f, 0.6f, 1.0f}, {1350.0f, 0.4f, 0.45f}, {1920.0f, 0.3f, 0.28f}, {2950.0f, 0.18f, 0.16f}};
+    const Mode gongB[] = {{705.0f, 0.6f, 1.0f}, {1490.0f, 0.4f, 0.42f}, {2110.0f, 0.3f, 0.26f}, {3200.0f, 0.18f, 0.15f}};
     int k = 0;
     for (float t = 0.01f; t < ring; t += 1.0f / 40.0f, ++k) {
         const float g = 0.22f * (0.85f + 0.3f * rng.nextFloat()) * smooth01(0.0f, 0.06f, t);
-        addModes(b, t, (k & 1) ? gongB : gongA, 3, g, 0.01f, rng);
-        addNoiseBurst(b, t, 0.0002f, 0.004f, Biquad::bandpass(rng.range(500.0f, 900.0f), 1.0f), 0.05f, noise);
+        addModes(b, t, (k & 1) ? gongB : gongA, 4, g, 0.01f, rng);
+        // The case: a dull knock with every blow, and the rattle of loose plastic.
+        addNoiseThunk(b, noise, t, 0.12f, 320.0f, 0.0005f, 0.012f);
+        addNoiseBurst(b, t, 0.0002f, 0.004f, Biquad::bandpass(rng.range(400.0f, 700.0f), 1.0f), 0.06f, noise);
     }
-    applyFilter(b, Biquad::highpass(250.0f));
+    applyFilter(b, Biquad::highpass(120.0f));
     fadeEdges(b, 0.002f, 0.3f);
     normalize(b, 0.85f);
     return {{std::move(b), false}};

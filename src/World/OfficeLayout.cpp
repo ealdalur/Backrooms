@@ -367,16 +367,35 @@ private:
     }
 
     /// Walkways through the cubicle field: a plant, a bin, now and then a water cooler.
+    /// Everything stands against the cubicle pods' outer panels (never out in
+    /// the walkway): either side of the middle of a pod's solid north / south
+    /// face, and on its east / west faces only on the panel either side of the
+    /// cubicle doorways. A crossing with no pod alongside stays clear.
     void aisle() {
-        const glm::vec2 corners[4] = {{0.75f, 0.75f}, {4.25f, 0.75f}, {0.75f, 4.25f}, {4.25f, 4.25f}};
-        int order[4] = {0, 1, 2, 3};
-        for (int i = 3; i > 0; --i) std::swap(order[i], order[m_rng.rangeInt(0, i)]);
-        auto at = [&](int k) { return m_min + glm::vec3(corners[order[k]].x, 0.0f, corners[order[k]].y); };
-        if (m_rng.chance(0.4f)) add(m_rng.chance(0.6f) ? FurnitureType::Ficus : FurnitureType::Fern, at(0), m_rng.range(0.0f, 6.28f));
-        if (m_rng.chance(0.35f)) add(FurnitureType::TrashCan, at(1), m_rng.range(0.0f, 6.28f));
-        if (m_rng.chance(0.2f)) {
-            const glm::vec3 p = at(2);
-            add(FurnitureType::WaterCooler, p, yawFacing(m_centre - p));
+        struct Spot {
+            glm::vec3 panel; ///< On the panel's face, level with the spot.
+            glm::vec3 out;   ///< Away from the panel, into the walkway.
+        };
+        std::vector<Spot> spots;
+        for (int s = 0; s < 4; ++s) {
+            const glm::ivec2 nb = glm::ivec2(m_gx, m_gz) + kSideStep[s];
+            if (zone(nb.x, nb.y) != Zone::Cubicles) continue;
+            const glm::vec3 out = kInward[s];
+            const glm::vec3 pod = m_centre - out * S; // the neighbouring pod's centre
+            const glm::vec3 face = pod + out * (kPod + kPanelHalf);
+            const glm::vec3 along(-out.z, 0.0f, out.x);
+            const float a = s < 2 ? 1.45f : 1.2f; // east / west faces have the doorways in the middle
+            for (float side : {-1.0f, 1.0f}) spots.push_back({face + along * (side * a), out});
+        }
+        for (size_t i = spots.size(); i > 1; --i) std::swap(spots[i - 1], spots[static_cast<size_t>(m_rng.rangeInt(0, static_cast<int>(i) - 1))]);
+        size_t next = 0;
+        // Against the panel: its centre just its own radius out from it.
+        auto against = [&](float radius) { const Spot& s = spots[next++]; return s.panel + s.out * (radius + 0.04f); };
+        if (next < spots.size() && m_rng.chance(0.45f)) add(FurnitureType::Ficus, against(0.3f), m_rng.range(0.0f, 6.28f));
+        if (next < spots.size() && m_rng.chance(0.35f)) add(FurnitureType::TrashCan, against(0.18f), m_rng.range(0.0f, 6.28f));
+        if (next < spots.size() && m_rng.chance(0.2f)) {
+            const glm::vec3 out = spots[next].out;
+            add(FurnitureType::WaterCooler, against(0.16f), yawFacing(out)); // its back to the panel, the taps to the walkway
         }
     }
 

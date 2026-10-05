@@ -368,6 +368,11 @@ bool WorldGenerator::vertexHasPillar(int level, int gx, int gz) const {
 }
 
 bool WorldGenerator::isLightBlocked(int level, const glm::vec2& a, const glm::vec2& b) const {
+    return wallsBetween(level, a, b, 1) > 0;
+}
+
+int WorldGenerator::wallsBetween(int level, const glm::vec2& a, const glm::vec2& b, int stopAt) const {
+    int walls = 0;
     // Crossings of vertical grid lines x = k*S (west edges).
     if (a.x != b.x) {
         const float lo = std::min(a.x, b.x), hi = std::max(a.x, b.x);
@@ -377,7 +382,7 @@ bool WorldGenerator::isLightBlocked(int level, const glm::vec2& a, const glm::ve
             const float t = (x - a.x) / (b.x - a.x);
             const float z = a.y + t * (b.y - a.y);
             const int gz = static_cast<int>(std::floor(z / S));
-            if (edgeBlocksLight(edge(level, k, gz, EdgeAxis::West), z - static_cast<float>(gz) * S)) return true;
+            if (edgeBlocksLight(edge(level, k, gz, EdgeAxis::West), z - static_cast<float>(gz) * S) && ++walls >= stopAt) return walls;
         }
     }
     // Crossings of horizontal grid lines z = k*S (south edges).
@@ -389,10 +394,10 @@ bool WorldGenerator::isLightBlocked(int level, const glm::vec2& a, const glm::ve
             const float t = (z - a.y) / (b.y - a.y);
             const float x = a.x + t * (b.x - a.x);
             const int gx = static_cast<int>(std::floor(x / S));
-            if (edgeBlocksLight(edge(level, gx, k, EdgeAxis::South), x - static_cast<float>(gx) * S)) return true;
+            if (edgeBlocksLight(edge(level, gx, k, EdgeAxis::South), x - static_cast<float>(gx) * S) && ++walls >= stopAt) return walls;
         }
     }
-    return false;
+    return walls;
 }
 
 // ----- Chunk content ----------------------------------------------------------

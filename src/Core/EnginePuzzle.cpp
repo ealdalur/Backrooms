@@ -36,6 +36,11 @@ namespace {
 
 constexpr float kRingCycle = 6.0f;  ///< A ring of the bell every 6 s (2 s on, 4 s off)...
 constexpr int   kRings     = 6;     ///< ...this many times, then it gives up.
+constexpr float kBellGain  = 0.6f;
+constexpr float kBellCarry = 4.0f;  ///< A bell carries: full level within 4 m, then 1/distance.
+constexpr float kRingNear  = 3.0f;  ///< The phone that rings is no nearer than this...
+constexpr float kRingFar   = 16.0f; ///< ...and no farther if it is in view...
+constexpr float kRingFarWall = 10.0f; ///< ...or than this behind one wall (never more).
 
 inline float smooth01(float x) {
     x = std::clamp(x, 0.0f, 1.0f);
@@ -152,7 +157,7 @@ void Engine::enterOffice() {
     m_autopilot.clear();
     m_autopilotIndex = 0;
     stopRinging();
-    m_nextRing = 50.0f; // the phones here ring too
+    m_nextRing = 30.0f; // the phones here ring too
 
     glm::vec3 feet;
     float yaw = 0.0f;
@@ -189,7 +194,7 @@ void Engine::updateRinger(float dt) {
         m_ringTime += dt;
         if (before == 0.0f || std::floor(before / kRingCycle) != std::floor(m_ringTime / kRingCycle)) {
             if (m_ringTime < kRingCycle * kRings) {
-                m_sound->playEffect(SoundId::PhoneBell, phone->center(), 0.6f, *m_world);
+                m_sound->playEffect(SoundId::PhoneBell, phone->center(), kBellGain, *m_world, kBellCarry);
                 m_noises.push_back({phone->center(), cfg::kNoiseMachine * 1.4f, NoiseKind::Machine}); // so does the Wanderer
             } else {
                 stopRinging(); // nobody answered
@@ -197,31 +202,38 @@ void Engine::updateRinger(float dt) {
         }
         return;
     }
-    // (Not in the scripted scenes, whose timing it would upset - but for the one that asks for it.)
-    if (!m_options.demo.empty() && m_options.demo != "ringer") return;
+    // (Not in the scripted scenes, whose timing it would upset - but for the ones that ask for it.)
+    if (!m_options.demo.empty() && m_options.demo != "ringer" && m_options.demo != "office") return;
     if (m_state != GameState::Running && m_state != GameState::Terminal && m_state != GameState::Cabinet) return;
     if ((m_nextRing -= dt) > 0.0f) return;
     rnd::Rng rng(rnd::hashCombine(m_options.seed, static_cast<uint64_t>(m_simTime * 1000.0) ^ 0xB311ull));
     m_nextRing = rng.range(70.0f, 160.0f);
-    // A phone within earshot, but not right in front of the player.
-    const Phone* pick = nullptr;
-    int seen = 0;
+    // A phone the player can hear, but not right in front of them: in view if
+    // there is one (the same room, or through an opening), else one wall away.
+    const Phone* pick[2] = {nullptr, nullptr}; // by the walls in the way
+    int seen[2] = {0, 0};
     const glm::vec3 eye = m_player->eyePosition();
     for (Chunk* chunk : m_chunks->sortedChunksMutable()) {
         if (chunk->coord().level != m_focusLevel) continue;
         for (const Phone& p : chunk->phones()) {
             const float d = glm::length(p.center() - eye);
-            if (d < 3.0f || d > 18.0f || p.offHook() || p.id() == m_phoneId) continue;
-            if (rng.rangeInt(0, seen++) == 0) pick = &p; // uniform among them
+            if (d < kRingNear || d > kRingFar || p.offHook() || p.id() == m_phoneId) continue;
+            const int walls = m_world->wallsBetween(m_focusLevel, glm::vec2(eye.x, eye.z), glm::vec2(p.center().x, p.center().z), 2);
+            if (walls > 1 || (walls == 1 && d > kRingFarWall)) continue;
+            if (rng.rangeInt(0, seen[walls]++) == 0) pick[walls] = &p; // uniform among them
         }
     }
-    if (!pick) {
+    const int walls = pick[0] ? 0 : 1;
+    if (!pick[walls]) {
         m_nextRing = 20.0f;
         return;
     }
-    m_ringingPhone = pick->id();
+    m_ringingPhone = pick[walls]->id();
     m_ringTime = 0.0f;
-    if (!m_options.demo.empty()) std::printf("[Demo] A phone %.1fm away starts ringing\n", glm::length(pick->center() - eye));
+    if (!m_options.demo.empty()) {
+        std::printf("[Demo] A phone %.1fm away starts ringing (%s)\n", glm::length(pick[walls]->center() - eye),
+                    walls == 0 ? "in view" : "one wall away");
+    }
 }
 
 void Engine::updateGlitchHum(float dt) {
