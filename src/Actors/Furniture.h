@@ -18,6 +18,18 @@ enum class FurnitureType : uint8_t {
     Chair,       ///< Five-star swivel task chair.
     FileCabinet, ///< Three-drawer vertical filing cabinet.
     Partition,   ///< Fabric cubicle partition panel.
+    // The office (Actors/OfficeFurniture).
+    ExecDesk,        ///< 1.9 m executive desk: two pedestals and a modesty panel.
+    ExecChair,       ///< High-backed leather executive chair.
+    ConferenceTable, ///< 3.6 m boardroom table.
+    BreakTable,      ///< Small round breakroom table.
+    Ficus,           ///< Potted weeping fig.
+    Fern,            ///< Potted fern.
+    WaterCooler,     ///< Water cooler with its blue bottle.
+    TrashCan,        ///< Swing-lid bin.
+    PaperStack,      ///< A few untidy stacks of copier paper (desk clutter).
+    Mug,             ///< Coffee mug, half full (desk clutter).
+    DocTray,         ///< Two-tier document tray (desk clutter).
     Count
 };
 

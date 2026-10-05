@@ -82,6 +82,14 @@ inline constexpr float kPartCabinetChance = 0.20f; ///< A filing cabinet holds o
 inline constexpr float kBatteryShare     = 0.34f;  ///< Of all parts found, batteries (the consumable); the rest split evenly.
 inline constexpr float kBatteryMinCharge = 0.55f;  ///< Batteries lying around hold 55..100% charge.
 
+// Writing on the walls -------------------------------------------------------------
+inline constexpr float kWritingChance = 0.08f; ///< Probability that a solid wall face has something written on it.
+inline constexpr float kDecalOffset   = 0.004f; ///< Writing lies this far in front of the wall face.
+
+/// Which world the generator builds: the endless Backrooms, or the office
+/// the player noclips out into (World/OfficeLayout).
+enum class Realm : uint8_t { Backrooms = 0, Office = 1 };
+
 /// Wall-edge classification shared by generation, collision and the shader.
 enum class EdgeType : uint8_t {
     Open    = 0, ///< No wall at all (open-plan).

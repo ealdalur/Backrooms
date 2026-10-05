@@ -25,8 +25,23 @@
 // Stairwells rising from even and odd storeys use different cell columns, so
 // the two stairwells a storey may hold (one going up, one coming down) never
 // collide.
+//
+// Writing on the walls: a few solid wall faces per chunk carry something
+// written in marker, pen, pencil, spray paint or blood (World/Decals) - and
+// very rarely the puzzle's phone number (setWallClue), alone.
+//
+// The exit: once the puzzle chain has located it (setExitChunk), one room of
+// that chunk - the one with the most walls - becomes the glitch room. Its
+// walls are built from loose tiles of the Glitch material that jitter,
+// blink out and smear (the world shader animates them), and they are not
+// solid: walking into one is the way out (ChunkBlueprint::glitchZones).
+// That chunk is also guaranteed a terminal, whose MAP shows the room.
+//
+// Realms: after the escape the generator builds the office instead
+// (setRealm, World/OfficeLayout) - the same grid, light blue paint.
 // ---------------------------------------------------------------------------
 
+#include "Render/MaterialTypes.h"
 #include "World/Chunk.h"
 #include "World/ChunkCoord.h"
 #include "World/Stairwell.h"
@@ -36,6 +51,7 @@
 #include <array>
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <unordered_map>
 
 class WorldGenerator {
@@ -43,6 +59,20 @@ public:
     explicit WorldGenerator(uint64_t worldSeed);
 
     uint64_t worldSeed() const { return m_seed; }
+
+    /// Switches between the Backrooms and the office (forgets cached layouts;
+    /// loaded chunks must be rebuilt).
+    void setRealm(world::Realm realm);
+    world::Realm realm() const { return m_realm; }
+
+    /// The phone number written - rarely - on the walls ("" for none).
+    void setWallClue(const std::string& text) { m_wallClue = text; }
+
+    /// Makes `c` the exit chunk (or none). Loaded copies must be rebuilt.
+    void setExitChunk(const std::optional<ChunkCoord>& c);
+    const std::optional<ChunkCoord>& exitChunk() const { return m_exitChunk; }
+    /// The glitch room of the exit chunk: global cell (x, y) and level (z).
+    const std::optional<glm::ivec3>& exitCell() const { return m_exitCell; }
 
     /// Seed of a whole storey (level 0 uses the world seed itself).
     uint64_t levelSeed(int level) const;
@@ -95,6 +125,15 @@ private:
     void buildVertex(ChunkBlueprint& bp, const glm::vec3& origin, int gx, int gz) const;
     void placeLights(ChunkBlueprint& bp, const glm::vec3& origin) const;
     void placeFurniture(ChunkBlueprint& bp, const glm::vec3& origin) const;
+    /// Things written on the walls of a Backrooms chunk.
+    void scrawlWalls(ChunkBlueprint& bp, const glm::vec3& origin) const;
+    /// One of the exit room's walls: loose glitching tiles over `box`, and no collider.
+    void addGlitchWall(ChunkBlueprint& bp, const glm::vec3& origin, const AABB& box, world::EdgeAxis axis) const;
+
+    bool isExitCell(int level, int gx, int gz) const;
+    bool isGlitchEdge(int level, int gx, int gz, world::EdgeAxis axis) const;
+    /// What walls are made of in the current realm.
+    MaterialId wallMaterial() const;
 
     /// Adds one ceiling troffer (housing, emissive diffuser, light) centred
     /// at world (x, z). `shaftCell` (global cell, or nullptr) marks a fixture
@@ -104,5 +143,10 @@ private:
     void computeLightVisibility(LightFixture& light, int level, const glm::ivec2* shaftCell) const;
 
     uint64_t m_seed;
+    world::Realm m_realm = world::Realm::Backrooms;
+    std::string m_wallClue;
+    std::optional<ChunkCoord> m_exitChunk;
+    std::optional<glm::ivec3> m_exitCell;
+    int m_exitWalls = 0; ///< Solid walls round the exit room (0: it gets a free-standing glitch slab).
     mutable std::unordered_map<ChunkCoord, ChunkLayout, ChunkCoordHash> m_layoutCache;
 };

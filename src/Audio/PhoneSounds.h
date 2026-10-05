@@ -20,6 +20,9 @@
 //     mouthpiece on a hissing, wobbling tape.
 //   * Jenny, at 867-5309: a young woman who has been trapped in here for
 //     years and is sick of the calls - picked up, ranted and slammed down.
+//   * The number on the wall: a frightened woman, close to her mouthpiece
+//     and in a hurry, through heavy interference - the puzzle chain's clue.
+//   * The ringer: a desk phone's bell, heard in the room (not the earpiece).
 // Registered in SoundBank under the SoundId::Phone* ids.
 // ---------------------------------------------------------------------------
 
@@ -103,6 +106,11 @@ inline constexpr const char* kJennyNumber = "8675309";
 const char* jennyText();
 inline constexpr float kJennySpeechStart = 0.95f;
 
+/// What the voice at the number on the wall says (the PhoneClue sound), and
+/// when, into it, she starts talking.
+const char* clueText();
+inline constexpr float kClueSpeechStart = 0.3f;
+
 std::vector<Sound> makeLine(uint64_t seed);
 std::vector<Sound> makeDialTone(uint64_t seed);
 std::vector<Sound> makeRingback(uint64_t seed);
@@ -122,5 +130,7 @@ std::vector<Sound> makeBreath(uint64_t seed);
 std::vector<Sound> makeJenny(uint64_t seed);
 std::vector<Sound> makeBeep(uint64_t seed);
 std::vector<Sound> makeMessage(uint64_t seed);
+std::vector<Sound> makeClue(uint64_t seed);
+std::vector<Sound> makeBell(uint64_t seed);
 
 } // namespace phonesfx

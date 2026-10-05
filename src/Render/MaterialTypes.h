@@ -28,11 +28,20 @@ enum class MaterialId : uint8_t {
     Aluminum,      ///< Spun / brushed aluminium (the toroid, the spike).
     Manila,        ///< Manila file-folder card.
     TeslaLabels,   ///< Atlas of the gun parts' labels, warning stickers, circuit board and gauge LEDs.
+    Writing,       ///< Glyph atlas (distance fields) for writing on walls, signs and whiteboards (see World/Decals).
+    Glitch,        ///< Digital corruption: the exit room's walls coming apart.
+    OfficePaint,   ///< Light blue eggshell paint (the office's walls).
+    OfficeCarpet,  ///< Grey industrial carpet tiles.
+    OfficeFabric,  ///< Dingy beige-grey cubicle partition fabric.
+    Signage,       ///< Atlas of poster, notice, whiteboard and sign backings.
+    Foliage,       ///< Leaf atlas (ficus leaf, fern frond); the surface alpha is the leaf's outline.
+    OfficePaper,   ///< Copier paper (stacks, trays).
+    WaterBottle,   ///< Translucent blue water-cooler bottle.
     Count
 };
 
 /// Upper bound baked into the world shader's material parameter array.
-inline constexpr int kMaxMaterials = 24;
+inline constexpr int kMaxMaterials = 32;
 
 inline constexpr int kMaterialCount = static_cast<int>(MaterialId::Count);
 
@@ -70,6 +79,15 @@ inline const MaterialInfo& materialInfo(MaterialId id) {
         {"Aluminum",      0.25f, 0.95f, 110.0f, 0.0002f, 0.0f},
         {"Manila",        0.30f, 0.06f,  10.0f, 0.0003f, 0.0f},
         {"TeslaLabels",   1.00f, 0.35f,  40.0f, 0.0002f, 6.0f},
+        {"Writing",       1.00f, 0.30f,  24.0f, 0.0000f, 4.0f},
+        {"Glitch",        1.25f, 0.40f,  40.0f, 0.0000f, 3.0f},
+        {"OfficePaint",   1.25f, 0.14f,  22.0f, 0.0006f, 0.0f},
+        {"OfficeCarpet",  2.50f, 0.08f,  10.0f, 0.0030f, 0.0f},
+        {"OfficeFabric",  0.40f, 0.04f,   8.0f, 0.0010f, 0.0f},
+        {"Signage",       1.00f, 0.30f,  40.0f, 0.0002f, 0.0f},
+        {"Foliage",       1.00f, 0.35f,  30.0f, 0.0008f, 0.0f},
+        {"OfficePaper",   0.30f, 0.08f,  12.0f, 0.0002f, 0.0f},
+        {"WaterBottle",   0.50f, 0.95f, 110.0f, 0.0001f, 0.0f},
     };
     static_assert(kMaterialCount <= kMaxMaterials, "raise kMaxMaterials and the shader array");
     return kTable[static_cast<int>(id)];

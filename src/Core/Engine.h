@@ -32,6 +32,17 @@
 //              still behind a blurred, darkened screen asking "Are you sure
 //              you want to quit the game?" - Esc again quits, any other key
 //              (or a click) carries on where the player was.
+//   Noclip   - the player walked into the glitch room's wall: the picture
+//              tears apart, the camera slides through the wall, everything
+//              goes black - and fades back in on a cubicle in an office
+//              (Core/EnginePuzzle.cpp). Then they are Running again, there.
+//
+// The puzzle chain (Gameplay/PuzzleChain) runs through it all: the phone
+// number on a wall, the call, the memory at 7A9F on a terminal's hex stream,
+// the ping and its offset, the glitch room on the MAP, the way out. The
+// Engine carries the chain's answers to the world generator (the clue on the
+// walls, the exit chunk), the phones (the clue's number) and the terminals,
+// and moves it on when they report what the player found.
 // ---------------------------------------------------------------------------
 
 #include "AI/NoiseEvent.h"
@@ -41,6 +52,7 @@
 #include "Gameplay/Inventory.h"
 #include "Render/Camera.h"
 #include "Render/EntityRenderer.h"
+#include "World/ChunkCoord.h"
 #include "World/WorldConstants.h"
 
 #include <SDL3/SDL.h>
@@ -54,6 +66,9 @@
 
 class ChunkManager;
 class EntityDirector;
+class PuzzleChain;
+struct PuzzleEvent;
+enum class PuzzleStage : uint8_t;
 enum class EntityKind : uint8_t;
 class FileCabinet;
 class Phone;
@@ -94,9 +109,18 @@ struct EngineOptions {
     /// quit-prompt (P, P, Esc, another key, Esc, a held Esc, Esc: checks the pause screen and the quit prompt),
     /// assemble (all four parts, put together), tesla / tesla-stalker (the gun,
     /// fired at the Wanderer / the Stalker; --type <percent> sets the battery).
+    /// Developer scenes for the way out: clue (in front of the nearest phone
+    /// number on a wall), hexstream (the call already made: sits at a terminal
+    /// streaming HEX and reports when 7A9F comes up), exit-map (the nearest
+    /// terminal's chunk becomes the exit; MAP), glitch (the current chunk
+    /// becomes the exit; stands at the glitch room - --type walk: walks into
+    /// its wall), office (straight to the office), ringer (a nearby phone rings),
+    /// clue-survey (rooms of exploring between copies of the number; --type <routes>),
+    /// terminal-pause (SPACE on a terminal's log, ESC, sit down again, SPACE: the stream must come back).
     std::string demo;
     std::string demoInput;               ///< Typed into the terminal in the "terminal" scene, dialled in "phone" ('h' hangs up, 'M' messages; "upper" in "stairs-sign").
     bool        noEntities = false;      ///< Disable the anomalies.
+    std::string puzzleStage;             ///< Start the puzzle chain this far along: dialed, memory, mapped.
     int         windowWidth = cfg::kWindowWidth;   ///< Initial window size (logical pixels).
     int         windowHeight = cfg::kWindowHeight;
     std::string dumpSoundsDir;           ///< If set: write every synthesised sound there as WAV.
@@ -116,7 +140,7 @@ public:
     int run();
 
 private:
-    enum class GameState { Running, Paused, Terminal, Phone, Cabinet, Caught, QuitPrompt };
+    enum class GameState { Running, Paused, Terminal, Phone, Cabinet, Caught, QuitPrompt, Noclip };
 
     /// A point of a scripted walk. `door` marks the approach to a door that
     /// has to be opened first (the edge it hangs in follows).
@@ -133,7 +157,8 @@ private:
     void update(float dt);
     void render(float dt);
     void setState(GameState state);
-    void updateTitle(float dt);
+    /// Measures the frame rate for the HUD's meter.
+    void updateFps(float dt);
     bool saveScreenshot(const std::string& path) const;
     void shutdown();
 
@@ -183,6 +208,28 @@ private:
     void buildViewModel(const Camera& cam);
     void drawInventory();
 
+    // ---- The puzzle chain and the way out (Core/EnginePuzzle.cpp) -------------------------------
+    /// Moves the chain on (and says so in the log).
+    void advancePuzzle(PuzzleStage stage, const char* why);
+    void handlePuzzleEvents(const std::vector<PuzzleEvent>& events);
+    /// Makes `exit` the exit chunk (the generator rebuilds it with the glitch room).
+    void armExit(const ChunkCoord& exit);
+    /// Walking into a glitching wall starts the noclip.
+    void checkNoclip();
+    void startNoclip();
+    void updateNoclip(float dt);
+    /// Black screen: swaps the Backrooms for the office and puts the player in a cubicle.
+    void enterOffice();
+    /// Now and then a phone near the player rings (picked up, someone is on the line).
+    void updateRinger(float dt);
+    void stopRinging();
+    /// The glitch room crackles and hisses while the player is near it.
+    void updateGlitchHum(float dt);
+    /// A line of speech captioned at the bottom of the screen.
+    void say(const std::string& line, float seconds);
+    void setupPuzzleDemo();
+    void updatePuzzleDemo();
+
     // ---- Entities / noise -----------------------------------------------------------------
     void collectNoise();
     void startCaught(EntityKind by);
@@ -230,6 +277,8 @@ private:
     std::unique_ptr<Renderer>       m_renderer;
     std::unique_ptr<Soundscape>     m_sound;
     std::unique_ptr<EntityDirector> m_entities;
+    std::unique_ptr<PuzzleChain>    m_puzzle;
+    bool                            m_office = false; ///< Escaped: the world is the office now.
     EntityDrawList                  m_entityDraw;
     std::vector<NoiseEvent>         m_noises;
 
@@ -293,12 +342,25 @@ private:
     std::string m_message;
     float     m_messageTimer = 0.0f;
 
+    // The way out.
+    float       m_noclipTimer = 0.0f;
+    bool        m_noclipSwitched = false; ///< The office is loaded (behind the black).
+    bool        m_monologueStarted = false;
+    glm::vec3   m_noclipDir{0.0f};        ///< The way through the wall.
+    float       m_glitch = 0.0f;          ///< 0..1, the picture tearing apart.
+    float       m_glitchHumTimer = 0.0f;
+    std::string m_dialogue;               ///< Speech captioned at the bottom of the screen...
+    float       m_dialogueTimer = 0.0f;   ///< ...for this much longer.
+    uint64_t    m_ringingPhone = 0;       ///< The phone ringing, if any...
+    float       m_ringTime = 0.0f;        ///< ...for how long.
+    float       m_nextRing = 0.0f;        ///< Until a phone next rings.
+
     // HUD / diagnostics.
-    float  m_titleTimer = 0.0f;       ///< Time accumulated in the current FPS measurement window.
+    float  m_fpsTimer = 0.0f;         ///< Time accumulated in the current FPS measurement window.
     int    m_frameCounter = 0;        ///< Frames rendered in the current window.
     float  m_fps = 0.0f;              ///< Last measured average FPS.
-    bool   m_titleDirty = true;       ///< Window title needs rebuilding.
-    bool   m_debugHud = false;        ///< F3: entity states.
+    float  m_sensitivityTimer = 0.0f; ///< > 0: the mouse sensitivity was just changed (shown on the HUD).
+    bool   m_debugHud = false;        ///< F3: entity states, streaming, the puzzle chain.
     std::string m_fpsText = "-- FPS"; ///< On-screen FPS meter (refreshed twice a second).
     int    m_screenshotIndex = 0;
     bool   m_screenshotRequested = false;
@@ -314,6 +376,7 @@ private:
     float  m_lastDt = 0.0f;
     float  m_demoTime = 0.0f;
     int    m_demoStep = 0;
+    float  m_demoWait = 0.0f;                ///< When a scene's next step is due.
     std::string m_lastEntityStates;
     std::string m_lastPhoneLog;              ///< Last logged line state ("phone" scene).
     /// A stairwell entrance door in the "stairs-chase" scene (shut behind the player on each storey).

@@ -20,9 +20,17 @@ constexpr unsigned kUnitLightGrid = 2; // uses units 2..6
 
 // Atmosphere (linear HDR). The fog colour doubles as the clear colour so the
 // edge of the loaded world dissolves seamlessly into the haze.
-const glm::vec3 kAmbient(0.12f, 0.11f, 0.075f);
-const glm::vec3 kAmbientDown(0.42f, 0.37f, 0.22f);
-const glm::vec3 kFogColor(0.34f, 0.30f, 0.17f);
+struct Atmosphere {
+    glm::vec3 ambient;     ///< Indirect light from above...
+    glm::vec3 ambientDown; ///< ...and bounced up from the floor.
+    glm::vec3 fog;
+    float     fogDensity;
+    glm::vec3 lightTint;   ///< Colour of the tubes.
+};
+// The Backrooms: humid, yellow, warm tubes.
+const Atmosphere kBackrooms{{0.12f, 0.11f, 0.075f}, {0.42f, 0.37f, 0.22f}, {0.34f, 0.30f, 0.17f}, cfg::kFogDensity, {1.0f, 1.0f, 1.0f}};
+// The office: conditioned air, grey carpet bounce, cold, bright tubes.
+const Atmosphere kOffice{{0.11f, 0.12f, 0.13f}, {0.30f, 0.31f, 0.33f}, {0.30f, 0.32f, 0.35f}, 0.016f, {0.98f, 1.06f, 1.22f}};
 
 const std::vector<LightDisturbance> kNoDisturbances;
 } // namespace
@@ -85,10 +93,12 @@ bool Renderer::init(int width, int height) {
     m_worldShader.set("uCeilingTile", world::kCeilingTileSize);
     m_worldShader.set("uLightRange", world::kLightRange);
     m_worldShader.set("uLightPower", cfg::kLightPower);
-    m_worldShader.set("uAmbient", kAmbient);
-    m_worldShader.set("uAmbientDown", kAmbientDown);
-    m_worldShader.set("uFogColor", kFogColor);
-    m_worldShader.set("uFogDensity", cfg::kFogDensity);
+    m_worldShader.set("uAmbient", kBackrooms.ambient);
+    m_worldShader.set("uAmbientDown", kBackrooms.ambientDown);
+    m_worldShader.set("uFogColor", kBackrooms.fog);
+    m_worldShader.set("uFogDensity", kBackrooms.fogDensity);
+    m_worldShader.set("uLightTint", kBackrooms.lightTint);
+    m_worldShader.set("uOffice", 0);
     m_worldShader.set("uDissolve", -1.0f);
     m_worldShader.set("uArcLight", glm::vec4(0.0f));
     glUseProgram(0);
@@ -126,7 +136,8 @@ void Renderer::render(const FrameParams& frame, ChunkManager& chunks, const Worl
     m_frustum.update(viewProj);
 
     // ---- Scene pass (HDR, MSAA) --------------------------------------------------------
-    m_post.beginScene(kFogColor);
+    const Atmosphere& air = frame.office ? kOffice : kBackrooms;
+    m_post.beginScene(air.fog);
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
     glEnable(GL_CULL_FACE);
@@ -140,6 +151,15 @@ void Renderer::render(const FrameParams& frame, ChunkManager& chunks, const Worl
     m_worldShader.set("uArcLight", glm::vec4(frame.arcLight.position, frame.arcLight.intensity));
     m_worldShader.set("uArcColor", frame.arcLight.color);
     m_worldShader.set("uArcRange", std::max(frame.arcLight.range, 0.1f));
+    m_worldShader.set("uAmbient", air.ambient);
+    m_worldShader.set("uAmbientDown", air.ambientDown);
+    m_worldShader.set("uFogColor", air.fog);
+    m_worldShader.set("uFogDensity", air.fogDensity);
+    m_worldShader.set("uLightTint", air.lightTint);
+    m_worldShader.set("uOffice", frame.office ? 1 : 0);
+    // Writing on the walls, leaves and the glitching walls are cut out by
+    // their coverage (written to alpha): smooth edges from the MSAA samples, no sorting.
+    glEnable(GL_SAMPLE_ALPHA_TO_COVERAGE);
     m_materials.bind(kUnitAlbedo, kUnitSurface);
     m_lightGrid.bind(m_worldShader, kUnitLightGrid);
 
@@ -239,9 +259,11 @@ void Renderer::render(const FrameParams& frame, ChunkManager& chunks, const Worl
     // ---- Entities: lit bodies through the world shader, then the shadow creature ----------
     if (frame.entities) {
         m_entities.drawLit(*frame.entities, m_worldShader);
-        m_entities.drawShadow(*frame.entities, viewProj, camera.position, static_cast<float>(frame.time), kFogColor,
-                              cfg::kFogDensity);
+        glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+        m_entities.drawShadow(*frame.entities, viewProj, camera.position, static_cast<float>(frame.time), air.fog,
+                              air.fogDensity);
     }
+    glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
     glBindVertexArray(0);
 
     // ---- The Tesla gun: its discharges out in the world, then the gun itself on top ------------
@@ -251,7 +273,7 @@ void Renderer::render(const FrameParams& frame, ChunkManager& chunks, const Worl
     static const std::vector<Glow> kNoGlows;
     if (frame.bolts || frame.glows) {
         m_lightning.draw(frame.bolts ? *frame.bolts : kNoBolts, frame.glows ? *frame.glows : kNoGlows, viewProj,
-                         camera.position, camRight, camUp, cfg::kFogDensity);
+                         camera.position, camRight, camUp, air.fogDensity);
     }
     if (frame.viewModel && !frame.viewModel->empty()) {
         // In the hands: never clipped by the wall the player stands against,
@@ -268,12 +290,12 @@ void Renderer::render(const FrameParams& frame, ChunkManager& chunks, const Worl
     }
     if (frame.muzzleGlow.intensity > 0.0f) {
         m_lightning.draw(kNoBolts, std::vector<Glow>{frame.muzzleGlow}, viewProj, camera.position, camRight, camUp,
-                         cfg::kFogDensity, false);
+                         air.fogDensity, false);
     }
 
     // ---- Post-processing to the back buffer -----------------------------------------------
     m_post.present(static_cast<float>(frame.time), cfg::kExposure, cfg::kBloomStrength, cfg::kBloomThreshold,
-                   frame.crosshair, frame.crosshairHighlight, frame.fear, frame.fade, frame.dim);
+                   frame.crosshair, frame.crosshairHighlight, frame.fear, frame.fade, frame.dim, frame.glitch);
     m_hud.begin(m_width, m_height);
 }
 

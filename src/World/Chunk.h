@@ -53,6 +53,13 @@ struct CabinetPlacement {
     glm::mat4 model;
 };
 
+/// Where something is written on a wall (developer scenes find it).
+struct ClueSpot {
+    glm::vec3 position; ///< Middle of the writing.
+    glm::vec3 normal;   ///< The way the wall faces.
+    bool      clue;     ///< It is the phone number.
+};
+
 /// Everything the generator produces for a chunk (no GL objects).
 struct ChunkBlueprint {
     ChunkCoord                     coord;
@@ -66,6 +73,8 @@ struct ChunkBlueprint {
     std::vector<CabinetPlacement>  cabinets;
     std::vector<ItemSite>          items;        ///< Drawer sites refer to `cabinets` by index.
     std::vector<LightFixture>      lights;
+    std::vector<AABB>              glitchZones;  ///< The exit room's glitching walls: not solid - walking into one is the way out.
+    std::vector<ClueSpot>          clues;        ///< Everything written on the walls.
     AABB                           bounds;
 };
 
@@ -104,6 +113,8 @@ public:
     const std::vector<FileCabinet>& cabinets() const { return m_cabinets; }
     std::vector<ItemSite>& items() { return m_items; }
     const std::vector<ItemSite>& items() const { return m_items; }
+    const std::vector<AABB>& glitchZones() const { return m_glitchZones; }
+    const std::vector<ClueSpot>& clues() const { return m_clues; }
 
     /// The item site in a drawer of one of this chunk's cabinets, or nullptr.
     ItemSite* drawerSite(int cabinet, int drawer);
@@ -131,6 +142,8 @@ private:
     std::vector<FileCabinet>       m_cabinets;
     std::vector<ItemSite>          m_items;
     std::vector<LightFixture>      m_lights;
+    std::vector<AABB>              m_glitchZones;
+    std::vector<ClueSpot>          m_clues;
     AABB                           m_bounds;
     int                            m_lightBase = 0;
 };

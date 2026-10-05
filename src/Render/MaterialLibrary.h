@@ -6,7 +6,9 @@
 //
 //   Albedo array  (sRGB8_A8) : rgb = base colour
 //   Surface array (RGBA8)    : r = height (bump), g = specular mask,
-//                              b = emissive mask, a = unused
+//                              b = emissive mask, a = opacity (1 for solid
+//                              materials, a leaf's outline for foliage; drawn
+//                              with alpha-to-coverage)
 //
 // Layer index == MaterialId, so a single draw call can mix materials.
 // ---------------------------------------------------------------------------

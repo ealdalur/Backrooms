@@ -122,9 +122,10 @@ void main() {
 }
 )GLSL";
 
-glm::vec3 paletteColor(uint8_t color, bool amber) {
+glm::vec3 paletteColor(uint8_t color, bool amber, float time) {
     const glm::vec3 phosphor = amber ? glm::vec3(1.0f, 0.66f, 0.20f) : glm::vec3(0.35f, 1.0f, 0.50f);
     switch (color) {
+    case TerminalScreen::Beacon:  return std::fmod(time, 0.7f) < 0.4f ? glm::vec3(1.0f, 0.35f, 0.95f) : glm::vec3(0.3f, 0.06f, 0.28f);
     case TerminalScreen::Dim:     return phosphor * 0.42f;
     case TerminalScreen::Bright:  return glm::min(phosphor + glm::vec3(0.25f), glm::vec3(1.0f));
     case TerminalScreen::Alert:   return {1.0f, 0.28f, 0.22f};
@@ -233,7 +234,7 @@ void TerminalRenderer::renderConsole(const TerminalScreen& screen, float time, f
             glyphUV(cell.ch, u0, v0, u1, v1);
             const float x0 = static_cast<float>(col * kCellW) + ox;
             const float y0 = static_cast<float>(row * kCellH) + oy;
-            const glm::vec3 c = paletteColor(cell.color, screen.amber);
+            const glm::vec3 c = paletteColor(cell.color, screen.amber, time);
             quad(x0, y0, x0 + font::kGlyphW * px, y0 + font::kGlyphH * px, u0, v0, u1, v1, glm::vec4(c, 1.0f));
         }
     }

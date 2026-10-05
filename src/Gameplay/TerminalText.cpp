@@ -4,6 +4,7 @@
 #include "Gameplay/TerminalText.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
@@ -216,6 +217,31 @@ bool isConversational(const std::string& s) {
         if (s.find(w) != std::string::npos) return true;
     }
     return false;
+}
+
+std::string memoryLine(const std::string& address, const std::string& ascii) {
+    uint8_t bytes[16] = {};
+    for (size_t i = 0; i < 16 && i < ascii.size(); ++i) bytes[i] = static_cast<uint8_t>(ascii[i]);
+    std::string out = address + "  ";
+    for (int i = 0; i < 16; ++i) {
+        out += format("%02X", bytes[i]);
+        if (i % 4 == 3 && i < 15) out += ' ';
+    }
+    out += "  |";
+    for (uint8_t b : bytes) out += (b >= 32 && b < 127) ? static_cast<char>(b) : '.';
+    return out + "|";
+}
+
+std::string memoryHint(rnd::Rng& rng, const std::string& address) {
+    std::string a = address;
+    for (char& c : a) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    switch (rng.rangeInt(0, 4)) {
+    case 0:  return a + ". it's in the memory. look.";
+    case 1:  return "MODE HEX. find " + a + ".";
+    case 2:  return "hurry. " + a + " won't hold for long.";
+    case 3:  return "did you see it? " + a + ". in the dump.";
+    default: return "watch the hex. it goes by fast. press space.";
+    }
 }
 
 std::string reply(rnd::Rng& rng, const std::string& s) {

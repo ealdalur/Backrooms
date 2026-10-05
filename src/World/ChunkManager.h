@@ -86,6 +86,15 @@ public:
     /// True if the chunk under world x/z on `level` is loaded.
     bool isLoadedAt(const glm::vec3& p, int level) const;
 
+    /// Regenerates a chunk if it is loaded (the generator's answer for it changed:
+    /// it became the exit chunk). Its doors, terminals and parts keep their state.
+    void reload(const ChunkCoord& c);
+    /// Drops every chunk and everything remembered about them (a different realm).
+    void clear();
+
+    /// Whether `box` touches one of the exit room's glitching walls.
+    bool touchesGlitch(const AABB& box) const;
+
     /// Incremented whenever the set of loaded chunks changes.
     uint64_t topologyVersion() const { return m_version; }
     size_t chunkCount() const { return m_chunks.size(); }

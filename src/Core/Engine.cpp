@@ -13,6 +13,7 @@
 #include "Audio/Soundscape.h"
 #include "Core/GpuSelection.h"
 #include "Gameplay/PhoneCall.h"
+#include "Gameplay/PuzzleChain.h"
 #include "Gameplay/TerminalConsole.h"
 #include "Gameplay/TeslaGun.h"
 #include "Math/Random.h"
@@ -209,6 +210,19 @@ bool Engine::init() {
     m_entities = std::make_unique<EntityDirector>(*m_world, *m_chunks, m_options.seed);
     m_entities->setEnabled(!m_options.noEntities);
     m_gun = std::make_unique<TeslaGun>(rnd::hashCombine(m_options.seed, 0x7E51'A600ull));
+    // The way out: its number goes up on the walls before the first chunk is built.
+    m_puzzle = std::make_unique<PuzzleChain>(m_options.seed);
+    m_world->setWallClue(m_puzzle->secrets().phoneNumber);
+    if (m_options.puzzleStage == "dialed") m_puzzle->advance(PuzzleStage::NumberDialed);
+    else if (m_options.puzzleStage == "memory") m_puzzle->advance(PuzzleStage::MemoryFound);
+    else if (!m_options.puzzleStage.empty()) std::cerr << "[Engine] Unknown puzzle stage '" << m_options.puzzleStage << "'\n";
+    if (!m_options.demo.empty() || !m_options.puzzleStage.empty()) {
+        const PuzzleSecrets& secret = m_puzzle->secrets();
+        std::printf("[Puzzle] Number %s, memory %s, host %s, offset %+d;(%+d,%+d); stage %s\n", secret.phoneNumber.c_str(),
+                    secret.memoryAddress.c_str(), secret.ipAddress.c_str(), secret.floorDelta, secret.chunkDelta.x, secret.chunkDelta.y,
+                    PuzzleChain::stageName(m_puzzle->stage()));
+    }
+    m_nextRing = 110.0f;
 
     // Load the neighbourhood of the origin, find a free spot and spawn there.
     const int level = m_options.startLevel;
@@ -225,6 +239,7 @@ bool Engine::init() {
               << ") on level " << m_focusLevel << "\n"
               << "[Engine] Controls: WASD move, mouse or arrow keys look, Shift run, Space jump, C crouch,\n"
               << "         E open doors / use terminals / pick up phones / search cabinets / take parts (Esc leaves),\n"
+              << "         Space pauses a terminal's live log,\n"
               << "         R assemble the Tesla gun, LMB or F fire it, hold RMB + move mouse to drive,\n"
               << "         +/- sensitivity, F3 entity debug, F11 fullscreen, F12 screenshot, P pause, Esc quit.\n";
 
@@ -244,7 +259,6 @@ void Engine::setState(GameState state) {
     if (state == GameState::Terminal || state == GameState::Phone) SDL_StartTextInput(m_window);
     else SDL_StopTextInput(m_window);
     m_input.reset();
-    m_titleDirty = true; // refresh the title immediately
 }
 
 void Engine::teleportPlayer(const glm::vec3& feet, int level, float yaw) {
@@ -260,7 +274,6 @@ void Engine::updateFocusLevel() {
     if (y > base + cfg::kLevelSwitchBand * world::kLevelHeight) ++m_focusLevel;
     else if (y < base - cfg::kLevelSwitchBand * world::kLevelHeight) --m_focusLevel;
     else return;
-    m_titleDirty = true;
     std::cout << "[Engine] Now on level " << m_focusLevel << "\n";
 }
 
@@ -361,12 +374,12 @@ void Engine::processEvents() {
             case SDL_SCANCODE_EQUALS:
             case SDL_SCANCODE_KP_PLUS:
                 m_settings.mouseSensitivity = std::min(m_settings.mouseSensitivity * 1.1f, 8.0f);
-                m_titleDirty = true;
+                m_sensitivityTimer = 2.0f;
                 break;
             case SDL_SCANCODE_MINUS:
             case SDL_SCANCODE_KP_MINUS:
                 m_settings.mouseSensitivity = std::max(m_settings.mouseSensitivity / 1.1f, 0.1f);
-                m_titleDirty = true;
+                m_sensitivityTimer = 2.0f;
                 break;
             default:
                 break;
@@ -396,6 +409,10 @@ void Engine::handleTerminalKey(const SDL_KeyboardEvent& key) {
     case SDL_SCANCODE_RETURN:
     case SDL_SCANCODE_KP_ENTER:
         if (!key.repeat && !game) m_console->submit(terminalContext());
+        break;
+    case SDL_SCANCODE_SPACE:
+        // On the live log SPACE holds the stream still (at the prompt it is just a space).
+        if (!game && !key.repeat) m_console->toggleStreamPause();
         break;
     case SDL_SCANCODE_UP:
         if (!game) m_console->historyUp();
@@ -449,7 +466,10 @@ TerminalContext Engine::terminalContext() const {
     ctx.stalkerDistance = m_entities->stalkerDistance();
     ctx.stalkerBehind = m_entities->stalkerBehindPlayer();
     ctx.wandererDistance = m_entities->wandererDistance();
+    ctx.entities = m_entities->entitiesRemaining();
     ctx.world = m_world.get();
+    ctx.puzzle = m_puzzle.get();
+    ctx.office = m_office;
     // The map's "north": the way the player faces sitting at this screen (screens face along the grid).
     if (const Terminal* t = activeTerminal()) {
         const glm::vec3 ahead = -t->screenNormal();
@@ -551,6 +571,8 @@ void Engine::updateTerminal(float dt) {
     }
     m_sound->setTerminalMusic(game != nullptr, at, *m_world);
     m_sound->setMonitorHum(true, at, *m_world);
+    // Last: a ping may rebuild a chunk (the terminal is not used past here).
+    handlePuzzleEvents(m_console->takePuzzleEvents());
     if (m_console->exitRequested()) {
         const bool off = m_console->powerOffRequested();
         m_console->clearRequests();
@@ -564,6 +586,8 @@ Phone* Engine::activePhone() const { return m_phoneId ? m_chunks->phoneById(m_ph
 
 void Engine::enterPhone(Phone& phone) {
     // The handset comes up to the ear; a fresh call every time.
+    const bool incoming = phone.id() == m_ringingPhone; // answered: someone is already there
+    if (incoming) stopRinging();
     phone.setOffHook(true);
     m_phoneId = phone.id();
     const uint64_t session = rnd::hashCombine(phone.id(), static_cast<uint64_t>(m_simTime * 1000.0) + static_cast<uint64_t>(++m_phonePickups));
@@ -571,7 +595,8 @@ void Engine::enterPhone(Phone& phone) {
     const uint64_t box = rnd::hashCombine(phone.id(), 0x3E55'A6E5ull);
     if (phone.messageWaiting()) mailbox.message = static_cast<int>(box % static_cast<uint64_t>(phonesfx::kMessageCount));
     mailbox.miscounts = (box >> 32) % 5u == 0u;
-    m_call = std::make_unique<PhoneCall>(m_sound->bank(), rnd::hashCombine(m_options.seed, 0x9403'CA11ull), session, mailbox);
+    m_call = std::make_unique<PhoneCall>(m_sound->bank(), rnd::hashCombine(m_options.seed, 0x9403'CA11ull), session, mailbox,
+                                         m_puzzle->secrets().phoneDigits, incoming);
     m_phoneKeys.clear();
     m_phoneHangUp = false;
     m_phoneHover = -1;
@@ -674,6 +699,7 @@ void Engine::updatePhone(float dt) {
     ctx.stalkerBehind = m_entities->stalkerBehindPlayer();
     ctx.wandererDistance = m_entities->wandererDistance();
     m_call->update(dt, ctx);
+    if (m_call->clueAnswered()) advancePuzzle(PuzzleStage::NumberDialed, "the number on the wall answered");
     const bool log = m_options.demo == "phone"; // scripted verification of the line's behaviour
     for (const PhoneSoundEvent& e : m_call->takeSounds()) {
         if (e.id == SoundId::Count) m_sound->stopEarpieceSounds(); // the line moved on
@@ -795,6 +821,8 @@ void Engine::update(float dt) {
     m_lastDt = dt;
     m_noises.clear();
     m_messageTimer = std::max(0.0f, m_messageTimer - dt);
+    m_dialogueTimer = std::max(0.0f, m_dialogueTimer - dt);
+    m_sensitivityTimer = std::max(0.0f, m_sensitivityTimer - dt);
     updateDemo(dt);
 
     m_prompt.clear();
@@ -811,7 +839,7 @@ void Engine::update(float dt) {
             m_prompt = target.terminal->powered() ? "E  USE TERMINAL" : "E  SWITCH ON TERMINAL";
             if (m_input.keyPressed(SDL_SCANCODE_E)) enterTerminal(*target.terminal);
         } else if (target.kind == Interactable::Kind::Phone) {
-            m_prompt = "E  PICK UP PHONE";
+            m_prompt = target.phone->id() == m_ringingPhone ? "E  ANSWER PHONE" : "E  PICK UP PHONE";
             if (m_input.keyPressed(SDL_SCANCODE_E)) enterPhone(*target.phone);
         } else if (target.kind == Interactable::Kind::Cabinet) {
             m_prompt = "E  SEARCH FILING CABINET";
@@ -827,6 +855,7 @@ void Engine::update(float dt) {
     m_player->update(dt, bodyInput, m_settings, *m_chunks, *m_physics);
     updateFocusLevel();
     m_chunks->update(m_player->feetPosition(), m_focusLevel, dt, m_player->bodyBox());
+    checkNoclip();
     // Fell out of the world (e.g. down a shaft whose floor never loaded): start over nearby.
     if (m_player->feetPosition().y < world::levelFloorY(m_focusLevel) - world::kLevelHeight - 2.0f) {
         std::cerr << "[Engine] Fell out of the world, respawning\n";
@@ -838,20 +867,23 @@ void Engine::update(float dt) {
     updateTerminal(dt);
     updatePhone(dt);
     updateCabinet(dt);
+    updateRinger(dt);
+    updateGlitchHum(dt);
     collectNoise();
     updateGun(dt);
 
     // ---- Anomalies: they perceive what the player actually sees.
     const bool blind = m_state == GameState::Terminal || m_state == GameState::Phone || m_state == GameState::Cabinet ||
-                       (m_state == GameState::Caught && m_fade > 0.5f);
+                       m_state == GameState::Noclip || (m_state == GameState::Caught && m_fade > 0.5f);
     const float aspect = static_cast<float>(m_pixelWidth) / static_cast<float>(std::max(1, m_pixelHeight));
     m_entities->update(dt, viewCamera(), aspect, m_player->feetPosition(), m_focusLevel, blind, *m_chunks, *m_physics,
                        m_noises);
-    if (const auto by = m_entities->takeCatch(); by && m_state != GameState::Caught) startCaught(*by);
+    if (const auto by = m_entities->takeCatch(); by && m_state != GameState::Caught && m_state != GameState::Noclip) startCaught(*by);
     if (const auto gone = m_entities->takeVaporised()) {
         showMessage(*gone == EntityKind::Stalker ? "THE STALKER IS GONE. FOR GOOD." : "THE WANDERER IS GONE. FOR GOOD.", 5.0f);
     }
     if (m_state == GameState::Caught) updateCaught(dt);
+    if (m_state == GameState::Noclip) updateNoclip(dt);
 
     // After every update so this frame's footstep / door / entity events are
     // heard, and with the renderer's clock so the tube buzz matches the flicker.
@@ -887,6 +919,12 @@ Camera Engine::viewCamera() const {
         cam.pitch += (m_cabinetPitch - cam.pitch) * t;
         cam.fovYDegrees += (58.0f - cam.fovYDegrees) * t;
     }
+    if (m_state == GameState::Noclip && !m_noclipSwitched) {
+        // Through the wall: the camera slides into it, the view stretching as it goes.
+        const float t = smooth01(m_noclipTimer / 1.6f);
+        cam.position += m_noclipDir * (0.9f * t);
+        cam.fovYDegrees += 30.0f * t;
+    }
     if (m_state == GameState::Caught && !m_respawned) {
         // The jumpscare: the head is wrenched round to face it, and shakes.
         const glm::vec3 d = m_caughtFace - cam.position;
@@ -907,10 +945,22 @@ void Engine::drawHud() {
     const float w = static_cast<float>(m_pixelWidth), h = static_cast<float>(m_pixelHeight);
     const glm::vec4 ink(1.0f, 1.0f, 0.92f, 0.9f);
 
+    // Every bit of status is drawn here (nothing in the window title: it may be fullscreen).
     hud.text(m_fpsText, w - 10.0f * s, 10.0f * s, TextOverlay::Align::Right, 1.0f, ink, true);
-    char level[32];
-    std::snprintf(level, sizeof(level), "LEVEL %d", m_focusLevel);
-    hud.text(level, 10.0f * s, 10.0f * s, TextOverlay::Align::Left, 1.0f, ink * glm::vec4(1, 1, 1, 1.0f - m_fade), true);
+    if (m_sensitivityTimer > 0.0f) {
+        char sens[48];
+        std::snprintf(sens, sizeof(sens), "MOUSE SENSITIVITY %.2f", m_settings.mouseSensitivity);
+        hud.text(sens, w - 10.0f * s, 24.0f * s, TextOverlay::Align::Right, 1.0f, ink * glm::vec4(1, 1, 1, std::min(1.0f, m_sensitivityTimer)), true);
+    }
+    // Where the player is: the storey and the chunk under their feet.
+    const glm::vec3 feet = m_player->feetPosition();
+    const ChunkCoord here = ChunkCoord::fromWorld(feet.x, feet.z, m_focusLevel);
+    char where[64];
+    std::snprintf(where, sizeof(where), "FLOOR %d  |  CHUNK [%d, %d]", m_focusLevel, here.x, here.z);
+    hud.text(where, 10.0f * s, 10.0f * s, TextOverlay::Align::Left, 1.0f, ink * glm::vec4(1, 1, 1, 1.0f - m_fade), true);
+    if (m_player->mouseDriveActive()) {
+        hud.text("MOUSE DRIVE", 10.0f * s, 24.0f * s, TextOverlay::Align::Left, 1.0f, ink * glm::vec4(1, 1, 1, 0.8f), true);
+    }
 
     if (!m_prompt.empty() && m_state == GameState::Running) {
         hud.text(m_prompt, w * 0.5f, h * 0.5f + 20.0f * s, TextOverlay::Align::Center, 1.0f,
@@ -919,8 +969,9 @@ void Engine::drawHud() {
     if (m_terminalBlend > 0.0f && m_console) {
         // The terminal's key guide, at twice the size of the other HUD text.
         const char* hint = m_console->doomActive() ? "<ESC> Quit  <W><A><S><D> Move  MOUSE Turn  <E>/CLICK Fire  <SPACE> Use  <2> <3> Weapons"
-                           : m_console->commandMode() ? "<ESC> Leave     <ENTER> Run Command     Type HELP for Commands"
-                                                      : "<ESC> Leave     <ENTER> Command Prompt";
+                           : m_console->commandMode()  ? "<ESC> Leave     <ENTER> Run Command     Type HELP for Commands"
+                           : m_console->streamPaused() ? "<ESC> Leave     <SPACE> Resume Stream     <ENTER> Command Prompt"
+                                                       : "<ESC> Leave     <SPACE> Pause Stream     <ENTER> Command Prompt";
         hud.text(hint, w * 0.5f, h - 40.0f * s, TextOverlay::Align::Center, 2.0f,
                  glm::vec4(0.8f, 0.8f, 0.75f, 0.6f * m_terminalBlend), true);
     }
@@ -960,6 +1011,15 @@ void Engine::drawHud() {
         hud.text(keys, w * 0.5f, h - 40.0f * s, TextOverlay::Align::Center, 2.0f, guide, true);
     }
     drawInventory();
+    if (m_dialogueTimer > 0.0f && !m_dialogue.empty()) {
+        // Someone speaking (the player, to themselves): quiet, at the bottom of the screen.
+        const float a = std::min(1.0f, m_dialogueTimer / 0.8f);
+        const std::vector<std::string> lines = wrapText("\"" + m_dialogue + "\"", 60);
+        for (size_t i = 0; i < lines.size(); ++i) {
+            hud.text(lines[i], w * 0.5f, h * 0.86f + static_cast<float>(i) * 22.0f * s, TextOverlay::Align::Center, 2.0f,
+                     glm::vec4(0.9f, 0.9f, 0.86f, 0.8f * a), true);
+        }
+    }
     if (m_messageTimer > 0.0f && !m_message.empty()) {
         const float a = std::min(1.0f, m_messageTimer / 1.0f) * std::min(1.0f, (5.0f - m_messageTimer) / 0.8f + 0.2f);
         hud.text(m_message, w * 0.5f, h * 0.62f, TextOverlay::Align::Center, 2.0f, glm::vec4(0.95f, 0.93f, 0.85f, a));
@@ -985,7 +1045,11 @@ void Engine::drawHud() {
                       st.active() ? stalkerStateName(st.state()) : "ABSENT", st.seen() ? "SEEN" : "UNSEEN",
                       m_entities->stalkerDistance(), wa.active() ? wandererStateName(wa.state()) : "ABSENT",
                       m_entities->wandererDistance(), wa.agitation(), m_entities->fear());
-        hud.text(line, 10.0f * s, 24.0f * s, TextOverlay::Align::Left, 1.0f, glm::vec4(0.7f, 1.0f, 0.7f, 0.9f), true);
+        hud.text(line, 10.0f * s, 38.0f * s, TextOverlay::Align::Left, 1.0f, glm::vec4(0.7f, 1.0f, 0.7f, 0.9f), true);
+        const RenderStats& rs = m_renderer->stats();
+        std::snprintf(line, sizeof(line), "CHUNKS %zu (+%zu)   LIGHTS %zu   SENSITIVITY %.2f   PUZZLE %s", m_chunks->chunkCount(),
+                      m_chunks->pendingCount(), rs.lights, m_settings.mouseSensitivity, PuzzleChain::stageName(m_puzzle->stage()));
+        hud.text(line, 10.0f * s, 52.0f * s, TextOverlay::Align::Left, 1.0f, glm::vec4(0.7f, 1.0f, 0.7f, 0.9f), true);
     }
 }
 
@@ -1011,6 +1075,8 @@ void Engine::render(float dt) {
     frame.fear = m_entities->fear();
     frame.fade = m_fade;
     frame.dim = m_dialogFade;
+    frame.glitch = m_glitch;
+    frame.office = m_office;
     frame.lightDisturbances = &m_entities->lightDisturbances();
     frame.entities = &m_entityDraw;
     frame.bolts = &m_gun->bolts();
@@ -1027,34 +1093,17 @@ void Engine::render(float dt) {
     m_renderer->flushHud();
 }
 
-void Engine::updateTitle(float dt) {
-    m_titleTimer += dt;
+void Engine::updateFps(float dt) {
+    m_fpsTimer += dt;
     ++m_frameCounter;
-    if (m_titleTimer >= 0.5f) {
-        // Average over the whole interval: steadier and easier to read than per-frame values.
-        m_fps = static_cast<float>(m_frameCounter) / m_titleTimer;
-        char meter[32];
-        std::snprintf(meter, sizeof(meter), "%.0f FPS  %.1f ms", m_fps, 1000.0f / std::max(m_fps, 1e-3f));
-        m_fpsText = meter;
-        m_frameCounter = 0;
-        m_titleTimer = 0.0f;
-        m_titleDirty = true;
-    }
-    if (!m_titleDirty) return;
-    m_titleDirty = false;
-
-    const glm::vec3 p = m_player->feetPosition();
-    const ChunkCoord c = ChunkCoord::fromWorld(p.x, p.z, m_focusLevel);
-    const RenderStats& s = m_renderer->stats();
-    char title[256];
-    std::snprintf(title, sizeof(title),
-                  "%s | %.0f FPS | level %d chunk (%d, %d) | %zu chunks, %zu lights | sensitivity %.2f%s%s",
-                  cfg::kWindowTitle, m_fps, c.level, c.x, c.z, m_chunks->chunkCount(), s.lights,
-                  m_settings.mouseSensitivity, m_player->mouseDriveActive() ? " | MOUSE DRIVE" : "",
-                  m_state == GameState::Paused       ? " | PAUSED - press P or click to resume, Esc to quit"
-                  : m_state == GameState::QuitPrompt ? " | QUIT? - Esc to quit, any other key to resume"
-                                                     : "");
-    SDL_SetWindowTitle(m_window, title);
+    if (m_fpsTimer < 0.5f) return;
+    // Average over the whole interval: steadier and easier to read than per-frame values.
+    m_fps = static_cast<float>(m_frameCounter) / m_fpsTimer;
+    char meter[32];
+    std::snprintf(meter, sizeof(meter), "%.0f FPS  %.1f ms", m_fps, 1000.0f / std::max(m_fps, 1e-3f));
+    m_fpsText = meter;
+    m_frameCounter = 0;
+    m_fpsTimer = 0.0f;
 }
 
 bool Engine::saveScreenshot(const std::string& path) const {
@@ -1113,7 +1162,7 @@ int Engine::run() {
         }
 
         SDL_GL_SwapWindow(m_window);
-        updateTitle(dt);
+        updateFps(dt);
     }
     return 0;
 }
@@ -1510,6 +1559,9 @@ void Engine::setupDemo() {
         const uint64_t routeSeed = m_options.demoInput.empty() ? 1 : std::strtoull(m_options.demoInput.c_str(), nullptr, 10);
         m_autopilot = exploreRoute(feet, m_focusLevel, 600, routeSeed);
         m_autopilotIndex = 0;
+    } else if (demo == "clue" || demo == "hexstream" || demo == "exit-map" || demo == "glitch" || demo == "office" || demo == "ringer" ||
+               demo == "clue-survey" || demo == "terminal-pause") {
+        setupPuzzleDemo();
     } else if (demo != "idle") { // "idle": nothing staged, entity activity is just logged
         std::cerr << "[Demo] Unknown demo '" << demo << "'\n";
     }
@@ -1571,6 +1623,7 @@ doom::Controls Engine::demoDoomControls() const {
 void Engine::updateDemo(float dt) {
     if (m_options.demo.empty()) return;
     m_demoTime += dt;
+    updatePuzzleDemo();
     if (m_options.demo == "ambush" && m_demoStep == 0 && m_entities->stalker().active() &&
         m_entities->stalkerDistance() < 7.0f) {
         // Whip round towards it (whatever the layout between).

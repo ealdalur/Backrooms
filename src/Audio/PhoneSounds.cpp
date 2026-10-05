@@ -98,6 +98,26 @@ const Phrase kJennyPhrases[] = {
 };
 const char* const kJennyText = "Look, for the last time, I changed my number! I don't care if it's on the wall, stop calling here!";
 
+// The voice at the number on the wall: out of breath, talking fast, slowing
+// only for the address so it cannot be misheard.
+struct CluePhrase {
+    const char* phonemes;
+    float pitchStart, pitchEnd;
+    float pause;
+    float emphasis;
+    float tempo; ///< > 1 = slower.
+};
+const CluePhrase kCluePhrases[] = {
+    {"AY W AA Z | EY B AH L T UW", 228.0f, 246.0f, 0.03f, 1.0f, 0.72f},                   // I was able to
+    {"OW V ER R AY T | DH AH M EH M ER IY | AE T", 246.0f, 214.0f, 0.1f, 1.05f, 0.72f},     // overwrite the memory at
+    {"S EH V AH N | EY | N AY N | EH F", 236.0f, 204.0f, 0.45f, 1.2f, 0.95f},               // seven... A... nine... F...
+    {"P IH NG | DH AE T", 262.0f, 236.0f, 0.1f, 1.2f, 0.75f},                                // ping that,
+    {"HH ER IY | DH OW", 270.0f, 232.0f, 0.08f, 1.1f, 0.72f},                                // hurry though,
+    {"AY D OW N T N OW | HH AW L AO NG", 240.0f, 226.0f, 0.02f, 1.0f, 0.72f},                // I don't know how long
+    {"IH T W IH L | L AE S T", 232.0f, 196.0f, 0.0f, 1.0f, 0.78f},                           // it will last
+};
+const char* const kClueText = "I was able to overwrite the memory at 7A9F... ping that, hurry though, I don't know how long it will last";
+
 // Messages left in voicemail: said in pieces, with their own contours, by
 // people falling apart (the pauses are where they stop to breathe, or sob).
 struct MessageScript {
@@ -289,6 +309,8 @@ const Line& announcement(Announcement a) { return kAnnouncements[static_cast<siz
 const Line& voice(Voice v) { return kVoices[static_cast<size_t>(v)].line; }
 
 const char* jennyText() { return kJennyText; }
+
+const char* clueText() { return kClueText; }
 
 const char* messageText(Message m) { return kMessages[static_cast<size_t>(m)].text; }
 
@@ -624,6 +646,76 @@ std::vector<Sound> makeJenny(uint64_t seed) {
     b.resize(samplesFor(slam + 0.7f));
     fadeEdges(b, 0.005f, 0.05f);
     normalize(b, 0.9f);
+    return {{std::move(b), false}};
+}
+
+std::vector<Sound> makeClue(uint64_t seed) {
+    // The number on the wall. Snatched up - a scrape of static - and a
+    // woman's voice right up against her mouthpiece, shaking, hurried, the
+    // interference never quite letting go of the line. It stops dead after
+    // "last": the line is gone before she is (PhoneCall cuts it there).
+    rnd::Rng rng(seed);
+    Noise noise(rng.next());
+    speech::Voice v = voiceOf(Who::Woman, rng);
+    v.tremor = 1.4f;
+    v.breathiness = 0.4f;
+    v.whisper = 0.12f;
+    v.jitter = 0.035f;
+    float t = kClueSpeechStart;
+    Buffer b = silence(t);
+    for (const CluePhrase& p : kCluePhrases) {
+        v.seed = rng.next();
+        v.pitchStart = p.pitchStart;
+        v.pitchEnd = p.pitchEnd;
+        v.tempo = p.tempo;
+        const Buffer part = speech::say(p.phonemes, v);
+        const size_t at = samplesFor(t - 0.03f); // skip say()'s lead-in
+        if (b.size() < at + part.size()) b.resize(at + part.size(), 0.0f);
+        for (size_t i = 0; i < part.size(); ++i) b[at + i] += p.emphasis * part[i];
+        t += static_cast<float>(part.size()) / kRate - 0.15f + p.pause;
+    }
+    b.resize(samplesFor(t + 0.05f), 0.0f);
+    b = tapeWow(b, 0.012f, rng.range(0.6f, 1.0f), rng.next());
+    dropouts(b, rng, 1);
+    normalize(b, 1.0f);
+    // The interference: hiss that swells and fades, crackle, a whistle that wanders.
+    const uint64_t swell = rng.next();
+    float phase = 0.0f;
+    for (size_t i = 0; i < b.size(); ++i) {
+        const float tt = timeOf(i);
+        const float bed = 0.07f + 0.08f * noise::value1D(tt * 2.5, swell) + 0.35f * (1.0f - smooth01(0.0f, kClueSpeechStart, tt));
+        phase += (900.0f + 700.0f * noise::value1D(tt * 0.8, swell + 1)) / kRate;
+        phase -= std::floor(phase);
+        b[i] += bed * noise() + 0.02f * std::sin(dsp::kTwoPi * phase);
+    }
+    addCrackle(b, 14.0f, 0.5f, noise, rng);
+    crunch(b, 6, 32.0f);
+    for (float& s : b) s = std::tanh(1.6f * s);
+    telephoneBand(b);
+    fadeEdges(b, 0.005f, 0.002f); // no fade at the end: it is cut
+    normalize(b, 0.9f);
+    return {{std::move(b), false}};
+}
+
+std::vector<Sound> makeBell(uint64_t seed) {
+    // A desk phone ringing: the striker hammering between two small bell
+    // gongs some twenty times a second for two seconds (one ring of the
+    // cadence), the plastic case buzzing along. Heard in the room.
+    rnd::Rng rng(seed);
+    Noise noise(rng.next());
+    const float ring = 2.0f;
+    Buffer b = silence(ring + 0.6f);
+    const Mode gongA[] = {{1180.0f, 0.5f, 1.0f}, {2960.0f, 0.25f, 0.45f}, {4170.0f, 0.12f, 0.25f}};
+    const Mode gongB[] = {{1290.0f, 0.5f, 1.0f}, {3150.0f, 0.25f, 0.4f}, {4480.0f, 0.12f, 0.22f}};
+    int k = 0;
+    for (float t = 0.01f; t < ring; t += 1.0f / 40.0f, ++k) {
+        const float g = 0.22f * (0.85f + 0.3f * rng.nextFloat()) * smooth01(0.0f, 0.06f, t);
+        addModes(b, t, (k & 1) ? gongB : gongA, 3, g, 0.01f, rng);
+        addNoiseBurst(b, t, 0.0002f, 0.004f, Biquad::bandpass(rng.range(500.0f, 900.0f), 1.0f), 0.05f, noise);
+    }
+    applyFilter(b, Biquad::highpass(250.0f));
+    fadeEdges(b, 0.002f, 0.3f);
+    normalize(b, 0.85f);
     return {{std::move(b), false}};
 }
 

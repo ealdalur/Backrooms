@@ -5,6 +5,7 @@
 // ---------------------------------------------------------------------------
 #include "Actors/Furniture.h"
 
+#include "Actors/OfficeFurniture.h"
 #include "Render/MeshBuilder.h"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -130,17 +131,21 @@ MeshData buildPartition() {
 
 /// Local collision boxes per type (conservative, simple shapes).
 const std::array<std::vector<AABB>, kFurnitureTypeCount>& colliderTable() {
-    static const std::array<std::vector<AABB>, kFurnitureTypeCount> table = {{
+    static const std::array<std::vector<AABB>, kFurnitureTypeCount> table = [] {
+        std::array<std::vector<AABB>, kFurnitureTypeCount> t;
         // Desk: one solid block the player can jump onto.
-        {AABB({-0.75f, 0.0f, -0.375f}, {0.75f, 0.75f, 0.375f})},
+        t[static_cast<size_t>(FurnitureType::Desk)] = {AABB({-0.75f, 0.0f, -0.375f}, {0.75f, 0.75f, 0.375f})};
         // Chair: seat block (standable) + backrest.
-        {AABB({-0.30f, 0.0f, -0.30f}, {0.30f, 0.50f, 0.30f}),
-         AABB({-0.23f, 0.50f, -0.34f}, {0.23f, 1.02f, -0.25f})},
-        // File cabinet.
-        {AABB({-0.23f, 0.0f, -0.31f}, {0.23f, 1.02f, 0.335f})},
-        // Partition.
-        {AABB({-0.75f, 0.0f, -0.03f}, {0.75f, 1.40f, 0.03f})},
-    }};
+        t[static_cast<size_t>(FurnitureType::Chair)] = {AABB({-0.30f, 0.0f, -0.30f}, {0.30f, 0.50f, 0.30f}),
+                                                        AABB({-0.23f, 0.50f, -0.34f}, {0.23f, 1.02f, -0.25f})};
+        t[static_cast<size_t>(FurnitureType::FileCabinet)] = {AABB({-0.23f, 0.0f, -0.31f}, {0.23f, 1.02f, 0.335f})};
+        t[static_cast<size_t>(FurnitureType::Partition)] = {AABB({-0.75f, 0.0f, -0.03f}, {0.75f, 1.40f, 0.03f})};
+        // The office's own furniture.
+        for (int i = static_cast<int>(FurnitureType::ExecDesk); i < kFurnitureTypeCount; ++i) {
+            t[static_cast<size_t>(i)] = officefurniture::colliders(static_cast<FurnitureType>(i));
+        }
+        return t;
+    }();
     return table;
 }
 
@@ -161,7 +166,7 @@ MeshData Furniture::buildMesh(FurnitureType type) {
     case FurnitureType::Chair:       return buildChair();
     case FurnitureType::FileCabinet: return buildCabinet();
     case FurnitureType::Partition:   return buildPartition();
-    default:                         return {};
+    default:                         return officefurniture::buildMesh(type);
     }
 }
 
@@ -175,7 +180,7 @@ glm::vec2 Furniture::footprintHalfExtents(FurnitureType type) {
     case FurnitureType::Chair:       return {0.33f, 0.33f};
     case FurnitureType::FileCabinet: return {0.23f, 0.335f};
     case FurnitureType::Partition:   return {0.75f, 0.03f};
-    default:                         return {0.5f, 0.5f};
+    default:                         return officefurniture::footprint(type);
     }
 }
 

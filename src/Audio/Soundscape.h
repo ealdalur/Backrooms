@@ -82,6 +82,9 @@ public:
     /// The shock when an entity reaches the player.
     void playSting();
 
+    /// A sound in the player's own head (their voice, the noclip): centred, not positional.
+    void playInHead(SoundId id, float gain);
+
     /// A sound in the player's hands (the gun, a part being handled): not
     /// positional, slightly right of centre.
     void playHeld(SoundId id, float gain, float pitch = 1.0f);

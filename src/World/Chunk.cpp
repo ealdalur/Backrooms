@@ -12,6 +12,8 @@ Chunk::Chunk(ChunkBlueprint&& bp)
       m_furniture(std::move(bp.furniture)),
       m_items(std::move(bp.items)),
       m_lights(std::move(bp.lights)),
+      m_glitchZones(std::move(bp.glitchZones)),
+      m_clues(std::move(bp.clues)),
       m_bounds(bp.bounds) {
     m_staticMesh.upload(bp.staticMesh);
 

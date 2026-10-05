@@ -18,8 +18,9 @@ layout(location = 2) in vec2 aUV;
 layout(location = 3) in vec2 aMatInfo;  // x = material layer, y = chunk-local light index (-1 = none)
 layout(location = 4) in mat4 aModel;    // per-instance model matrix (locations 4..7)
 
-uniform mat4 uViewProj;
-uniform int  uLightBase;                // chunk's offset into the global light list
+uniform mat4  uViewProj;
+uniform int   uLightBase;               // chunk's offset into the global light list
+uniform float uTime;
 
 out vec3 vWorldPos;
 out vec3 vNormal;
@@ -27,16 +28,39 @@ out vec2 vUV;
 flat out int vMaterial;
 flat out int vLightIndex;
 flat out vec3 vInstanceOrigin;          // per-object seed (e.g. desynchronises terminal screens)
+flat out float vSeed;                   // glitch tiles: each tile's own seed
+
+const int MAT_GLITCH = 19;
+
+float hash11(float p) {
+    p = fract(p * 0.1031);
+    p *= p + 33.33;
+    p *= p + p;
+    return fract(p);
+}
 
 void main() {
     vec4 world  = aModel * vec4(aPosition, 1.0);
-    vWorldPos   = world.xyz;
     // Model matrices are rigid (rotation + translation): no inverse-transpose needed.
     vNormal     = mat3(aModel) * aNormal;
     vUV         = aUV;
     vMaterial   = int(aMatInfo.x + 0.5);
     vLightIndex = aMatInfo.y < -0.5 ? -1 : uLightBase + int(aMatInfo.y + 0.5);
     vInstanceOrigin = aModel[3].xyz;
+    vSeed       = 0.0;
+    if (vMaterial == MAT_GLITCH) {
+        // The exit room's walls: the light-index slot carries the tile's seed.
+        // Every tile keeps its own beat; now and then it jumps out of (or
+        // into) the wall, or slides along it, for a few frames.
+        vSeed = aMatInfo.y;
+        vLightIndex = -1;
+        float tick = floor(uTime * 9.0 + hash11(vSeed) * 9.0);
+        float h = hash11(vSeed * 1.37 + tick * 17.0);
+        vec3 n = normalize(vNormal);
+        world.xyz += n * (step(0.86, h) * (hash11(vSeed + tick * 3.1) - 0.45) * 0.5);
+        world.xyz += cross(n, vec3(0.0, 1.0, 0.0)) * (step(0.95, h) * (hash11(vSeed * 2.3 + tick) - 0.5) * 0.35);
+    }
+    vWorldPos   = world.xyz;
     gl_Position = uViewProj * world;
 }
 )GLSL";
@@ -52,13 +76,14 @@ in vec2 vUV;
 flat in int vMaterial;
 flat in int vLightIndex;
 flat in vec3 vInstanceOrigin;
+flat in float vSeed;
 
-layout(location = 0) out vec4 oColor;
+layout(location = 0) out vec4 oColor;  // a = coverage (alpha-to-coverage: writing, leaves, glitch)
 
 // ---- Materials -------------------------------------------------------------
 uniform sampler2DArray uAlbedo;          // rgb = albedo (sRGB decoded by hardware)
 uniform sampler2DArray uSurface;         // r = height, g = specular mask, b = emissive mask
-uniform vec4  uMaterialParams[24];       // x = spec, y = shininess, z = bump (m), w = emissive gain
+uniform vec4  uMaterialParams[32];       // x = spec, y = shininess, z = bump (m), w = emissive gain
 uniform float uTime;                     // simulation clock (animated terminal screens)
 
 // ---- Clustered lights (one 2D slice per loaded storey) ---------------------------
@@ -92,6 +117,8 @@ uniform vec3  uAmbient;                  // indirect light arriving from above
 uniform vec3  uAmbientDown;              // indirect light arriving from below (floor bounce)
 uniform vec3  uFogColor;
 uniform float uFogDensity;
+uniform vec3  uLightTint;                // colour of the fluorescent tubes (warm Backrooms, cool office)
+uniform int   uOffice;                   // 1 in the office: no water damage
 
 // ---- The Tesla gun ---------------------------------------------------------------
 uniform vec4  uArcLight;                 // xyz = where the discharge's light comes from, w = intensity (0 = off)
@@ -108,6 +135,8 @@ const int MAT_CRT       = 10;
 const int MAT_SIGN      = 12;
 const int MAT_PHONE     = 13;
 const int MAT_TESLA     = 17;
+const int MAT_WRITING   = 18;
+const int MAT_GLITCH    = 19;
 
 const uint EDGE_OPEN = 0u;
 const uint EDGE_WALL = 1u;
@@ -275,7 +304,7 @@ vec3 evaluateLights(vec3 P, vec3 N, vec3 V, vec3 albedo, float specIntensity, fl
 
         sum += color * (intensity * atten * emitterCos) * (albedo * NdotL + vec3(spec));
     }
-    return sum * uLightPower;
+    return sum * uLightTint * uLightPower;
 }
 
 )GLSL") + R"GLSL(// ---- Live terminal screens ----------------------------------------------------------
@@ -311,6 +340,98 @@ vec3 crtEmission(vec2 uv, vec3 seedPos, float rasterMask) {
     float scan = 0.72 + 0.28 * sin(uv.y * 520.0);
     float flicker = 0.94 + 0.06 * sin(uTime * 57.0 + seed * 40.0);
     return phosphor * (lit * scan * flicker + 0.05) * rasterMask;
+}
+
+// ---- Writing ------------------------------------------------------------------------
+// Glyph quads (World/Decals): the Writing atlas holds distance fields, in font
+// pixels, to a glyph's pen strokes (r), to drips running down from them (g)
+// and to its crisp pixel squares (b). The ink rides in u (u + 2 * ink).
+// Returns the ink's colour; sets its coverage, glossiness and glow.
+vec3 writingInk(vec2 uvIn, float layer, out float coverage, out float spec, out vec3 glow) {
+    int ink = int(floor(uvIn.x * 0.5));
+    vec2 uv = vec2(uvIn.x - 2.0 * float(ink), uvIn.y);
+    vec3 d = texture(uSurface, vec3(uv, layer)).rgb * 2.0;
+    float aaHand = max(fwidth(d.r), 0.02), aaDrip = max(fwidth(d.g), 0.02), aaPrint = max(fwidth(d.b), 0.01);
+    float grain = valueNoise(vWorldPos * 160.0);
+    float blotch = fbm(vWorldPos * 9.0);
+    float hand = 1.0 - smoothstep(0.22 - aaHand, 0.22 + aaHand, d.r);
+    float print = 1.0 - smoothstep(0.04 - aaPrint, 0.04 + aaPrint, d.b);
+    glow = vec3(0.0);
+    spec = 0.25;
+    vec3 col = vec3(0.03);
+    coverage = 0.0;
+    if (ink == 0) {                       // felt-tip marker
+        coverage = hand * (0.88 + 0.12 * grain);
+        col = vec3(0.025, 0.025, 0.03);
+    } else if (ink == 1) {                // ballpoint
+        coverage = (1.0 - smoothstep(0.16 - aaHand, 0.16 + aaHand, d.r)) * 0.92;
+        col = vec3(0.06, 0.09, 0.32);
+        spec = 0.35;
+    } else if (ink == 2) {                // pencil: grainy, faint, a graphite sheen
+        coverage = (1.0 - smoothstep(0.15 - aaHand, 0.15 + aaHand, d.r)) * smoothstep(0.2, 0.7, grain) * 0.8;
+        col = vec3(0.2, 0.2, 0.22);
+        spec = 0.7;
+    } else if (ink == 3 || ink == 4) {    // spray paint: fat strokes, overspray, drips
+        float core = 1.0 - smoothstep(0.32 - aaHand, 0.5 + aaHand, d.r + (blotch - 0.5) * 0.12);
+        float mist = exp(-max(d.r - 0.3, 0.0) * 3.2) * 0.55 * step(0.5, grain);
+        float drip = 1.0 - smoothstep(0.1 - aaDrip, 0.1 + aaDrip, d.g);
+        coverage = max(max(core, mist), drip);
+        col = ink == 3 ? vec3(0.5, 0.03, 0.03) : vec3(0.03);
+        spec = 0.3;
+    } else if (ink == 5) {                // blood: uneven, smeared, running
+        float w = 0.34 + (blotch - 0.5) * 0.3;
+        float core = 1.0 - smoothstep(w - 1.5 * aaHand, w + 1.5 * aaHand, d.r);
+        float drip = 1.0 - smoothstep(0.09 - aaDrip, 0.09 + aaDrip, d.g);
+        coverage = max(core, drip) * (0.7 + 0.3 * grain);
+        col = mix(vec3(0.15, 0.012, 0.01), vec3(0.32, 0.02, 0.015), blotch);
+        spec = 0.55;
+    } else if (ink == 6) {                // print
+        coverage = print;
+    } else if (ink == 7) {
+        coverage = print;
+        col = vec3(0.92);
+    } else if (ink == 8) {                // glowing sign lettering
+        coverage = print;
+        col = vec3(0.9, 0.06, 0.04);
+        glow = vec3(6.0, 0.25, 0.12) * print;
+    } else if (ink == 9 || ink == 10) {   // dry-erase marker
+        coverage = (1.0 - smoothstep(0.34 - aaHand, 0.34 + aaHand, d.r)) * (0.82 + 0.18 * grain);
+        col = ink == 9 ? vec3(0.05, 0.14, 0.55) : vec3(0.6, 0.05, 0.05);
+        spec = 0.6;
+    } else {                              // red print
+        coverage = print;
+        col = vec3(0.62, 0.05, 0.04);
+    }
+    return col;
+}
+
+// ---- The glitch room ---------------------------------------------------------------
+// Each tile of the exit room's walls, on its own beat: blinks out (a hole
+// straight through to the other side), fades in and out, its bands of
+// wallpaper slip sideways and split into their colour channels, and blocks
+// of digital corruption - some of them glowing - break through.
+vec3 glitchSurface(float layer, inout float opacity, out vec3 glow) {
+    float tick = floor(uTime * 14.0 + hash13(vec3(vSeed, 1.0, 2.0)) * 14.0);
+    float h = hash13(vec3(vSeed, tick, 3.7));
+    if (hash13(vec3(vSeed, floor(uTime * 5.0 + vSeed * 0.37), 9.1)) < 0.08) discard;
+    // Now and then a tile fades in and out, fast.
+    float fading = step(0.8, hash13(vec3(vSeed, floor(uTime * 3.0 + vSeed * 0.11), 6.3)));
+    opacity = 1.0 - fading * (0.75 - 0.5 * abs(sin(uTime * (9.0 + 9.0 * hash13(vec3(vSeed, 4.0, 4.0))) + vSeed)));
+    vec2 uv = vUV;
+    float slip = hash13(vec3(floor(vWorldPos.y * 22.0), tick, vSeed * 0.01));
+    if (slip > 0.7) uv.x += (slip - 0.85) * 1.4;
+    float split = 0.012 + 0.05 * step(0.8, h);
+    vec3 wall = vec3(texture(uAlbedo, vec3(uv + vec2(split, 0.0), float(MAT_WALLPAPER))).r,
+                     texture(uAlbedo, vec3(uv, float(MAT_WALLPAPER))).g,
+                     texture(uAlbedo, vec3(uv - vec2(split, 0.0), float(MAT_WALLPAPER))).b);
+    vec2 cuv = uv * 0.37 + vec2(hash13(vec3(tick, vSeed, 1.0)), hash13(vec3(vSeed, tick, 5.0)));
+    vec3 corrupt = texture(uAlbedo, vec3(cuv, layer)).rgb;
+    float hot = texture(uSurface, vec3(cuv, layer)).b;
+    float amount = step(0.8, h) * 0.9 + 0.1 * step(0.6, h);
+    vec3 albedo = mix(wall, corrupt, amount);
+    if (h > 0.965) albedo = vec3(1.0) - albedo; // a negative frame
+    glow = corrupt * hot * amount * 2.0 + vec3(0.6, 0.1, 0.9) * step(0.985, h) * 3.0;
+    return albedo;
 }
 
 // ---- Vaporisation ------------------------------------------------------------------
@@ -354,9 +475,20 @@ void main() {
     vec3  V = toCam / max(camDist, 1e-4);
 
     vec3  albedo = texture(uAlbedo, vec3(vUV, layer)).rgb;
-    vec3  surf = texture(uSurface, vec3(vUV, layer)).rgb;
+    vec4  surf = texture(uSurface, vec3(vUV, layer));
     float specMask = surf.g;
     float emissiveMask = surf.b;
+    float opacity = surf.a;                // 1 for solid materials; a leaf's outline
+    vec3  ownGlow = vec3(0.0);             // writing that glows, glitch blocks
+    if (vMaterial == MAT_WRITING) {
+        albedo = writingInk(vUV, layer, opacity, specMask, ownGlow);
+        emissiveMask = 0.0;
+    } else if (vMaterial == MAT_GLITCH) {
+        albedo = glitchSurface(layer, opacity, ownGlow);
+        specMask = 0.2;
+        emissiveMask = 0.0;
+    }
+    if (opacity < 0.04) discard;
 
     // Large-scale, world-space variation that breaks up texture repetition.
     if (vMaterial == MAT_WALLPAPER) {
@@ -377,7 +509,7 @@ void main() {
         float rim = smoothstep(0.54, 0.58, d) * (1.0 - smoothstep(0.58, 0.64, d));
         albedo *= mix(1.0, 0.66, wet) * (1.0 - 0.10 * rim);
         specMask = max(specMask, wet * 0.9);
-    } else if (vMaterial == MAT_CEILING) {
+    } else if (vMaterial == MAT_CEILING && uOffice == 0) {
         vec2 tileCoord = vWorldPos.xz / uCeilingTile;
         vec2 tileId = floor(tileCoord);
         albedo *= 0.93 + 0.1 * hash13(vec3(tileId, 3.7));
@@ -412,6 +544,7 @@ void main() {
     color += evaluateLights(vWorldPos, N, V, albedo, params.x * specMask, params.y) * mix(0.55, 1.0, ao);
     color += arcLighting(vWorldPos, N, albedo);
     color += vaporGlow;
+    color += ownGlow;
 
     // Emissive diffuser panels follow their fixture's flicker.
     if (vLightIndex >= 0) {
@@ -444,7 +577,7 @@ void main() {
     float fog = 1.0 - exp(-pow(camDist * uFogDensity, 2.0));
     color = mix(color, uFogColor, fog);
 
-    oColor = vec4(color, 1.0);
+    oColor = vec4(color, opacity);
 }
 )GLSL";
 const char* const kWorldFragment = kWorldFragmentStorage.c_str();
@@ -706,6 +839,7 @@ uniform float uCrosshairHighlight;  // 0..1, ring shown when something is intera
 uniform float uFear;                // 0..1, an entity is near / being watched
 uniform float uFade;                // 0..1, fade to black
 uniform float uDim;                 // 0..1, the game is held under a dialog: blurred and darkened
+uniform float uGlitch;              // 0..1, reality coming apart (the noclip out of the Backrooms)
 
 // ACES filmic curve (Narkowicz 2015 fit).
 vec3 aces(vec3 x) {
@@ -718,11 +852,23 @@ float grainNoise(vec2 p) {
 }
 
 void main() {
+    // Noclipping: rows of the picture tear sideways, blocks of it jump, the
+    // channels drift apart.
+    vec2  uv = vUV;
+    float tick = floor(uTime * 30.0);
+    if (uGlitch > 0.0) {
+        float band = floor(vUV.y * 48.0);
+        if (grainNoise(vec2(band, tick)) < uGlitch * 0.6) uv.x += (grainNoise(vec2(band + 7.0, tick)) - 0.5) * 0.25 * uGlitch;
+        vec2 block = floor(vUV * vec2(24.0, 14.0));
+        if (grainNoise(block + tick * 0.37) < uGlitch * 0.18) {
+            uv = fract(uv + (vec2(grainNoise(block + 3.0 + tick), grainNoise(block - 5.0 + tick)) - 0.5) * 0.2);
+        }
+    }
     // Dread: the image splits into its colour channels towards the edges.
     vec2  fromCentre = vUV - 0.5;
-    vec2  split = fromCentre * (0.012 * uFear * length(fromCentre));
-    vec3  hdr = vec3(texture(uScene, vUV + split).r, texture(uScene, vUV).g, texture(uScene, vUV - split).b);
-    hdr += texture(uBloom, vUV).rgb * uBloomStrength;
+    vec2  split = fromCentre * (0.012 * uFear * length(fromCentre)) + vec2(0.025 * uGlitch, 0.0);
+    vec3  hdr = vec3(texture(uScene, uv + split).r, texture(uScene, uv).g, texture(uScene, uv - split).b);
+    hdr += texture(uBloom, uv).rgb * uBloomStrength;
     if (uDim > 0.0) {
         // Held under a dialog: a soft disc blur (golden-angle spiral of taps,
         // its radius growing as the dialog fades in) so the text stands out.
@@ -748,6 +894,11 @@ void main() {
     c = mix(c, vec3(dot(c, vec3(0.299, 0.587, 0.114))), 0.5 * uFear);
 
     c = pow(c, vec3(1.0 / 2.2));
+    if (uGlitch > 0.0) {
+        if (grainNoise(vec2(tick, 3.3)) < uGlitch * 0.15) c = vec3(1.0) - c;      // negative frames
+        c = mix(c, floor(c * 5.0 + 0.5) / 5.0, uGlitch * 0.6);                  // colour depth collapsing
+        c *= 1.0 - 0.35 * uGlitch * step(0.5, fract(gl_FragCoord.y * 0.25));   // scanlines
+    }
 
     // Animated film grain (applied in display space), heavier when afraid.
     float n = grainNoise(gl_FragCoord.xy + fract(uTime * 7.31) * vec2(113.1, 71.7));

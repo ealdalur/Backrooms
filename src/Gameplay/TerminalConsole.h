@@ -21,6 +21,18 @@
 // handler); anything else may be answered by the voice. Hidden commands are
 // left out of HELP.
 //
+// Stream control: on the live log SPACE pauses the stream (and the typing:
+// the screen holds still to be read) and resumes it.
+//
+// The puzzle chain (Gameplay/PuzzleChain): once the voice on the phone has
+// overwritten memory at 7A9F, a terminal streaming its HEX log sooner or
+// later shows that line - its ASCII column the IP address (a Poisson
+// process: 95 % within two minutes of watching the HEX stream, a quarter of
+// that rate in the mixed ALL log). PING of that address answers with a storey
+// and chunk offset to the exit, and MAP on a terminal in the exit chunk
+// shows the glitch room blinking. The console reports what the player saw
+// (takePuzzleEvents); the Engine moves the chain on.
+//
 // Graphics mode: the hidden DOOM command boots a game (Gameplay/Doom) that
 // takes over the tube and the keyboard. While it runs, graphics() returns its
 // framebuffer (drawn instead of the text grid), the Engine feeds it held keys
@@ -30,6 +42,7 @@
 // ---------------------------------------------------------------------------
 
 #include "Gameplay/Doom/DoomGame.h"
+#include "Gameplay/PuzzleChain.h"
 #include "Gameplay/TerminalText.h"
 #include "Math/Random.h"
 #include "Render/TerminalRenderer.h"
@@ -50,7 +63,10 @@ struct TerminalContext {
     float     stalkerDistance = -1.0f;  ///< < 0 when the Stalker is not around.
     bool      stalkerBehind = false;    ///< Close, and outside the player's view.
     float     wandererDistance = -1.0f; ///< < 0 when the Wanderer is not around.
+    int       entities = 0;             ///< Entities still in the game (the "unregistered" occupants).
     const WorldGenerator* world = nullptr;
+    const PuzzleChain*    puzzle = nullptr;
+    bool      office = false;           ///< In the "real world" (nothing is anywhere else from here).
     /// Grid direction (cells) the player faces sitting at this screen: up - "north" - on the map.
     glm::ivec2 mapUp{0, -1};
     doom::Controls doom;                ///< Held keys, while DOOM runs.
@@ -81,6 +97,9 @@ public:
     bool escape();
     /// A key struck while a program owns the keyboard: it still clatters (and can be heard).
     void keyClick();
+    /// SPACE: pauses / resumes the live log (no effect at the prompt).
+    void toggleStreamPause();
+    bool streamPaused() const { return m_streamPaused && !m_commandMode; }
 
     /// The session wants to end (EXIT / SHUTDOWN); SHUTDOWN also powers off.
     bool exitRequested() const { return m_exitRequested; }
@@ -100,6 +119,8 @@ public:
 
     /// Returns and clears the sounds requested since the last call.
     std::vector<TerminalSound> takeSounds();
+    /// Returns and clears what the player has seen of the puzzle since the last call.
+    std::vector<PuzzleEvent> takePuzzleEvents();
 
 private:
     using Args = std::vector<std::string>;
@@ -117,19 +138,26 @@ private:
     static const Command* findCommand(const std::string& name);
 
     struct Line {
-        std::string text;
-        uint8_t     color;
+        std::string          text;
+        uint8_t              color;
+        std::vector<uint8_t> colors; ///< Per-character colours (empty: `color` throughout).
     };
+    /// Lines that mean something to the puzzle when they appear.
+    enum class Tag : uint8_t { None, Memory };
     struct Pending {
-        std::string text;
-        uint8_t     color = TerminalScreen::Normal;
-        float       charsPerSecond = 0.0f; ///< <= 0: appears at once.
-        float       delay = 0.0f;          ///< Seconds before it starts.
-        bool        anomaly = false;       ///< Glitch + sound when it starts.
+        std::string          text;
+        uint8_t              color = TerminalScreen::Normal;
+        float                charsPerSecond = 0.0f; ///< <= 0: appears at once.
+        float                delay = 0.0f;          ///< Seconds before it starts.
+        bool                 anomaly = false;       ///< Glitch + sound when it starts.
+        std::vector<uint8_t> colors;
+        Tag                  tag = Tag::None;
     };
 
     // ---- Output -------------------------------------------------------------------
     void print(const std::string& text, uint8_t color = TerminalScreen::Normal, float cps = 0.0f, float delay = 0.0f);
+    /// One line (no wrapping) with a colour per character.
+    void printColored(const std::string& text, std::vector<uint8_t> colors, float delay = 0.0f);
     void printAnomaly(const std::string& text, float delay, bool urgent = false);
     void advanceTyping(float dt);
     void streamBurst(const TerminalContext& ctx);
@@ -147,6 +175,8 @@ private:
     void cmdStatus(const Args&, const TerminalContext&);
     void cmdWhoami(const Args&, const TerminalContext&);
     void cmdPing(const Args&, const TerminalContext&);
+    /// The ping of the address in the overwritten memory.
+    void pingTarget(const std::string& host, const TerminalContext& ctx);
     void cmdMap(const Args&, const TerminalContext&);
     void cmdEcho(const Args&, const TerminalContext&);
     void cmdReboot(const Args&, const TerminalContext&);
@@ -175,6 +205,8 @@ private:
     float m_anomalyTimer = 0.0f;    ///< At the prompt: countdown to the voice's next message.
     termtext::StreamMode m_mode = termtext::StreamMode::All;
     float m_streamTimer = 0.0f;
+    bool  m_streamPaused = false;    ///< SPACE on the live log.
+    float m_memoryClock = 0.0f;      ///< Weighted seconds of HEX streaming since 7A9F last had its chance to appear.
     double m_uptime = 0.0;           ///< Seconds since boot (kernel timestamps).
     float m_session = 0.0f;          ///< Seconds the player has spent here this visit.
     float m_warnCooldown = 0.0f;
@@ -186,6 +218,7 @@ private:
 
     TerminalScreen             m_screen;
     std::vector<TerminalSound> m_sounds;
+    std::vector<PuzzleEvent>   m_puzzleEvents;
 
     std::unique_ptr<doom::Game> m_doom;
     bool m_doomBooting = false;      ///< DOOM's start-up text is still printing.

@@ -219,6 +219,11 @@ void Soundscape::playSting() {
     play2D(SoundId::CatchSting, kStingGain, 0.0f, 1.0f, 0.3f);
 }
 
+void Soundscape::playInHead(SoundId id, float gain) {
+    if (!m_enabled) return;
+    play2D(id, gain, 0.0f, 1.0f, 0.05f);
+}
+
 void Soundscape::playHeld(SoundId id, float gain, float pitch) {
     if (!m_enabled) return;
     play2D(id, gain, kHeldPan, pitch * (1.0f + m_rng.range(-0.03f, 0.03f)), 0.2f);

@@ -5,7 +5,7 @@
 // Usage:
 //   Backrooms [seed] [--seed <n>] [--level <n>] [--no-entities] [--dump-sounds <dir>]
 //             [--demo <scene> [--type <text>]] [--screenshot <file.bmp> [--delay <seconds>]]
-//             [--size <width>x<height>]
+//             [--size <width>x<height>] [--puzzle <stage>]
 //
 //   seed          World seed (decimal or 0x-prefixed hex). Same seed -> same world.
 //   --level       Storey to start on (0 = the classic floor; negative = below).
@@ -26,7 +26,17 @@
 //                 assemble (all four parts, put together), tesla /
 //                 tesla-stalker (the assembled gun fired at the Wanderer /
 //                 the Stalker until it is vaporised; --type <percent> sets
-//                 the battery's charge).
+//                 the battery's charge). The way out: clue (in front of the
+//                 nearest phone number on a wall), hexstream (the call already
+//                 made: watches a terminal's HEX log until 7A9F comes up, then
+//                 pauses it; --type ping: and pings the address), exit-map
+//                 (MAP in the exit chunk), glitch (stands in the glitch room;
+//                 --type walk: walks into its wall), office (straight to the
+//                 office), ringer (a nearby phone rings), clue-survey (how
+//                 many rooms of exploring pass between copies of the number,
+//                 over --type <n> routes, and how long a room takes to walk),
+//                 terminal-pause (pauses a terminal's log, leaves, sits down
+//                 again and resumes it: checks the stream comes back).
 //   --type        Text typed into the terminal in the terminal scene (keys
 //                 dialled in the phone scene, "upper" in the stairs-sign
 //                 scene, a route number in explore).
@@ -35,6 +45,8 @@
 //   --screenshot  Render for a few seconds, save a BMP of the frame and exit
 //                 (handy for automated smoke tests / CI).
 //   --size        Initial window size in logical pixels, e.g. 1280x720.
+//   --puzzle      Start the puzzle chain further along: dialed (the number on
+//                 the wall has been called), memory (7A9F has been seen).
 // ---------------------------------------------------------------------------
 #include "Core/Engine.h"
 #include "Core/GpuSelection.h"
@@ -58,8 +70,10 @@ bool parseSeed(const char* text, uint64_t& out) {
 void printUsage(const char* exe) {
     std::cout << "Usage: " << exe << " [seed] [--seed <n>] [--level <n>] [--no-entities] [--dump-sounds <dir>]\n"
               << "       [--demo <scene> [--type <text>]] [--screenshot <file.bmp> [--delay <seconds>]] [--size <w>x<h>]\n"
+              << "       [--puzzle dialed|memory]\n"
               << "  demo scenes: stairs, stairs-top, stairs-sign, climb, descend, stalker, ambush, caught, wanderer, terminal, doom, phone,\n"
-              << "               explore, idle, cabinet, part, assemble, tesla, tesla-stalker\n";
+              << "               explore, idle, cabinet, part, assemble, tesla, tesla-stalker,\n"
+              << "               clue, hexstream, exit-map, glitch, office, ringer, clue-survey, terminal-pause\n";
 }
 
 } // namespace
@@ -88,6 +102,8 @@ int main(int argc, char* argv[]) {
             options.demo = argv[++i];
         } else if (std::strcmp(arg, "--type") == 0 && i + 1 < argc) {
             options.demoInput = argv[++i];
+        } else if (std::strcmp(arg, "--puzzle") == 0 && i + 1 < argc) {
+            options.puzzleStage = argv[++i];
         } else if (std::strcmp(arg, "--no-entities") == 0) {
             options.noEntities = true;
         } else if (std::strcmp(arg, "--dump-sounds") == 0 && i + 1 < argc) {

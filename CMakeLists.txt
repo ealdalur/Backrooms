@@ -24,9 +24,11 @@ set(BACKROOMS_SOURCES
   src/Audio/SoundBank.cpp
   src/Audio/Soundscape.cpp
   src/Audio/SpeechSynth.cpp
+  src/Audio/StorySounds.cpp
   src/Audio/TeslaSounds.cpp
 
   src/Core/Engine.cpp
+  src/Core/EnginePuzzle.cpp
   src/Core/EngineTesla.cpp
   src/Core/GpuSelection.cpp
   src/Core/Input.cpp
@@ -38,6 +40,7 @@ set(BACKROOMS_SOURCES
   src/Gameplay/Inventory.cpp
   src/Gameplay/Lightning.cpp
   src/Gameplay/PhoneCall.cpp
+  src/Gameplay/PuzzleChain.cpp
   src/Gameplay/TerminalConsole.cpp
   src/Gameplay/TerminalText.cpp
   src/Gameplay/TeslaGun.cpp
@@ -65,7 +68,9 @@ set(BACKROOMS_SOURCES
 
   src/World/Chunk.cpp
   src/World/ChunkManager.cpp
+  src/World/Decals.cpp
   src/World/LightFixture.cpp
+  src/World/OfficeLayout.cpp
   src/World/Stairwell.cpp
   src/World/WorldGenerator.cpp
 
@@ -73,6 +78,7 @@ set(BACKROOMS_SOURCES
   src/Actors/Door.cpp
   src/Actors/FileCabinet.cpp
   src/Actors/Furniture.cpp
+  src/Actors/OfficeFurniture.cpp
   src/Actors/Phone.cpp
   src/Actors/Player.cpp
   src/Actors/TeslaParts.cpp
@@ -95,6 +101,7 @@ set(BACKROOMS_HEADERS
   src/Audio/SoundBank.h
   src/Audio/Soundscape.h
   src/Audio/SpeechSynth.h
+  src/Audio/StorySounds.h
   src/Audio/SynthKit.h
   src/Audio/TeslaSounds.h
 
@@ -111,6 +118,7 @@ set(BACKROOMS_HEADERS
   src/Gameplay/Items.h
   src/Gameplay/Lightning.h
   src/Gameplay/PhoneCall.h
+  src/Gameplay/PuzzleChain.h
   src/Gameplay/Shockable.h
   src/Gameplay/TerminalConsole.h
   src/Gameplay/TerminalText.h
@@ -122,6 +130,7 @@ set(BACKROOMS_HEADERS
   src/Physics/AABB.h
   src/Physics/Physics.h
 
+  src/Render/AtlasLayout.h
   src/Render/BitmapFont.h
   src/Render/Camera.h
   src/Render/EntityRenderer.h
@@ -143,7 +152,9 @@ set(BACKROOMS_HEADERS
   src/World/Chunk.h
   src/World/ChunkCoord.h
   src/World/ChunkManager.h
+  src/World/Decals.h
   src/World/LightFixture.h
+  src/World/OfficeLayout.h
   src/World/Stairwell.h
   src/World/WorldConstants.h
   src/World/WorldGenerator.h
@@ -152,6 +163,7 @@ set(BACKROOMS_HEADERS
   src/Actors/Door.h
   src/Actors/FileCabinet.h
   src/Actors/Furniture.h
+  src/Actors/OfficeFurniture.h
   src/Actors/Phone.h
   src/Actors/Player.h
   src/Actors/TeslaParts.h

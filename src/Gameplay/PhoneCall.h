@@ -31,6 +31,15 @@
 // years, everyone keeps calling, and she has had enough. She hangs up on
 // the player, which ends the call (hungUp).
 //
+// And one more: the number written on a wall (the puzzle chain's clue). It
+// rings twice, and someone answers through the static, in a hurry: "I was
+// able to overwrite the memory at 7A9F... ping that, hurry though, I don't
+// know how long it will last" - and the line drops back to the dial tone
+// (clueAnswered reports it).
+//
+// A phone that was ringing when it was picked up (incoming) has someone on
+// the line already.
+//
 // The call only asks for sounds (takeSounds) and reports which tone should
 // loop (tone); the Engine plays them. Lines of speech come with captions.
 // ---------------------------------------------------------------------------
@@ -71,7 +80,10 @@ public:
     /// @param lineSeed    Decides what each number does (fixed per world).
     /// @param sessionSeed Varies everything else from one pick-up to the next.
     /// @param mailbox     What the phone's voicemail box holds.
-    PhoneCall(const SoundBank& bank, uint64_t lineSeed, uint64_t sessionSeed, const PhoneMailbox& mailbox);
+    /// @param clueNumber  The digits of the number on the wall ("" for none).
+    /// @param incoming    The phone was ringing: someone is already on the line.
+    PhoneCall(const SoundBank& bank, uint64_t lineSeed, uint64_t sessionSeed, const PhoneMailbox& mailbox,
+              const std::string& clueNumber = std::string(), bool incoming = false);
 
     /// A keypad key ("123456789*0#"), from the keyboard or a click.
     void press(char key);
@@ -104,6 +116,8 @@ public:
 
     /// The other end hung up on the player: the call is over.
     bool hungUp() const { return m_hungUp; }
+    /// The number on the wall was answered (the memory has been overwritten).
+    bool clueAnswered() const { return m_clueAnswered; }
 
 private:
     enum class State : uint8_t {
@@ -116,6 +130,7 @@ private:
         Ringing,
         Answered,  ///< Picked up at the other end - by one of them.
         Jenny,     ///< Picked up at 867-5309.
+        Clue,      ///< Picked up at the number on the wall: one hurried message, then the line drops.
         Voicemail, ///< Listening to the voicemail system.
         Busy,
         Recording, ///< Special information tones and / or an announcement.
@@ -170,6 +185,10 @@ private:
     bool   m_answers = false;
     bool   m_jenny = false;       ///< This call is to 867-5309 (nothing else gets on the line).
     bool   m_hungUp = false;
+    std::string m_clueNumber;     ///< The number on the wall.
+    bool   m_clue = false;        ///< This call is to it (nothing else gets on the line).
+    bool   m_clueAnswered = false;
+    bool   m_incoming = false;
 
     PhoneMailbox m_mailbox;
     float  m_messageEnd = 0.0f;   ///< Clock time the message being played back ends.

@@ -116,6 +116,44 @@ void ChunkManager::update(const glm::vec3& focus, int focusLevel, float dt, cons
     }
 }
 
+void ChunkManager::reload(const ChunkCoord& c) {
+    auto it = m_chunks.find(c);
+    if (it == m_chunks.end()) return;
+    rememberState(*it->second);
+    m_chunks.erase(it);
+    loadChunk(c);
+}
+
+void ChunkManager::clear() {
+    m_chunks.clear();
+    m_doorMemory.clear();
+    m_terminalMemory.clear();
+    m_phoneMemory.clear();
+    m_itemMemory.clear();
+    m_doorEvents.clear();
+    m_cabinetEvents.clear();
+    ++m_version;
+}
+
+bool ChunkManager::touchesGlitch(const AABB& box) const {
+    const int level = world::levelOf(box.min.y);
+    const ChunkCoord c0 = ChunkCoord::fromWorld(box.min.x - 1.0f, box.min.z - 1.0f, level);
+    const ChunkCoord c1 = ChunkCoord::fromWorld(box.max.x + 1.0f, box.max.z + 1.0f, level);
+    for (int z = c0.z; z <= c1.z; ++z) {
+        for (int x = c0.x; x <= c1.x; ++x) {
+            auto it = m_chunks.find({x, z, level});
+            if (it == m_chunks.end()) continue;
+            for (const AABB& g : it->second->glitchZones()) {
+                if (box.min.x < g.max.x && box.max.x > g.min.x && box.min.y < g.max.y && box.max.y > g.min.y &&
+                    box.min.z < g.max.z && box.max.z > g.min.z) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
 void ChunkManager::gatherColliders(const AABB& region, std::vector<AABB>& out) const {
     gatherColliders(region, out, true);
 }

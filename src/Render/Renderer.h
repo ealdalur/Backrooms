@@ -57,6 +57,8 @@ struct FrameParams {
     float  fear = 0.0f;                                        ///< 0..1, drives the dread post effects.
     float  fade = 0.0f;                                        ///< 0..1, fade to black.
     float  dim = 0.0f;                                         ///< 0..1, the game held under a dialog (blurred, darkened).
+    float  glitch = 0.0f;                                      ///< 0..1, the picture tearing apart (noclipping out).
+    bool   office = false;                                     ///< The office's air and light instead of the Backrooms'.
     const std::vector<LightDisturbance>* lightDisturbances = nullptr;
     const EntityDrawList*                entities = nullptr;
     // The Tesla gun.

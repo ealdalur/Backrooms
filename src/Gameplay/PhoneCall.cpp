@@ -45,8 +45,9 @@ Voice pick(const Voice (&list)[N], rnd::Rng& rng, int avoid) {
 
 } // namespace
 
-PhoneCall::PhoneCall(const SoundBank& bank, uint64_t lineSeed, uint64_t sessionSeed, const PhoneMailbox& mailbox)
-    : m_bank(bank), m_lineSeed(lineSeed), m_rng(sessionSeed), m_mailbox(mailbox) {
+PhoneCall::PhoneCall(const SoundBank& bank, uint64_t lineSeed, uint64_t sessionSeed, const PhoneMailbox& mailbox,
+                     const std::string& clueNumber, bool incoming)
+    : m_bank(bank), m_lineSeed(lineSeed), m_rng(sessionSeed), m_mailbox(mailbox), m_clueNumber(clueNumber), m_incoming(incoming) {
     m_phantomTimer = m_rng.range(6.0f, 14.0f);
 }
 
@@ -91,7 +92,7 @@ void PhoneCall::cancelEarpiece() {
 
 void PhoneCall::pressMessage() {
     sound(SoundId::PhoneKey, -1, 0.35f, 0.0f, false);
-    if (m_state == State::Lifting || m_state == State::Voicemail || m_state == State::Jenny) return;
+    if (m_state == State::Lifting || m_state == State::Voicemail || m_state == State::Jenny || m_state == State::Clue) return;
     // The feature key drops whatever the line was doing and calls the system.
     cancelEarpiece();
     enter(State::Voicemail);
@@ -200,7 +201,14 @@ void PhoneCall::resolve() {
     // ...except that, more and more often, it is not the exchange answering at all.
     const bool wrong = m_rng.chance(0.12f + std::min(0.2f, m_clock / 600.0f));
 
-    if (n.size() >= 7 && n.compare(n.size() - 7, 7, phonesfx::kJennyNumber) == 0) {
+    const size_t clueLen = m_clueNumber.size();
+    if (clueLen > 0 && n.size() >= clueLen && n.compare(n.size() - clueLen, clueLen, m_clueNumber) == 0) {
+        // The number on the wall. Two rings, and someone grabs it.
+        m_rings = 2;
+        m_answers = true;
+        m_clue = true;
+        enter(State::Ringing);
+    } else if (n.size() >= 7 && n.compare(n.size() - 7, 7, phonesfx::kJennyNumber) == 0) {
         // It actually rings through. She picks up fast; she knows who it is.
         m_rings = 2;
         m_answers = true;
@@ -240,7 +248,7 @@ void PhoneCall::update(float dt, const PhoneContext& ctx) {
 
     switch (m_state) {
     case State::Lifting:
-        if (m_stateTime > kLiftTime) enter(m_rng.chance(kOpenLineChance) ? State::OpenLine : State::DialTone);
+        if (m_stateTime > kLiftTime) enter(m_incoming || m_rng.chance(kOpenLineChance) ? State::OpenLine : State::DialTone);
         break;
     case State::OpenLine:
         // No dial tone. Breathing; a voice; then, as if nothing happened, the dial tone.
@@ -274,7 +282,7 @@ void PhoneCall::update(float dt, const PhoneContext& ctx) {
     case State::Ringing:
         // Answered in the silence after its last ring - or never.
         if (m_answers && m_stateTime > static_cast<float>(m_rings - 1) * kRingCycle + 2.6f) {
-            enter(m_jenny ? State::Jenny : State::Answered);
+            enter(m_jenny ? State::Jenny : m_clue ? State::Clue : State::Answered);
         }
         else if (m_stateTime > static_cast<float>(kMaxRings) * kRingCycle) enter(State::Dead);
         break;
@@ -302,6 +310,23 @@ void PhoneCall::update(float dt, const PhoneContext& ctx) {
             m_step = 1;
         } else if (m_stateTime > m_wait + 0.2f) {
             m_hungUp = true;
+        }
+        break;
+    case State::Clue:
+        // A crackle as it is snatched up, the message in one breath - and the line is gone.
+        if (m_step == 0) {
+            sound(SoundId::PhoneStatic, -1, 0.55f);
+            m_wait = speak(SoundId::PhoneClue, 0, 0.9f, 0.3f, phonesfx::clueText(), true, phonesfx::kClueSpeechStart) - m_clock;
+            m_duckUntil = m_clock + m_wait;
+            m_clueAnswered = true;
+            m_step = 1;
+        } else if (m_step == 1 && m_stateTime > m_wait) {
+            cancelEarpiece(); // cut off, mid-breath
+            sound(SoundId::PhoneStatic, -1, 0.7f);
+            sound(SoundId::PhoneBeep, static_cast<int>(phonesfx::Beep::LineClick), 0.6f, 0.05f);
+            m_clue = false;
+            m_phantomTimer = m_rng.range(12.0f, 20.0f); // and then, for a while, nothing at all
+            enter(State::DialTone);
         }
         break;
     case State::Voicemail:
@@ -334,7 +359,7 @@ void PhoneCall::update(float dt, const PhoneContext& ctx) {
 }
 
 void PhoneCall::updatePhantoms(float dt, const PhoneContext& ctx) {
-    if (m_state == State::Lifting || m_jenny || speaking()) return; // not even they call Jenny
+    if (m_state == State::Lifting || m_jenny || m_clue || speaking()) return; // not even they call Jenny
     // They notice what is happening around the player.
     if (m_warnCooldown <= 0.0f) {
         if (ctx.stalkerBehind) {
@@ -381,7 +406,7 @@ float PhoneCall::toneGain() const {
 
 float PhoneCall::lineGain() const {
     float g = 1.0f;
-    if (m_state == State::OpenLine || m_state == State::Answered) g = 1.8f;
+    if (m_state == State::OpenLine || m_state == State::Answered || m_state == State::Clue) g = 1.8f;
     else if (m_state == State::Dead) g = 0.35f;
     if (m_clock < m_duckUntil) g = std::max(g, 2.2f);
     return g;

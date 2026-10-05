@@ -17,6 +17,11 @@ namespace {
 constexpr size_t kMaxScrollback = 200;
 constexpr int    kOutputRows = TerminalScreen::kRows - 1; ///< The last row is the prompt.
 constexpr float  kDesperationTime = 240.0f;               ///< Seconds until the voice is at its worst.
+/// Rate (per second of HEX streaming) at which the overwritten line comes up:
+/// 1 - exp(-rate * 115 s) = 95 %, so it shows within the first two minutes
+/// 95 times in 100 even allowing for the gaps between bursts.
+constexpr float  kMemoryRate = 0.02605f;
+constexpr float  kMemoryAllWeight = 0.25f;               ///< In the mixed ALL log, hex lines are a minority.
 
 std::string toLower(std::string s) {
     for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -105,6 +110,10 @@ void TerminalConsole::open(bool powered) {
         print(header, TerminalScreen::Bright);
         print("PRESS <ENTER> FOR A COMMAND PROMPT.", TerminalScreen::Dim);
         print("");
+    } else if (streamPaused()) {
+        // Left with the log paused: the picture is still held there to be read
+        // (and nothing new may be typed under it - SPACE resumes).
+        return;
     } else {
         print("", TerminalScreen::Normal);
         print("SESSION RESUMED.", TerminalScreen::Dim);
@@ -114,6 +123,7 @@ void TerminalConsole::open(bool powered) {
 
 void TerminalConsole::enterCommandMode() {
     m_commandMode = true;
+    m_streamPaused = false;
     // Routine output still waiting to be typed is dropped; whatever the voice
     // is saying stays queued (and restarts on the clean screen).
     m_queue.erase(std::remove_if(m_queue.begin(), m_queue.end(), [](const Pending& p) { return !p.anomaly; }),
@@ -148,31 +158,43 @@ void TerminalConsole::update(float dt, const TerminalContext& ctx) {
 
     if (m_ready) {
         // The voice watches out for the player.
+        // (A warning breaks through a paused stream: the voice will not wait.)
         if (ctx.stalkerBehind && m_warnCooldown <= 0.0f) {
             static const char* const kWarnings[] = {"it's right behind you", "TURN AROUND", "don't you feel it? behind you",
                                                     "it's standing behind your chair"};
             printAnomaly(kWarnings[m_rng.next() % 4], 0.2f, true);
             m_warnCooldown = 22.0f;
+            m_streamPaused = false;
         } else if (ctx.wandererDistance >= 0.0f && ctx.wandererDistance < 14.0f && m_hushCooldown <= 0.0f) {
             printAnomaly(m_rng.chance(0.5f) ? "shhh. it can hear you typing." : "stop typing. it's listening.", 0.3f, true);
             m_hushCooldown = 40.0f;
+            m_streamPaused = false;
         }
         const bool idle = m_queue.empty() && !m_typingLine;
+        // Until the overwritten memory has been seen, the voice keeps pointing at it.
+        const bool hinting = ctx.puzzle && ctx.puzzle->reached(PuzzleStage::NumberDialed) && !ctx.puzzle->reached(PuzzleStage::MemoryFound);
         if (!m_commandMode) {
             // Watching the live log: system output with the anomaly woven through it.
-            m_streamTimer -= dt;
-            if (idle && m_streamTimer <= 0.0f) streamBurst(ctx);
+            if (!m_streamPaused) {
+                m_streamTimer -= dt;
+                if (ctx.puzzle && ctx.puzzle->reached(PuzzleStage::NumberDialed)) {
+                    m_memoryClock += dt * (m_mode == termtext::StreamMode::Hex ? 1.0f : m_mode == termtext::StreamMode::All ? kMemoryAllWeight : 0.0f);
+                }
+                if (idle && m_streamTimer <= 0.0f) streamBurst(ctx);
+            }
         } else {
             // At the prompt the log is silent - but the voice is not.
             m_anomalyTimer -= dt;
             if (idle && m_anomalyTimer <= 0.0f) {
                 const float desperation = std::min(1.0f, m_session / kDesperationTime);
-                printAnomaly(termtext::anomalyMessage(m_rng, desperation), 0.0f);
+                printAnomaly(hinting && m_rng.chance(0.5f) ? termtext::memoryHint(m_rng, ctx.puzzle->secrets().memoryAddress)
+                                                           : termtext::anomalyMessage(m_rng, desperation),
+                             0.0f);
                 m_anomalyTimer = m_rng.range(15.0f, 35.0f) * (1.0f - 0.5f * desperation);
             }
         }
     }
-    advanceTyping(dt);
+    if (!streamPaused()) advanceTyping(dt); // paused, the screen holds still
     compose();
 
     // DOOM starts once its start-up text has printed, and runs until ESC.
@@ -201,12 +223,29 @@ std::vector<TerminalSound> TerminalConsole::takeSounds() {
     return out;
 }
 
+std::vector<PuzzleEvent> TerminalConsole::takePuzzleEvents() {
+    std::vector<PuzzleEvent> out;
+    out.swap(m_puzzleEvents);
+    return out;
+}
+
+void TerminalConsole::toggleStreamPause() {
+    // Resuming always works: a paused stream must never be left stuck.
+    if (!m_streamPaused && (m_commandMode || !m_ready || doomActive() || m_powerOffTimer >= 0.0f)) return;
+    m_streamPaused = !m_streamPaused;
+    sound(TerminalSound::Key);
+}
+
 // ---- Keyboard ---------------------------------------------------------------------------------
 
 void TerminalConsole::type(const char* text) {
     if (doomActive()) return; // the keys belong to the game (see keyClick)
     if (m_powerOffTimer >= 0.0f || !m_ready) return;
-    if (!m_commandMode) enterCommandMode(); // typing opens the prompt
+    if (!m_commandMode) {
+        while (*text == ' ') ++text; // on the live log SPACE pauses the stream (see toggleStreamPause)
+        if (!*text) return;
+        enterCommandMode(); // typing opens the prompt
+    }
     for (const char* c = text; *c; ++c) {
         if (*c < 32 || *c > 126) continue; // printable ASCII only (the font's range)
         if (m_input.size() >= 120) break;
@@ -287,6 +326,15 @@ void TerminalConsole::print(const std::string& text, uint8_t color, float cps, f
     } while (!rest.empty());
 }
 
+void TerminalConsole::printColored(const std::string& text, std::vector<uint8_t> colors, float delay) {
+    Pending p;
+    p.text = text.substr(0, TerminalScreen::kCols);
+    p.color = colors.empty() ? static_cast<uint8_t>(TerminalScreen::Normal) : colors.front();
+    p.colors = std::move(colors);
+    p.delay = delay;
+    m_queue.push_back(std::move(p));
+}
+
 void TerminalConsole::printAnomaly(const std::string& text, float delay, bool urgent) {
     Pending p;
     p.text = text.substr(0, TerminalScreen::kCols);
@@ -320,8 +368,9 @@ void TerminalConsole::advanceTyping(float dt) {
                 sound(TerminalSound::Glitch);
                 if (m_doom) m_doom->message(p.text, true); // it speaks through the game too
             }
-            m_lines.push_back({"", p.color});
+            m_lines.push_back({"", p.color, p.colors});
             while (m_lines.size() > kMaxScrollback) m_lines.pop_front();
+            if (p.tag == Tag::Memory) m_puzzleEvents.push_back({PuzzleEvent::Kind::MemoryShown, ChunkCoord{}});
             m_typingLine = true;
             m_typedChars = 0;
             m_typeAccum = 0.0f;
@@ -356,9 +405,12 @@ void TerminalConsole::streamBurst(const TerminalContext& ctx) {
     const float desperation = std::min(1.0f, m_session / kDesperationTime);
     const int level = ctx.level;
 
+    const bool hinting = ctx.puzzle && ctx.puzzle->reached(PuzzleStage::NumberDialed) && !ctx.puzzle->reached(PuzzleStage::MemoryFound);
     if (m_rng.chance(0.045f + 0.11f * desperation)) {
         // The anomaly breaks through the log.
-        printAnomaly(termtext::anomalyMessage(m_rng, desperation), m_rng.range(0.5f, 1.6f));
+        printAnomaly(hinting && m_rng.chance(0.4f) ? termtext::memoryHint(m_rng, ctx.puzzle->secrets().memoryAddress)
+                                                   : termtext::anomalyMessage(m_rng, desperation),
+                     m_rng.range(0.5f, 1.6f));
         if (m_rng.chance(0.35f)) {
             print(termtext::corrupt(m_rng, termtext::systemLine(m_rng, m_mode, m_uptime, level), 0.45f), TerminalScreen::Dim);
         }
@@ -380,8 +432,21 @@ void TerminalConsole::streamBurst(const TerminalContext& ctx) {
         return;
     }
 
+    // Has the overwritten memory come round? (Its chance builds up with the
+    // time spent watching the hex, and is spent at every burst.)
+    int memoryAt = -1;
     const int count = m_rng.rangeInt(1, 4);
+    if (m_memoryClock > 0.0f && ctx.puzzle) {
+        if (m_rng.chance(1.0f - std::exp(-kMemoryRate * m_memoryClock))) memoryAt = m_rng.rangeInt(0, count - 1);
+        m_memoryClock = 0.0f;
+    }
     for (int i = 0; i < count; ++i) {
+        if (i == memoryAt) {
+            const PuzzleSecrets& secret = ctx.puzzle->secrets();
+            print(termtext::memoryLine(secret.memoryAddress, secret.ipAddress));
+            m_queue.back().tag = Tag::Memory;
+            continue;
+        }
         const float r = m_rng.nextFloat();
         const uint8_t color = r < 0.15f ? TerminalScreen::Dim : r < 0.2f ? TerminalScreen::Bright : TerminalScreen::Normal;
         const float cps = m_rng.chance(0.08f) ? m_rng.range(60.0f, 140.0f) : 0.0f; // now and then, a line crawls out
@@ -400,7 +465,8 @@ void TerminalConsole::compose() {
         const Line& line = m_lines[static_cast<size_t>(first + i)];
         const int row = kOutputRows - shown + i;
         for (int col = 0; col < TerminalScreen::kCols && col < static_cast<int>(line.text.size()); ++col) {
-            m_screen.at(col, row) = {line.text[static_cast<size_t>(col)], line.color};
+            const uint8_t color = col < static_cast<int>(line.colors.size()) ? line.colors[static_cast<size_t>(col)] : line.color;
+            m_screen.at(col, row) = {line.text[static_cast<size_t>(col)], color};
         }
     }
 
@@ -410,9 +476,11 @@ void TerminalConsole::compose() {
     const bool usable = m_ready && m_powerOffTimer < 0.0f;
     m_screen.cursorVisible = usable && m_commandMode;
     if (usable && !m_commandMode) {
-        const std::string hint = "PRESS <ENTER> FOR A COMMAND PROMPT";
+        const bool paused = m_streamPaused;
+        const std::string hint = paused ? "-- STREAM PAUSED --   <SPACE> RESUME   <ENTER> PROMPT"
+                                        : "PRESS <ENTER> FOR A COMMAND PROMPT, <SPACE> TO PAUSE";
         for (int col = 0; col < static_cast<int>(hint.size()); ++col) {
-            m_screen.at(col, promptRow) = {hint[static_cast<size_t>(col)], TerminalScreen::Dim};
+            m_screen.at(col, promptRow) = {hint[static_cast<size_t>(col)], paused ? TerminalScreen::Bright : TerminalScreen::Dim};
         }
     }
     if (m_screen.cursorVisible) {
@@ -459,13 +527,21 @@ void TerminalConsole::cmdClear(const Args&, const TerminalContext&) {
 void TerminalConsole::cmdDiag(const Args&, const TerminalContext& ctx) {
     print("RUNNING DIAGNOSTICS...", TerminalScreen::Bright);
     for (int i = 0; i < 10; ++i) print(termtext::systemLine(m_rng, termtext::StreamMode::Diag, m_uptime, ctx.level), 0, 0.0f, 0.12f);
-    print("DIAGNOSTICS COMPLETE: 1 OCCUPANT UNACCOUNTED FOR.", TerminalScreen::Bright, 50.0f, 0.4f);
+    // The building's sensors count what is still in here, besides the player.
+    if (ctx.entities > 0) {
+        char line[64];
+        std::snprintf(line, sizeof(line), "DIAGNOSTICS COMPLETE: %d OCCUPANT%s UNACCOUNTED FOR.", ctx.entities, ctx.entities == 1 ? "" : "S");
+        print(line, TerminalScreen::Bright, 50.0f, 0.4f);
+    } else {
+        print("DIAGNOSTICS COMPLETE.", TerminalScreen::Bright, 0.0f, 0.4f);
+    }
 }
 
 void TerminalConsole::cmdStream(const Args&, const TerminalContext&) {
     m_commandMode = false;
+    m_streamPaused = false;
     m_streamTimer = 0.6f;
-    print(std::string("RESUMING LIVE LOG (") + termtext::modeName(m_mode) + "). PRESS <ENTER> FOR THE PROMPT.", TerminalScreen::Dim);
+    print(std::string("RESUMING LIVE LOG (") + termtext::modeName(m_mode) + "). <SPACE> PAUSES IT.", TerminalScreen::Dim);
 }
 
 void TerminalConsole::cmdMode(const Args& args, const TerminalContext&) {
@@ -485,7 +561,13 @@ void TerminalConsole::cmdStatus(const Args&, const TerminalContext& ctx) {
     std::snprintf(line, sizeof(line), "LOG SOURCE: %s", termtext::modeName(m_mode));
     print(line);
     print("POWER: MAINS   LIGHTING: DEGRADED   EXITS: 0");
-    print(ctx.stalkerDistance >= 0.0f || ctx.wandererDistance >= 0.0f ? "OCCUPANTS: 1 (+2 UNREGISTERED)" : "OCCUPANTS: 1 (+1 UNREGISTERED)");
+    // The player - and whatever else is still in here.
+    if (ctx.entities > 0) {
+        std::snprintf(line, sizeof(line), "OCCUPANTS: 1 (+%d UNREGISTERED)", ctx.entities);
+        print(line);
+    } else {
+        print("OCCUPANTS: 1");
+    }
 }
 
 void TerminalConsole::cmdWhoami(const Args&, const TerminalContext&) {
@@ -496,8 +578,12 @@ void TerminalConsole::cmdWhoami(const Args&, const TerminalContext&) {
     }
 }
 
-void TerminalConsole::cmdPing(const Args& args, const TerminalContext&) {
+void TerminalConsole::cmdPing(const Args& args, const TerminalContext& ctx) {
     const std::string host = args.empty() ? "10.0.0.1" : toUpper(args[0]);
+    if (ctx.puzzle && !args.empty() && args[0] == ctx.puzzle->secrets().ipAddress) {
+        pingTarget(host, ctx);
+        return;
+    }
     print("PINGING " + host + " WITH 32 BYTES OF DATA:");
     for (int i = 0; i < 4; ++i) {
         char line[80];
@@ -509,6 +595,27 @@ void TerminalConsole::cmdPing(const Args& args, const TerminalContext&) {
         else std::snprintf(line, sizeof(line), "REPLY FROM %s: BYTES=32 TIME=%dMS TTL=64", host.c_str(), m_rng.rangeInt(1, 900));
         print(line, TerminalScreen::Normal, 0.0f, 0.6f);
     }
+}
+
+void TerminalConsole::pingTarget(const std::string& host, const TerminalContext& ctx) {
+    print("PINGING " + host + " WITH 32 BYTES OF DATA:");
+    if (!ctx.puzzle->reached(PuzzleStage::NumberDialed)) {
+        // Nothing lives at that address. Not yet.
+        for (int i = 0; i < 4; ++i) print("REQUEST TIMED OUT.", TerminalScreen::Normal, 0.0f, 0.9f);
+        print("PING: TRANSMIT FAILED. GENERAL FAILURE.", TerminalScreen::Dim, 0.0f, 0.3f);
+        return;
+    }
+    char line[80];
+    for (int i = 0; i < 4; ++i) {
+        std::snprintf(line, sizeof(line), "REPLY FROM %s: BYTES=32 TIME=%dMS TTL=13", host.c_str(), m_rng.rangeInt(400, 1300));
+        print(line, TerminalScreen::Normal, 0.0f, 0.6f);
+    }
+    print("4 PACKETS SENT, 4 RECEIVED, 0% LOSS.", TerminalScreen::Dim, 0.0f, 0.3f);
+    print("DATA RETURNED FROM " + host + ":", TerminalScreen::Bright, 0.0f, 0.8f);
+    const ChunkCoord from = ChunkCoord::fromWorld(ctx.playerFeet.x, ctx.playerFeet.z, ctx.level);
+    // Out here, in the "real world", the maps are... here.
+    printAnomaly(ctx.office ? "maps are here: +0;(+0,+0)" : ctx.puzzle->payloadFrom(from), 1.0f);
+    if (!ctx.office) m_puzzleEvents.push_back({PuzzleEvent::Kind::Pinged, from});
 }
 
 void TerminalConsole::cmdMap(const Args&, const TerminalContext& ctx) {
@@ -540,6 +647,12 @@ void TerminalConsole::cmdMap(const Args&, const TerminalContext& ctx) {
         const glm::ivec2 toCorner = up - right; // each component is +-1
         return cellAt(cx, cy) + (toCorner + glm::ivec2(1)) / 2;
     };
+    // The glitch room, if this terminal stands in its chunk: drawn blinking.
+    const auto& exitCell = w.exitCell();
+    const bool showExit = !ctx.office && exitCell && w.exitChunk() && exitCell->z == ctx.level &&
+                          *w.exitChunk() == ChunkCoord::fromWorld(ctx.playerFeet.x, ctx.playerFeet.z, ctx.level);
+    auto isExit = [&](int cx, int cy) { return showExit && cellAt(cx, cy) == glm::ivec2(exitCell->x, exitCell->y); };
+    bool exitDrawn = false;
     auto edgeChar = [](world::EdgeType t, bool horizontal) {
         switch (t) {
         case world::EdgeType::Wall:    return horizontal ? '-' : '|';
@@ -554,31 +667,54 @@ void TerminalConsole::cmdMap(const Args&, const TerminalContext& ctx) {
     print(title, TerminalScreen::Bright);
     // Three characters per cell: a corner and two edge characters on the
     // edge rows, a wall and a centred marker on the cell rows.
-    auto edgeRow = [&](int cy) { // the edges along the top of map row cy
+    const uint8_t normal = TerminalScreen::Normal, beacon = TerminalScreen::Beacon;
+    auto edgeRow = [&](int cy, std::vector<uint8_t>& colors) { // the edges along the top of map row cy
         std::string row = "      ";
+        colors.assign(row.size(), normal);
         for (int cx = -R; cx <= R + 1; ++cx) {
             const glm::ivec2 v = cornerOf(cx, cy);
             row += w.vertexHasWall(ctx.level, v.x, v.y) ? '+' : ' ';
-            if (cx <= R) row += std::string(2, edgeChar(edgeBetween(cellAt(cx, cy), cellAt(cx, cy + 1)), true));
+            colors.push_back(isExit(cx - 1, cy) || isExit(cx, cy) || isExit(cx - 1, cy + 1) || isExit(cx, cy + 1) ? beacon : normal);
+            if (cx <= R) {
+                row += std::string(2, edgeChar(edgeBetween(cellAt(cx, cy), cellAt(cx, cy + 1)), true));
+                const uint8_t c = isExit(cx, cy) || isExit(cx, cy + 1) ? beacon : normal;
+                colors.insert(colors.end(), 2, c);
+            }
         }
         return row;
     };
+    std::vector<uint8_t> colors;
     for (int cy = R; cy >= -R; --cy) {
-        print(edgeRow(cy), TerminalScreen::Normal, 0.0f, 0.03f);
+        const std::string top = edgeRow(cy, colors);
+        printColored(top, colors, 0.03f);
         std::string row = "      ";
+        colors.assign(row.size(), normal);
         for (int cx = -R; cx <= R + 1; ++cx) {
             row += edgeChar(edgeBetween(cellAt(cx - 1, cy), cellAt(cx, cy)), false);
+            colors.push_back(isExit(cx - 1, cy) || isExit(cx, cy) ? beacon : normal);
             if (cx > R) break;
             const glm::ivec2 c = cellAt(cx, cy);
             const world::CellRole role = w.cellRole(ctx.level, c.x, c.y);
+            if (isExit(cx, cy)) {
+                row += "##";
+                colors.insert(colors.end(), 2, beacon);
+                exitDrawn = true;
+                continue;
+            }
             row += (cx == 0 && cy == 0) ? '@' : role == world::CellRole::StairsLower ? '^'
                                               : role == world::CellRole::StairsUpper ? 'v' : ' ';
             row += ' ';
+            colors.insert(colors.end(), 2, normal);
         }
-        print(row, TerminalScreen::Normal, 0.0f, 0.03f);
+        printColored(row, colors, 0.03f);
     }
-    print(edgeRow(-R - 1), TerminalScreen::Normal, 0.0f, 0.03f);
+    const std::string bottom = edgeRow(-R - 1, colors);
+    printColored(bottom, colors, 0.03f);
     print("@ YOU   ^ STAIRS UP   v STAIRS DOWN   = : DOORS   . ARCHES", TerminalScreen::Dim);
+    if (exitDrawn) {
+        print("## ROOM NOT IN FLOOR PLAN. GEOMETRY UNSTABLE.", beacon);
+        m_puzzleEvents.push_back({PuzzleEvent::Kind::ExitMapped, ChunkCoord::fromWorld(ctx.playerFeet.x, ctx.playerFeet.z, ctx.level)});
+    }
 }
 
 void TerminalConsole::cmdEcho(const Args& args, const TerminalContext&) {
@@ -590,6 +726,7 @@ void TerminalConsole::cmdEcho(const Args& args, const TerminalContext&) {
 
 void TerminalConsole::cmdReboot(const Args&, const TerminalContext&) {
     m_commandMode = false; // it boots to the live log
+    m_streamPaused = false;
     m_lines.clear();
     m_queue.clear();
     m_typingLine = false;

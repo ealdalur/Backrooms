@@ -7,6 +7,7 @@
 
 #include "Math/Noise.h"
 #include "Math/Random.h"
+#include "Render/AtlasLayout.h"
 #include "Render/BitmapFont.h"
 
 #include <SDL3/SDL_video.h>
@@ -52,7 +53,7 @@ struct Canvas {
 
     explicit Canvas(int n) : size(n), albedo(static_cast<size_t>(n) * n * 4), surface(static_cast<size_t>(n) * n * 4) {}
 
-    void put(int x, int y, const glm::vec3& color, float height, float spec, float emissive) {
+    void put(int x, int y, const glm::vec3& color, float height, float spec, float emissive, float opacity = 1.0f) {
         const size_t i = (static_cast<size_t>(y) * size + x) * 4;
         albedo[i + 0] = static_cast<uint8_t>(sat(color.r) * 255.0f + 0.5f);
         albedo[i + 1] = static_cast<uint8_t>(sat(color.g) * 255.0f + 0.5f);
@@ -61,7 +62,7 @@ struct Canvas {
         surface[i + 0] = static_cast<uint8_t>(sat(height) * 255.0f + 0.5f);
         surface[i + 1] = static_cast<uint8_t>(sat(spec) * 255.0f + 0.5f);
         surface[i + 2] = static_cast<uint8_t>(sat(emissive) * 255.0f + 0.5f);
-        surface[i + 3] = 255;
+        surface[i + 3] = static_cast<uint8_t>(sat(opacity) * 255.0f + 0.5f);
     }
 };
 
@@ -656,6 +657,340 @@ void generateTeslaLabels(Canvas& c) {
     });
 }
 
+// ----- Writing ---------------------------------------------------------------------------
+// Distance fields of every glyph of the built-in font (see Render/AtlasLayout.h):
+// the pen strokes of a hand that joins the font's pixels (a little unsteadily),
+// the drips that run down from the strokes' lower ends, and the crisp pixel
+// squares themselves. Stored in the surface layer; the albedo is unused.
+void generateWriting(Canvas& c) {
+    struct Seg {
+        glm::vec2 a, b;
+    };
+    auto segDistance = [](const glm::vec2& p, const Seg& s) {
+        const glm::vec2 ab = s.b - s.a;
+        const float len2 = glm::dot(ab, ab);
+        const float t = len2 > 1e-6f ? sat(glm::dot(p - s.a, ab) / len2) : 0.0f;
+        return glm::length(p - (s.a + ab * t));
+    };
+    const int count = atlas::kGlyphCols * atlas::kGlyphRows;
+    std::vector<std::vector<Seg>> strokes(static_cast<size_t>(count)), drips(static_cast<size_t>(count));
+    std::vector<std::vector<glm::vec2>> squares(static_cast<size_t>(count)); // lower-left corners of lit pixels
+    for (int i = 0; i < count; ++i) {
+        const uint8_t* rows = font::glyph(static_cast<char>(32 + i));
+        if (!rows || 32 + i == ' ') continue;
+        auto lit = [rows](int col, int row) {
+            return col >= 0 && col < font::kGlyphW && row >= 0 && row < font::kGlyphH && (rows[row] & (0x10 >> col)) != 0;
+        };
+        // Pixel centre (cell space, y up), nudged as an unsteady hand would place it.
+        auto point = [i](int col, int row) {
+            const uint32_t h = rnd::hash2i(i * 8 + col, row, 0x3A17u);
+            return glm::vec2(atlas::kGlyphX + static_cast<float>(col) + 0.5f + (unit8(h, 0) - 0.5f) * 0.28f,
+                             atlas::kBaseY + static_cast<float>(font::kGlyphH - row) - 0.5f + (unit8(h, 8) - 0.5f) * 0.28f);
+        };
+        std::vector<Seg>& s = strokes[static_cast<size_t>(i)];
+        for (int row = 0; row < font::kGlyphH; ++row) {
+            for (int col = 0; col < font::kGlyphW; ++col) {
+                if (!lit(col, row)) continue;
+                squares[static_cast<size_t>(i)].emplace_back(atlas::kGlyphX + static_cast<float>(col),
+                                                             atlas::kBaseY + static_cast<float>(font::kGlyphH - 1 - row));
+                const glm::vec2 p = point(col, row);
+                bool joined = false;
+                if (lit(col + 1, row)) { s.push_back({p, point(col + 1, row)}); joined = true; }
+                if (lit(col, row + 1)) { s.push_back({p, point(col, row + 1)}); joined = true; }
+                // Diagonals only where no orthogonal neighbour already turns the corner.
+                if (lit(col + 1, row + 1) && !lit(col + 1, row) && !lit(col, row + 1)) { s.push_back({p, point(col + 1, row + 1)}); joined = true; }
+                if (lit(col - 1, row + 1) && !lit(col - 1, row) && !lit(col, row + 1)) { s.push_back({p, point(col - 1, row + 1)}); joined = true; }
+                const bool fromAbove = lit(col, row - 1) || lit(col - 1, row - 1) || lit(col + 1, row - 1) || lit(col - 1, row);
+                if (!joined && !fromAbove) s.push_back({p, p}); // a lone dot
+                // The lower ends of strokes drip (when the ink is wet enough).
+                const uint32_t h = rnd::hash2i(i * 8 + col, row, 0xD819u);
+                if (!lit(col, row + 1) && unit8(h, 0) < 0.45f) {
+                    const float len = 0.8f + 4.2f * unit8(h, 8) * unit8(h, 16);
+                    drips[static_cast<size_t>(i)].push_back({p, p - glm::vec2(0.0f, std::min(len, p.y - 0.35f))});
+                }
+            }
+        }
+    }
+    forEachTexel(c, [&](int x, int y, float u, float v) {
+        const int col = std::min(atlas::kGlyphCols - 1, static_cast<int>(u * atlas::kGlyphCols));
+        const int row = std::min(atlas::kGlyphRows - 1, static_cast<int>(v * atlas::kGlyphRows));
+        const size_t i = static_cast<size_t>(row * atlas::kGlyphCols + col);
+        const glm::vec2 p((u * atlas::kGlyphCols - static_cast<float>(col)) * atlas::kCellW,
+                          (v * atlas::kGlyphRows - static_cast<float>(row)) * atlas::kCellH);
+        float hand = atlas::kMaxDistance, drip = atlas::kMaxDistance, print = atlas::kMaxDistance;
+        for (const Seg& s : strokes[i]) hand = std::min(hand, segDistance(p, s));
+        for (const Seg& s : drips[i]) {
+            // A drip thins as it runs and ends in a bead.
+            const float along = sat((s.a.y - p.y) / std::max(s.a.y - s.b.y, 1e-3f));
+            drip = std::min(drip, segDistance(p, s) + 0.06f * along);
+            drip = std::min(drip, std::max(0.0f, glm::length(p - s.b) - 0.07f));
+        }
+        for (const glm::vec2& q : squares[i]) {
+            const glm::vec2 d = glm::max(glm::max(q - p, p - (q + glm::vec2(1.0f))), glm::vec2(0.0f));
+            print = std::min(print, glm::length(d));
+        }
+        c.put(x, y, glm::vec3(1.0f), hand / atlas::kMaxDistance, drip / atlas::kMaxDistance, print / atlas::kMaxDistance);
+    });
+}
+
+// ----- Glitch ----------------------------------------------------------------------------
+// Digital corruption: nested blocks of saturated colour (four scales), torn
+// scanlines and rows of dead pixels, for the exit room's walls to break into.
+void generateGlitch(Canvas& c) {
+    const glm::vec3 palette[6] = {{1.0f, 0.05f, 0.85f}, {0.05f, 1.0f, 1.0f}, {0.35f, 1.0f, 0.15f},
+                                  {1.0f, 1.0f, 1.0f},   {0.02f, 0.02f, 0.03f}, {0.15f, 0.2f, 1.0f}};
+    forEachTexel(c, [&](int x, int y, float u, float v) {
+        glm::vec3 col(0.05f);
+        float glow = 0.0f;
+        for (int level = 0; level < 4; ++level) {
+            const int cells = 4 << level;
+            const uint32_t h = rnd::hash2i(static_cast<int>(u * cells), static_cast<int>(v * cells), 0x6117u + static_cast<uint32_t>(level));
+            if ((h & 7u) < 3u) {
+                col = palette[(h >> 4) % 6u];
+                glow = ((h >> 8) & 3u) == 0u ? 1.0f : 0.35f;
+            }
+        }
+        // Torn rows: horizontally smeared bands of one colour.
+        const int band = static_cast<int>(v * 128.0f);
+        const uint32_t bh = rnd::hash2i(band, 0, 0x7EA2u);
+        if ((bh & 15u) == 0u) {
+            col = palette[(bh >> 4) % 6u] * (0.6f + 0.4f * unit8(bh, 12));
+            glow = 0.8f;
+        }
+        const float scan = 0.7f + 0.3f * (fract(v * 512.0f) < 0.5f ? 1.0f : 0.0f);
+        const float dead = noise::white(x / 4, y, 0x6D3Au) > 0.985f ? 1.0f : 0.0f;
+        col = glm::mix(col * scan, glm::vec3(1.0f), dead);
+        c.put(x, y, col, 0.5f, 0.6f, std::max(glow * scan, dead));
+    });
+}
+
+// ----- Office paint ---------------------------------------------------------------------
+// Light blue eggshell latex over drywall: the roller's stipple, faint lap marks
+// where the roller was reloaded, and the barest scuffing.
+void generateOfficePaint(Canvas& c) {
+    const glm::vec3 base(0.60f, 0.73f, 0.86f);
+    forEachTexel(c, [&](int x, int y, float u, float v) {
+        const float stipple = noise::fbm(u * 220.0f, v * 220.0f, 220, 220, 2, 0x0FA1u);
+        const float roller = noise::fbm(u * 3.0f, v * 12.0f, 3, 12, 3, 0x0FA2u);
+        const float laps = noise::fbm(u * 2.0f, v * 2.0f, 2, 2, 4, 0x0FA3u);
+        const float scuff = smooth(0.72f, 0.9f, noise::fbm(u * 9.0f, v * 9.0f, 9, 9, 4, 0x0FA4u));
+        glm::vec3 col = base * (1.0f + 0.018f * stipple + 0.015f * roller + 0.02f * laps);
+        col = glm::mix(col, col * glm::vec3(0.88f, 0.88f, 0.9f), scuff * 0.25f);
+        c.put(x, y, col, 0.5f + 0.25f * stipple, 0.45f - 0.15f * scuff, 0.0f);
+    });
+}
+
+// ----- Office carpet ---------------------------------------------------------------------
+// 50 cm grey loop-pile carpet tiles (5 x 5 per repeat), laid quarter-turned
+// so the pile direction alternates; charcoal and blue flecks; dark seams.
+void generateOfficeCarpet(Canvas& c) {
+    const glm::vec3 base(0.37f, 0.38f, 0.40f);
+    forEachTexel(c, [&](int x, int y, float u, float v) {
+        const float tu = u * 5.0f, tv = v * 5.0f;
+        const int ti = static_cast<int>(tu), tj = static_cast<int>(tv);
+        const float fu = fract(tu), fv = fract(tv);
+        const bool turned = ((ti + tj) & 1) != 0;
+        // Loop rows run along the tile's pile direction.
+        const float across = turned ? fu : fv;
+        const float rows = std::sin(across * 3.14159265f * 90.0f);
+        const float loops = noise::fbm((turned ? u : v) * 400.0f, (turned ? v : u) * 40.0f, 400, 40, 2, 0x0C41u);
+        const uint32_t fleck = rnd::hash2i(x / 2, y / 2, 0x0C42u);
+        const float tileShade = 0.96f + 0.06f * unit8(rnd::hash2i(ti, tj, 0x0C43u), 0);
+        const float seam = 1.0f - smooth(0.0f, 0.012f, std::min(std::min(fu, 1.0f - fu), std::min(fv, 1.0f - fv)));
+        const float wear = noise::fbm(u * 4.0f, v * 4.0f, 4, 4, 4, 0x0C44u);
+        glm::vec3 col = base * tileShade * (0.9f + 0.06f * rows + 0.08f * loops + 0.04f * wear);
+        if ((fleck & 63u) == 0u) col = glm::vec3(0.15f, 0.15f, 0.17f);
+        else if ((fleck & 255u) == 1u) col = glm::vec3(0.22f, 0.30f, 0.48f);
+        col *= 1.0f - 0.35f * seam;
+        c.put(x, y, col, 0.45f + 0.25f * rows * 0.5f + 0.2f * loops - 0.3f * seam, 0.06f, 0.0f);
+    });
+}
+
+// ----- Office fabric ---------------------------------------------------------------------
+// Cubicle partition cloth: a fine, dingy beige-grey basket weave with faint
+// coffee stains and a fuzz of lint.
+void generateOfficeFabric(Canvas& c) {
+    const float threads = 220.0f;
+    forEachTexel(c, [&](int x, int y, float u, float v) {
+        const float tu = u * threads, tv = v * threads;
+        const int cu = static_cast<int>(std::floor(tu / 2.0f)), cv = static_cast<int>(std::floor(tv / 2.0f));
+        const bool warpOver = ((cu + cv) & 1) == 0; // basket weave: pairs of threads
+        const float profile = std::sin(3.14159265f * fract(warpOver ? tu : tv));
+        const float heather = noise::white(warpOver ? static_cast<int>(tu) : 0, warpOver ? 0 : static_cast<int>(tv), 0x0FAB1u) - 0.5f;
+        const float lint = noise::fbm(u * 300.0f, v * 300.0f, 300, 300, 2, 0x0FAB2u);
+        const float stain = smooth(0.62f, 0.8f, noise::fbm(u * 3.0f, v * 3.0f, 3, 3, 4, 0x0FAB3u));
+        glm::vec3 col = glm::vec3(0.55f, 0.52f, 0.46f) * (0.84f + 0.16f * profile) * (1.0f + 0.07f * heather + 0.04f * lint);
+        col = glm::mix(col, col * glm::vec3(0.8f, 0.72f, 0.6f), stain * 0.4f);
+        c.put(x, y, col, 0.3f + 0.6f * profile + 0.1f * lint, 0.08f, 0.0f);
+    });
+}
+
+// ----- Signage ----------------------------------------------------------------------------
+// Backings for the office's posters, notices, whiteboards and signs (see
+// Render/AtlasLayout.h for the cells). The words go on top as glyph quads.
+void generateSignage(Canvas& c) {
+    forEachTexel(c, [&](int x, int y, float u, float v) {
+        const int ci = std::min(3, static_cast<int>(u * 4.0f)), cj = std::min(3, static_cast<int>(v * 4.0f));
+        const float cu = u * 4.0f - static_cast<float>(ci), cv = v * 4.0f - static_cast<float>(cj);
+        const auto sign = static_cast<atlas::Sign>((3 - cj) * 4 + ci);
+        const float grain = 0.97f + 0.03f * noise::white(x, y, 0x5160Au);
+        const float edge = std::min(std::min(cu, 1.0f - cu), std::min(cv, 1.0f - cv));
+        const float fibre = noise::fbm(u * 160.0f, v * 160.0f, 160, 160, 2, 0x5160Bu);
+        glm::vec3 col(0.9f);
+        float spec = 0.2f, emissive = 0.0f;
+        // A photograph-like landscape: sky gradient over layered ridges.
+        auto landscape = [&](float pu, float pv, bool sea) {
+            if (sea) {
+                const glm::vec3 sky = glm::mix(glm::vec3(0.55f, 0.75f, 0.95f), glm::vec3(0.15f, 0.35f, 0.75f), pv);
+                const float wave = 0.42f + 0.12f * std::sin(pu * 7.0f + 1.3f) * smooth(0.0f, 0.8f, pu) +
+                                   0.05f * noise::fbm(pu * 6.0f, 0.0f, 6, 1, 3, 0x5EA1u);
+                if (pv < wave) {
+                    const float foam = smooth(wave - 0.04f, wave, pv);
+                    return glm::mix(glm::vec3(0.05f, 0.25f, 0.42f) * (0.8f + 0.4f * pv), glm::vec3(0.92f), foam);
+                }
+                return sky;
+            }
+            glm::vec3 col = glm::mix(glm::vec3(1.0f, 0.62f, 0.25f), glm::vec3(0.35f, 0.18f, 0.45f), sat(pv * 1.2f));
+            col += glm::vec3(1.0f, 0.85f, 0.5f) * gauss(glm::length(glm::vec2(pu - 0.62f, pv - 0.38f)), 0.0f, 0.09f);
+            for (int k = 0; k < 3; ++k) {
+                const float ridge = 0.25f + 0.1f * static_cast<float>(2 - k) +
+                                    0.14f * noise::fbm(pu * (3.0f + k), static_cast<float>(k), 64, 64, 4, 0x3015u + static_cast<uint32_t>(k));
+                if (pv < ridge) col = glm::mix(glm::vec3(0.08f, 0.06f, 0.12f), glm::vec3(0.3f, 0.18f, 0.3f), 0.6f - 0.25f * static_cast<float>(k));
+            }
+            return col;
+        };
+        switch (sign) {
+        case atlas::Sign::Paper:
+            col = glm::vec3(0.93f, 0.93f, 0.91f) * (0.98f + 0.02f * fibre);
+            if (std::fabs(edge - 0.05f) < 0.006f) col = glm::vec3(0.25f);
+            break;
+        case atlas::Sign::SafetyYellow:
+            col = glm::vec3(0.96f, 0.80f, 0.12f);
+            if (cv > 0.74f && cv < 0.94f) col = glm::vec3(0.05f);
+            if (edge < 0.04f) col = glm::vec3(0.05f);
+            break;
+        case atlas::Sign::PosterMountain:
+        case atlas::Sign::PosterSea: {
+            col = glm::vec3(0.03f);
+            const float pu = (cu - 0.08f) / 0.84f, pv = (cv - 0.30f) / 0.62f;
+            if (pu > 0.0f && pu < 1.0f && pv > 0.0f && pv < 1.0f) col = landscape(pu, pv, sign == atlas::Sign::PosterSea);
+            else if (edge > 0.03f && std::fabs(cv - 0.27f) > 0.012f) col = glm::vec3(0.02f); // the caption band
+            spec = 0.5f;
+            break;
+        }
+        case atlas::Sign::Whiteboard: {
+            const float ghost = smooth(0.55f, 0.75f, noise::fbm(u * 14.0f, v * 6.0f, 14, 6, 4, 0x3B0Au));
+            col = glm::mix(glm::vec3(0.94f, 0.95f, 0.96f), glm::vec3(0.78f, 0.80f, 0.86f), ghost * 0.35f);
+            spec = 0.9f;
+            break;
+        }
+        case atlas::Sign::PlacardDark:
+            col = glm::vec3(0.12f, 0.12f, 0.13f) * (0.95f + 0.08f * noise::fbm(u * 2.0f, v * 200.0f, 2, 200, 2, 0x91Au));
+            if (std::fabs(edge - 0.06f) < 0.008f) col = glm::vec3(0.55f);
+            spec = 0.5f;
+            break;
+        case atlas::Sign::PlacardBlue:
+            col = glm::mix(glm::vec3(0.10f, 0.22f, 0.50f), glm::vec3(0.06f, 0.14f, 0.36f), cv);
+            if (std::fabs(edge - 0.06f) < 0.008f) col = glm::vec3(0.85f);
+            spec = 0.45f;
+            break;
+        case atlas::Sign::ExitFace:
+            col = glm::vec3(0.05f, 0.05f, 0.055f);
+            if (edge < 0.05f) col = glm::vec3(0.85f, 0.85f, 0.82f); // white housing rim
+            spec = 0.5f;
+            break;
+        case atlas::Sign::StickyNote:
+            col = glm::vec3(0.98f, 0.90f, 0.38f) * (0.92f + 0.08f * cv) * (0.98f + 0.02f * fibre);
+            break;
+        case atlas::Sign::PosterBlue:
+            col = glm::mix(glm::vec3(0.05f, 0.12f, 0.35f), glm::vec3(0.25f, 0.55f, 0.85f), cv);
+            col += glm::vec3(0.3f, 0.35f, 0.4f) * gauss(cu - cv * 0.5f, 0.3f, 0.05f); // a lens flare streak
+            if (edge < 0.06f) col = glm::vec3(0.03f);
+            spec = 0.5f;
+            break;
+        case atlas::Sign::Brass:
+            col = glm::vec3(0.72f, 0.56f, 0.26f) * (0.9f + 0.12f * noise::fbm(u * 2.0f, v * 300.0f, 2, 300, 2, 0xB4A5u));
+            spec = 0.85f;
+            break;
+        case atlas::Sign::Chart: {
+            col = glm::vec3(0.95f, 0.95f, 0.93f);
+            if (fract(cu * 12.0f) < 0.05f || fract(cv * 12.0f) < 0.05f) col = glm::vec3(0.75f, 0.82f, 0.9f);
+            const int bar = static_cast<int>(cu * 6.0f);
+            const float top = 0.15f + 0.13f * static_cast<float>(bar);
+            if (fract(cu * 6.0f) > 0.2f && fract(cu * 6.0f) < 0.8f && cv > 0.1f && cv < top && bar < 6) {
+                col = glm::vec3(0.15f, 0.45f, 0.25f);
+            }
+            break;
+        }
+        default:
+            col = glm::vec3(0.5f);
+            break;
+        }
+        c.put(x, y, col * grain, 0.5f, spec, emissive);
+    });
+}
+
+// ----- Foliage -------------------------------------------------------------------------------
+// Left half: a glossy ficus leaf (u across, v from stem to tip); right half: a
+// fern frond with alternating leaflets. The surface alpha is the outline.
+void generateFoliage(Canvas& c) {
+    forEachTexel(c, [&](int x, int y, float u, float v) {
+        const bool fern = u >= 0.5f;
+        const float lx = (fern ? u - 0.75f : u - 0.25f) * 4.0f; // -1..1 across the half
+        const float ly = v;
+        const float vein = noise::fbm(u * 40.0f, v * 40.0f, 40, 40, 3, 0xF011u);
+        float opacity = 0.0f;
+        glm::vec3 col;
+        if (!fern) {
+            // Elliptic, drawn out to a pointed tip.
+            const float width = 0.92f * std::pow(std::sin(3.14159265f * sat(ly * 0.96f + 0.02f)), 0.75f) * (1.0f - 0.35f * ly);
+            const float d = std::fabs(lx) - width;
+            opacity = 1.0f - smooth(-0.04f, 0.0f, d);
+            const float midrib = gauss(lx, 0.0f, 0.035f);
+            const float side = gauss(fract((ly - std::fabs(lx) * 0.45f) * 9.0f), 0.5f, 0.06f) * (1.0f - midrib);
+            col = glm::mix(glm::vec3(0.10f, 0.26f, 0.07f), glm::vec3(0.18f, 0.36f, 0.10f), vein * 0.5f + 0.5f * ly);
+            col = glm::mix(col, glm::vec3(0.40f, 0.55f, 0.25f), midrib * 0.8f + side * 0.25f);
+            c.put(x, y, col, 0.5f + 0.2f * midrib, 0.75f, 0.0f, opacity);
+            return;
+        }
+        // Fern: a rachis and paired leaflets angled towards the tip.
+        const float rachis = 1.0f - smooth(0.025f, 0.045f, std::fabs(lx));
+        const float reach = 0.9f * std::pow(sat(1.0f - ly), 0.6f) * smooth(0.0f, 0.12f, ly);
+        const float ax = std::fabs(lx);
+        const float slot = (ly - ax * 0.35f) * 22.0f;
+        const float k = fract(slot);
+        const float lobe = 0.5f - std::fabs(k - 0.5f);
+        const float leaflet = (ax < reach && ly > 0.05f) ? smooth(0.05f, 0.18f, lobe * (1.0f - ax / std::max(reach, 1e-3f) * 0.6f)) : 0.0f;
+        opacity = std::max(rachis * (ly < 0.98f ? 1.0f : 0.0f), leaflet);
+        col = glm::mix(glm::vec3(0.16f, 0.36f, 0.09f), glm::vec3(0.30f, 0.50f, 0.14f), vein * 0.6f + 0.4f * ax);
+        col = glm::mix(col, glm::vec3(0.28f, 0.34f, 0.12f), rachis * 0.7f);
+        c.put(x, y, col, 0.5f, 0.35f, 0.0f, opacity);
+    });
+}
+
+// ----- Office paper --------------------------------------------------------------------------
+// Bright copier paper: fine fibres; on the sides of a stack, the faint lines of the sheets.
+void generateOfficePaper(Canvas& c) {
+    forEachTexel(c, [&](int x, int y, float u, float v) {
+        const float fibre = noise::fbm(u * 200.0f, v * 200.0f, 200, 200, 2, 0x9A9Eu);
+        const float sheets = 0.97f + 0.03f * std::sin(v * 3.14159265f * 600.0f);
+        const glm::vec3 col = glm::vec3(0.93f, 0.93f, 0.91f) * (0.98f + 0.02f * fibre) * sheets;
+        c.put(x, y, col, 0.5f + 0.1f * fibre, 0.15f, 0.0f);
+    });
+}
+
+// ----- Water bottle ----------------------------------------------------------------------------
+// The water cooler's polycarbonate bottle: clear blue, brightened where light
+// would pass through the water, with moulded ribs.
+void generateWaterBottle(Canvas& c) {
+    forEachTexel(c, [&](int x, int y, float u, float v) {
+        const float ribs = 0.5f + 0.5f * std::sin(v * 3.14159265f * 24.0f);
+        const float caustic = noise::fbm(u * 6.0f, v * 6.0f, 6, 6, 4, 0xB077u);
+        const glm::vec3 col = glm::mix(glm::vec3(0.30f, 0.52f, 0.80f), glm::vec3(0.55f, 0.75f, 0.95f), 0.4f * caustic + 0.2f * ribs);
+        c.put(x, y, col, 0.4f + 0.3f * ribs, 0.95f, 0.0f);
+    });
+}
+
 } // namespace
 
 bool MaterialLibrary::build(int size) {
@@ -668,7 +1003,9 @@ bool MaterialLibrary::build(int size) {
         generateMetal,     generateLightPanel, generatePlastic, generateFabric,
         generateConcrete,  generateBeigePlastic, generateCrtScreen, generateFlesh,
         generateStairSign, generatePhoneKeys, generateCopper, generateAluminum,
-        generateManila,    generateTeslaLabels,
+        generateManila,    generateTeslaLabels, generateWriting, generateGlitch,
+        generateOfficePaint, generateOfficeCarpet, generateOfficeFabric, generateSignage,
+        generateFoliage,   generateOfficePaper, generateWaterBottle,
     };
 
     // Synthesise every layer concurrently: each generator is independent and

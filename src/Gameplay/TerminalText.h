@@ -44,4 +44,11 @@ std::string reply(rnd::Rng& rng, const std::string& lowercaseInput);
 /// True if the input reads like talking to someone rather than a command.
 bool isConversational(const std::string& lowercaseInput);
 
+/// The hex dump line at `address` (four hex digits) whose 16 bytes spell
+/// `ascii` (padded with NULs), formatted like every other HEX line.
+std::string memoryLine(const std::string& address, const std::string& ascii);
+
+/// The voice, once it has overwritten the memory, nudging the player towards it.
+std::string memoryHint(rnd::Rng& rng, const std::string& address);
+
 } // namespace termtext

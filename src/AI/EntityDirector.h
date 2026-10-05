@@ -76,6 +76,8 @@ public:
     std::optional<EntityKind> takeVaporised();
     /// Whether an entity has been destroyed for good.
     bool gone(EntityKind kind) const { return kind == EntityKind::Stalker ? m_stalkerGone : m_wandererGone; }
+    /// Entities still in the game - wherever they are, appeared yet or not - until vaporised (or switched off).
+    int entitiesRemaining() const { return (m_stalkerEnabled ? 1 : 0) + (m_wandererEnabled ? 1 : 0); }
 
     /// Disables / enables the anomalies entirely, or just one of them (a destroyed one stays gone).
     void setEnabled(bool enabled);

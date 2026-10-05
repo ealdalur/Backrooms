@@ -27,8 +27,9 @@ struct TerminalScreen {
     static constexpr int kCols = 64;
     static constexpr int kRows = 24;
 
-    /// Palette entries; the phosphor colour tints all but Alert / Anomaly.
-    enum Color : uint8_t { Normal = 0, Dim, Bright, Alert, Anomaly, Input };
+    /// Palette entries; the phosphor colour tints all but Alert / Anomaly / Beacon.
+    /// Beacon blinks (magenta, unlike anything else on the tube): the MAP's exit room.
+    enum Color : uint8_t { Normal = 0, Dim, Bright, Alert, Anomaly, Input, Beacon };
 
     struct Cell {
         char    ch = ' ';
