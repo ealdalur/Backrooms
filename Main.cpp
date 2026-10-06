@@ -3,85 +3,21 @@
 // Application entry point for the Backrooms infinite labyrinth simulator.
 //
 // Usage:
-//   Backrooms [seed] [--seed <n>] [--level <n>] [--no-entities] [--dump-sounds <dir>]
-//             [--demo <scene> [--type <text>]] [--screenshot <file.bmp> [--delay <seconds>]]
-//             [--size <width>x<height>] [--puzzle <stage>] [--no-title] [--verbose]
+//   Backrooms [seed] [options]
 //
-//   seed          World seed (decimal or 0x-prefixed hex). Same seed -> same world.
-//   --level       Storey to start on (0 = the classic floor; negative = below).
-//   --demo        Developer scene: stairs, stairs-top, stairs-sign (a closed
-//                 entrance and its sign; --type upper for the storey above),
-//                 climb / descend (scripted walk up / down the nearest
-//                 stairwell), stalker, ambush (it creeps up from
-//                 behind, then the view whips round), caught (...and it never
-//                 does), wanderer, terminal, doom (sits down and plays the
-//                 hidden terminal game), phone (picks up the nearest desk
-//                 phone; --type <digits> dials them), explore (a long scripted walk with
-//                 the Stalker off; --type <n> picks the route), idle (just
-//                 logs entity activity), cabinet (searches the nearest filing
-//                 cabinet with a Tesla gun part in it; --type take: takes it;
-//                 --type swap-persist: swaps a flat one in, leaves until the
-//                 chunk unloads, comes back and checks), part (walks up to
-//                 the nearest part on a desk or chair),
-//                 assemble (all four parts, put together), tesla /
-//                 tesla-stalker (the assembled gun fired at the Wanderer /
-//                 the Stalker until it is vaporised; --type <percent> sets
-//                 the battery's charge). The way out: clue (in front of the
-//                 nearest phone number on a wall), hexstream (the call already
-//                 made: watches a terminal's HEX log until 7A9F comes up, then
-//                 pauses it; --type ping: and pings the address), exit-map
-//                 (MAP in the exit chunk), glitch (stands in the glitch room;
-//                 --type walk: walks into its wall), office (straight to the
-//                 office), ringer (a nearby phone rings), clue-survey (how
-//                 many rooms of exploring pass between copies of the number,
-//                 over --type <n> routes, and how long a room takes to walk),
-//                 terminal-pause (pauses a terminal's log, leaves, sits down
-//                 again and resumes it: checks the stream comes back).
-//   --type        Text typed into the terminal in the terminal scene (keys
-//                 dialled in the phone scene, "upper" in the stairs-sign
-//                 scene, a route number in explore).
-//   --no-entities Disable the Stalker and the Wanderer.
-//   --dump-sounds Write every procedurally synthesised sound to <dir> as WAV.
-//   --screenshot  Render for a few seconds, save a BMP of the frame and exit
-//                 (handy for automated smoke tests / CI).
-//   --size        Initial window size in logical pixels, e.g. 1280x720.
-//   --puzzle      Start the puzzle chain further along: dialed (the number on
-//                 the wall has been called), memory (7A9F has been seen).
-//   --no-title    Straight into the game, without the title screen.
-//   --verbose     Developer log: also print what gives the game's secrets away
-//                 (the puzzle chain's answers, the parts found...). Without it -
-//                 or a --demo / --puzzle - the terminal keeps them to itself.
+//   Backrooms --help            every option
+//   Backrooms --help demo       the developer scenes, and what --type does in each
+//   Backrooms --help <scene>    one scene
+//   Backrooms --help puzzle     the stages --puzzle can start at
+//
+// The options, the scenes and the stages are all listed in Core/CommandLine.cpp.
 // ---------------------------------------------------------------------------
+#include "Core/CommandLine.h"
 #include "Core/ConsoleLog.h"
 #include "Core/Engine.h"
 #include "Core/GpuSelection.h"
 
 #include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <iostream>
-#include <string>
-
-namespace {
-
-bool parseSeed(const char* text, uint64_t& out) {
-    char* end = nullptr;
-    const unsigned long long value = std::strtoull(text, &end, 0); // base 0: accepts 0x..., decimal
-    if (end == text || *end != '\0') return false;
-    out = static_cast<uint64_t>(value);
-    return true;
-}
-
-void printUsage(const char* exe) {
-    std::cout << "Usage: " << exe << " [seed] [--seed <n>] [--level <n>] [--no-entities] [--dump-sounds <dir>]\n"
-              << "       [--demo <scene> [--type <text>]] [--screenshot <file.bmp> [--delay <seconds>]] [--size <w>x<h>]\n"
-              << "       [--puzzle dialed|memory] [--no-title] [--verbose]\n"
-              << "  demo scenes: stairs, stairs-top, stairs-sign, climb, descend, stalker, ambush, caught, wanderer, terminal, doom, phone,\n"
-              << "               explore, idle, cabinet, part, assemble, tesla, tesla-stalker,\n"
-              << "               clue, hexstream, exit-map, glitch, office, ringer, clue-survey, terminal-pause\n";
-}
-
-} // namespace
 
 int main(int argc, char* argv[]) {
     // Unbuffered log output: nothing is lost if the process dies, even when
@@ -96,53 +32,8 @@ int main(int argc, char* argv[]) {
     con::banner();
 
     EngineOptions options;
-
-    for (int i = 1; i < argc; ++i) {
-        const char* arg = argv[i];
-        if ((std::strcmp(arg, "--seed") == 0) && i + 1 < argc) {
-            if (!parseSeed(argv[++i], options.seed)) {
-                con::line("ENGINE", std::string("Invalid seed: ") + argv[i], con::Level::Error);
-                return 1;
-            }
-        } else if (std::strcmp(arg, "--level") == 0 && i + 1 < argc) {
-            options.startLevel = std::atoi(argv[++i]);
-        } else if (std::strcmp(arg, "--demo") == 0 && i + 1 < argc) {
-            options.demo = argv[++i];
-        } else if (std::strcmp(arg, "--type") == 0 && i + 1 < argc) {
-            options.demoInput = argv[++i];
-        } else if (std::strcmp(arg, "--puzzle") == 0 && i + 1 < argc) {
-            options.puzzleStage = argv[++i];
-        } else if (std::strcmp(arg, "--no-entities") == 0) {
-            options.noEntities = true;
-        } else if (std::strcmp(arg, "--no-title") == 0) {
-            options.noTitle = true;
-        } else if (std::strcmp(arg, "--verbose") == 0) {
-            options.verbose = true;
-        } else if (std::strcmp(arg, "--dump-sounds") == 0 && i + 1 < argc) {
-            options.dumpSoundsDir = argv[++i];
-        } else if (std::strcmp(arg, "--screenshot") == 0 && i + 1 < argc) {
-            options.screenshotPath = argv[++i];
-        } else if (std::strcmp(arg, "--size") == 0 && i + 1 < argc) {
-            char* end = nullptr;
-            const long w = std::strtol(argv[++i], &end, 10);
-            const long h = (end && (*end == 'x' || *end == 'X')) ? std::strtol(end + 1, &end, 10) : 0;
-            if (w < 64 || h < 64 || *end != '\0') {
-                con::line("ENGINE", std::string("Invalid size: ") + argv[i] + " (expected e.g. 1280x720)", con::Level::Error);
-                return 1;
-            }
-            options.windowWidth = static_cast<int>(w);
-            options.windowHeight = static_cast<int>(h);
-        } else if (std::strcmp(arg, "--delay") == 0 && i + 1 < argc) {
-            options.screenshotDelay = static_cast<float>(std::atof(argv[++i]));
-        } else if (std::strcmp(arg, "--help") == 0 || std::strcmp(arg, "-h") == 0) {
-            printUsage(argv[0]);
-            return 0;
-        } else if (!parseSeed(arg, options.seed)) {
-            con::line("ENGINE", std::string("Unknown argument: ") + arg, con::Level::Error);
-            printUsage(argv[0]);
-            return 1;
-        }
-    }
+    int exitCode = 0;
+    if (!parseCommandLine(argc, argv, options, exitCode)) return exitCode;
 
     Engine engine(options);
     if (!engine.init()) {

@@ -292,6 +292,11 @@ void detail(const std::string& text, Level level) {
     write(s, std::string(indent, ' ') + markup(text, s.colour, base) + "\n");
 }
 
+void print(const std::string& text) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    write(g_out, markup(text, g_out.colour, kText));
+}
+
 void keyTable(const char* caption, const KeyHelp* keys, size_t count) {
     std::lock_guard<std::mutex> lock(g_mutex);
     const bool colour = g_out.colour;

@@ -13,22 +13,28 @@ enum : uint32_t { kVendorNvidia = 0x10DE, kVendorAmd = 0x1002, kVendorIntel = 0x
 
 bool contains(const std::string& s, const char* what) { return s.find(what) != std::string::npos; }
 
-/// GL_RENDERER without the bus / instruction-set suffix NVIDIA appends ("/PCIe/SSE2").
+/// GL_RENDERER without the tags NVIDIA's driver appends: the bus and instruction
+/// set on desktops ("/PCIe/SSE2"), "/integrated" on its Tegra SoCs (Jetson:
+/// "NVIDIA Tegra Orin (nvgpu)/integrated") - the kind is reported on its own.
 [[maybe_unused]] std::string tidyRenderer(const char* glRenderer) {
     std::string name = glRenderer ? glRenderer : "unknown GPU";
-    for (const char* suffix : {"/PCIe", "/PCI", "/AGP", "/SSE"}) {
+    for (const char* suffix : {"/PCIe", "/PCI", "/AGP", "/SSE", "/integrated"}) {
         const size_t at = name.find(suffix);
         if (at != std::string::npos) name.erase(at);
     }
     return name;
 }
 
-/// Discrete or integrated, from the name alone (when the OS cannot say).
-[[maybe_unused]] std::string kindFromName(const std::string& name) {
+/// Discrete or integrated, from the untidied GL_RENDERER alone (when the OS cannot say).
+[[maybe_unused]] std::string kindFromName(const char* glRenderer) {
+    const std::string name = glRenderer ? glRenderer : "";
     if (contains(name, "llvmpipe") || contains(name, "softpipe") || contains(name, "SwiftShader") ||
         contains(name, "Basic Render") || contains(name, "GDI Generic")) {
         return "software";
     }
+    // The driver's own word first: NVIDIA's SoC GPUs (Jetson, Drive) are tagged
+    // "/integrated" - and are no less NVIDIA for it.
+    if (contains(name, "/integrated") || contains(name, "Tegra")) return "integrated";
     if (contains(name, "NVIDIA") || contains(name, "GeForce") || contains(name, "Quadro")) return "discrete";
     if (contains(name, "Intel")) {
         // Arc cards carry a model number (A770, B580); the iGPUs are just "Arc(TM) Graphics".
@@ -142,7 +148,7 @@ void preferDiscreteGpu() {
 ActiveGpu describeActiveGpu(const char* glVendor, const char* glRenderer) {
     ActiveGpu gpu;
     gpu.name = tidyRenderer(glRenderer);
-    gpu.kind = kindFromName(gpu.name);
+    gpu.kind = kindFromName(glRenderer);
     const std::vector<Adapter> adapters = hardwareAdapters();
     const uint32_t vendor = vendorFromGlString(glVendor);
     const Adapter* used = nullptr;
@@ -292,7 +298,7 @@ ActiveGpu describeActiveGpu(const char* glVendor, const char* glRenderer) {
     (void)glVendor;
     ActiveGpu gpu;
     gpu.name = tidyRenderer(glRenderer);
-    gpu.kind = kindFromName(gpu.name);
+    gpu.kind = kindFromName(glRenderer);
     gpu.note = g_linuxDecision;
     return gpu;
 }
@@ -309,7 +315,7 @@ void preferDiscreteGpu() {}
 ActiveGpu describeActiveGpu(const char*, const char* glRenderer) {
     ActiveGpu gpu;
     gpu.name = tidyRenderer(glRenderer);
-    gpu.kind = kindFromName(gpu.name);
+    gpu.kind = kindFromName(glRenderer);
     return gpu;
 }
 } // namespace gpu

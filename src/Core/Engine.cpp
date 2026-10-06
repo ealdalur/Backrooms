@@ -250,10 +250,10 @@ bool Engine::init() {
                                    static_cast<unsigned long long>(m_options.seed), m_chunks->chunkCount(), m_player->feetPosition().x,
                                    m_player->feetPosition().z, m_focusLevel));
     static const con::KeyHelp kControls[] = {
-        {"WASD", "move"},       {"Mouse / arrows", "look"}, {"Shift", "run"},     {"Space", "jump"},
+        // (F3, the entity debug readout, is left out: a hidden feature.)
+        {"WASD", "move"},       {"Mouse / arrows", "look"}, {"Shift", "run"},       {"Space", "jump"},
         {"C", "crouch"},        {"E", "use or interact"},   {"LMB / F", "fire it"}, {"Hold RMB + mouse", "strafe"},
-        {"F3", "entity debug"}, {"F11", "fullscreen"},      {"F12", "screenshot"}, {"P", "pause"},
-        {"Esc", "quit"},
+        {"F11", "fullscreen"},  {"F12", "screenshot"},      {"P", "pause"},         {"Esc", "quit"},
     };
     con::keyTable("CONTROLS", kControls, sizeof(kControls) / sizeof(kControls[0]));
     con::section("SESSION");

@@ -44,6 +44,9 @@ void line(const char* tag, const std::string& text, Level level = Level::Info);
 /// A further line of the previous entry, indented under its text.
 void detail(const std::string& text, Level level = Level::Info);
 
+/// Free text (help pages), {marked} values standing out; to stdout.
+void print(const std::string& text);
+
 /// The key guide, as a boxed two-column table.
 void keyTable(const char* caption, const KeyHelp* keys, size_t count);
 

@@ -91,44 +91,20 @@ struct ItemSite;
 struct TerminalContext;
 namespace doom { struct Controls; }
 
-/// Start-up options (parsed from the command line in Main.cpp).
+/// Start-up options (read from the command line by Core/CommandLine).
 struct EngineOptions {
     uint64_t    seed = cfg::kDefaultWorldSeed;
     int         startLevel = 0;          ///< Storey to spawn on.
     std::string screenshotPath;          ///< If set: capture a BMP after a delay, then exit.
     float       screenshotDelay = 3.0f;  ///< Seconds of simulation before the capture.
-    /// Developer scene set up at start: stairs, stairs-top, stairs-sign, climb, descend (--type door:
-    /// the player opens the shut entrance from outside first),
-    /// stalker, ambush, caught, wanderer, terminal, doom (DOOM on the nearest terminal,
-    /// scripted play), phone (picks up the nearest phone), explore (a long scripted walk,
-    /// Stalker off; --type <n> picks the route), idle (only logs entity activity),
-    /// cabinet (searches the nearest cabinet holding a part; --type take: and takes it;
-    /// --type swap-persist: swaps a nearly flat part of the same type in, walks away until
-    /// the chunk unloads, comes back and checks the drawer; --type use-key: presses E to take
-    /// the part, then again to close),
-    /// part (walks up to the nearest part lying on a desk or chair),
-    /// stairs-chase (climbs the nearest stairwell, shutting its doors behind; the Stalker -
-    /// or with --type wanderer the Wanderer - has to follow on foot; --type wanderer-far: out of
-    /// earshot, so only the fallback brings it), stalker-door (the
-    /// Stalker hunts the player from behind a closed door), stalker-stare (the player keeps
-    /// turning to face the Stalker: stared down three times, it bolts far away),
-    /// quit-prompt (P, P, Esc, another key, Esc, a held Esc, Esc: checks the pause screen and the quit prompt),
-    /// assemble (all four parts, put together), tesla / tesla-stalker (the gun,
-    /// fired at the Wanderer / the Stalker; --type <percent> sets the battery).
-    /// Developer scenes for the way out: clue (in front of the nearest phone
-    /// number on a wall), hexstream (the call already made: sits at a terminal
-    /// streaming HEX and reports when 7A9F comes up), exit-map (the nearest
-    /// terminal's chunk becomes the exit; MAP), glitch (the current chunk
-    /// becomes the exit; stands at the glitch room - --type walk: walks into
-    /// its wall), office (straight to the office), ringer (a nearby phone rings),
-    /// clue-survey (rooms of exploring between copies of the number; --type <routes>),
-    /// terminal-pause (SPACE on a terminal's log, ESC, sit down again, SPACE: the stream must come back).
+    /// Developer scene set up at start ("" = none). Every scene, and what
+    /// --type does in each, is listed in Core/CommandLine.cpp (--help demo).
     std::string demo;
-    std::string demoInput;               ///< Typed into the terminal in the "terminal" scene, dialled in "phone" ('h' hangs up, 'M' messages; "upper" in "stairs-sign").
+    std::string demoInput;               ///< --type: tunes the scene (what it types, dials, picks...).
     bool        noEntities = false;      ///< Disable the anomalies.
     bool        noTitle = false;         ///< Straight into the game, without the title (always so in a developer scene).
     bool        verbose = false;         ///< Developer log: also print what gives the game's secrets away.
-    std::string puzzleStage;             ///< Start the puzzle chain this far along: dialed, memory, mapped.
+    std::string puzzleStage;             ///< Start the puzzle chain this far along: dialed, memory.
     int         windowWidth = cfg::kWindowWidth;   ///< Initial window size (logical pixels).
     int         windowHeight = cfg::kWindowHeight;
     std::string dumpSoundsDir;           ///< If set: write every synthesised sound there as WAV.

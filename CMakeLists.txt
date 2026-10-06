@@ -27,6 +27,7 @@ set(BACKROOMS_SOURCES
   src/Audio/StorySounds.cpp
   src/Audio/TeslaSounds.cpp
 
+  src/Core/CommandLine.cpp
   src/Core/ConsoleLog.cpp
   src/Core/Engine.cpp
   src/Core/EnginePuzzle.cpp
@@ -108,6 +109,7 @@ set(BACKROOMS_HEADERS
   src/Audio/TeslaSounds.h
 
   src/Core/Config.h
+  src/Core/CommandLine.h
   src/Core/ConsoleLog.h
   src/Core/Engine.h
   src/Core/GpuSelection.h
