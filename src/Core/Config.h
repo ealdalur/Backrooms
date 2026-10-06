@@ -11,9 +11,15 @@
 namespace cfg {
 
 // ----- Window ---------------------------------------------------------------
-inline constexpr int         kWindowWidth  = 1600;
-inline constexpr int         kWindowHeight = 900;
+inline constexpr int         kWindowWidth  = 1280;
+inline constexpr int         kWindowHeight = 720;
 inline constexpr const char* kWindowTitle  = "Backrooms";
+
+// ----- Title screen ---------------------------------------------------------
+inline constexpr float kTitleHoldTime    = 3.0f;  // Seconds the title is shown (its tubes striking on, then steady)...
+inline constexpr float kTitleFadeTime    = 1.2f;  // ...before it fades away and the game starts
+inline constexpr float kTitleWorldFadeIn = 1.4f;  // The start point fades in from black behind it
+inline constexpr float kTitleDim         = 0.55f; // How blurred and darkened the game is behind it
 
 // ----- World ----------------------------------------------------------------
 inline constexpr uint64_t kDefaultWorldSeed = 0x0B4C'4000'1CEBull; // "Level 0"

@@ -68,6 +68,7 @@ public:
     Terminal* terminalById(uint64_t id);
     /// A loaded phone by id, or nullptr.
     Phone* phoneById(uint64_t id);
+    const Phone* phoneById(uint64_t id) const;
     /// A loaded filing cabinet by id, or nullptr.
     FileCabinet* cabinetById(uint64_t id);
     /// The item site in a drawer of a loaded cabinet, or nullptr if it has none.

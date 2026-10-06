@@ -5,12 +5,11 @@
 
 #include "Actors/Door.h"
 #include "Core/Config.h"
+#include "Core/ConsoleLog.h"
 #include "Render/ShaderSources.h"
 #include "World/ChunkManager.h"
 #include "World/WorldConstants.h"
 #include "World/WorldGenerator.h"
-
-#include <iostream>
 
 namespace {
 // Texture unit assignment for the world shader.
@@ -41,7 +40,7 @@ bool Renderer::init(int width, int height) {
 
     if (!m_worldShader.build(shaders::kWorldVertex, shaders::kWorldFragment, "World")) return false;
     if (!m_materials.build(cfg::kTextureSize)) {
-        std::cerr << "[Renderer] Material generation failed\n";
+        con::line("RENDER", "Material generation failed", con::Level::Error);
         return false;
     }
     m_lightGrid.init();
@@ -50,7 +49,11 @@ bool Renderer::init(int width, int height) {
     if (!m_entities.init()) return false;
     if (!m_lightning.init()) return false;
     if (!m_terminal.init()) {
-        std::cerr << "[Renderer] Terminal renderer initialisation failed\n";
+        con::line("RENDER", "Terminal renderer initialisation failed", con::Level::Error);
+        return false;
+    }
+    if (!m_title.init()) {
+        con::line("RENDER", "Title screen initialisation failed", con::Level::Error);
         return false;
     }
 
@@ -105,7 +108,7 @@ bool Renderer::init(int width, int height) {
 
     const GLenum err = glGetError();
     if (err != GL_NO_ERROR) {
-        std::cerr << "[Renderer] OpenGL error during initialisation: 0x" << std::hex << err << std::dec << '\n';
+        con::line("RENDER", con::format("OpenGL error during initialisation: {0x%x}", static_cast<unsigned>(err)), con::Level::Error);
         return false;
     }
     return true;
@@ -157,6 +160,7 @@ void Renderer::render(const FrameParams& frame, ChunkManager& chunks, const Worl
     m_worldShader.set("uFogDensity", air.fogDensity);
     m_worldShader.set("uLightTint", air.lightTint);
     m_worldShader.set("uOffice", frame.office ? 1 : 0);
+    m_worldShader.set("uRingTime", frame.ringTime);
     // Writing on the walls, leaves and the glitching walls are cut out by
     // their coverage (written to alpha): smooth edges from the MSAA samples, no sorting.
     glEnable(GL_SAMPLE_ALPHA_TO_COVERAGE);
@@ -305,5 +309,7 @@ void Renderer::drawTerminal(const TerminalScreen& screen, const TerminalGraphics
 }
 
 void Renderer::resetTerminal() { m_terminal.reset(); }
+
+void Renderer::drawTitle(float time, float fade) { m_title.draw(time, fade, m_width, m_height, m_hud); }
 
 void Renderer::flushHud() { m_hud.flush(); }

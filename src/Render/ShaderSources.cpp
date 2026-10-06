@@ -118,6 +118,7 @@ uniform vec3  uAmbientDown;              // indirect light arriving from below (
 uniform vec3  uFogColor;
 uniform float uFogDensity;
 uniform vec3  uLightTint;                // colour of the fluorescent tubes (warm Backrooms, cool office)
+uniform float uRingTime;                 // seconds since the ringing phone started ringing (< 0: none rings)
 uniform int   uOffice;                   // 1 in the office: no water damage
 
 // ---- The Tesla gun ---------------------------------------------------------------
@@ -565,11 +566,14 @@ void main() {
         color += albedo * emissiveMask * params.w * (0.97 + 0.03 * sin(uTime * 377.0));
     }
     // Phone message lamps: the lens UVs carry the state - dark (u < 1), lit
-    // steadily while a message plays (+2) or blinking while one waits (+4),
-    // each phone at its own pace.
+    // steadily while a message plays (+2), blinking while one waits (+4),
+    // each phone at its own pace - or, ringing (+6), flashing fast with every
+    // ring of the bell (2 s of each 6 s cadence) and glowing faintly between.
     if (vMaterial == MAT_PHONE && emissiveMask > 0.0) {
         float h = hash13(floor(vInstanceOrigin * 3.7) + 0.5);
-        float lamp = vUV.x > 3.5 ? step(0.55, fract(uTime * (0.45 + 0.4 * h) + h * 13.0)) : (vUV.x > 1.5 ? 1.0 : 0.0);
+        float lamp = vUV.x > 1.5 ? 1.0 : 0.0;
+        if (vUV.x > 5.5) lamp = (mod(uRingTime, 6.0) < 2.0 ? step(0.45, fract(uRingTime * 10.0)) : 0.15) * 3.0; // brighter than the message lamp
+        else if (vUV.x > 3.5) lamp = step(0.55, fract(uTime * (0.45 + 0.4 * h) + h * 13.0));
         color += albedo * emissiveMask * params.w * lamp;
     }
 

@@ -4,6 +4,7 @@
 #include "AI/EntityDirector.h"
 
 #include "Core/Config.h"
+#include "Core/ConsoleLog.h"
 #include "Physics/Physics.h"
 #include "Render/EntityRenderer.h"
 #include "World/ChunkManager.h"
@@ -11,7 +12,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <iostream>
 
 namespace {
 constexpr float kTwoPi = 6.28318530718f;
@@ -148,8 +148,8 @@ bool EntityDirector::manageLifetime(Agent& agent, float& timer, float& away, flo
                       (agent.stuckTime() > 4.0f && !agent.usingStairs());
     if (!gone || !canVanish) return false;
     if (stranded) {
-        std::cout << "[Entities] The " << (&agent == &m_stalker ? "Stalker" : "Wanderer")
-                  << " found no way to the player's storey: it resurfaces near them\n";
+        con::line("ENTITY", std::string("The ") + (&agent == &m_stalker ? "Stalker" : "Wanderer") +
+                                " found no way to the player's storey: it resurfaces near them");
     }
     agent.deactivate();
     away = 0.0f;
@@ -169,7 +169,7 @@ void EntityDirector::update(float dt, const Camera& camera, float aspect, const 
         gone = true;
         enabled = false;
         m_vaporised.push_back(kind);
-        std::cout << "[Entities] The " << entityName(kind) << " has been vaporised. It will not return.\n";
+        con::spoiler("ENTITY", std::string("The ") + entityName(kind) + " has been vaporised. It will not return.");
     };
     retire(m_stalker, m_stalkerGone, m_stalkerEnabled, EntityKind::Stalker);
     retire(m_wanderer, m_wandererGone, m_wandererEnabled, EntityKind::Wanderer);

@@ -5,7 +5,7 @@
 // Usage:
 //   Backrooms [seed] [--seed <n>] [--level <n>] [--no-entities] [--dump-sounds <dir>]
 //             [--demo <scene> [--type <text>]] [--screenshot <file.bmp> [--delay <seconds>]]
-//             [--size <width>x<height>] [--puzzle <stage>]
+//             [--size <width>x<height>] [--puzzle <stage>] [--no-title] [--verbose]
 //
 //   seed          World seed (decimal or 0x-prefixed hex). Same seed -> same world.
 //   --level       Storey to start on (0 = the classic floor; negative = below).
@@ -47,7 +47,12 @@
 //   --size        Initial window size in logical pixels, e.g. 1280x720.
 //   --puzzle      Start the puzzle chain further along: dialed (the number on
 //                 the wall has been called), memory (7A9F has been seen).
+//   --no-title    Straight into the game, without the title screen.
+//   --verbose     Developer log: also print what gives the game's secrets away
+//                 (the puzzle chain's answers, the parts found...). Without it -
+//                 or a --demo / --puzzle - the terminal keeps them to itself.
 // ---------------------------------------------------------------------------
+#include "Core/ConsoleLog.h"
 #include "Core/Engine.h"
 #include "Core/GpuSelection.h"
 
@@ -70,7 +75,7 @@ bool parseSeed(const char* text, uint64_t& out) {
 void printUsage(const char* exe) {
     std::cout << "Usage: " << exe << " [seed] [--seed <n>] [--level <n>] [--no-entities] [--dump-sounds <dir>]\n"
               << "       [--demo <scene> [--type <text>]] [--screenshot <file.bmp> [--delay <seconds>]] [--size <w>x<h>]\n"
-              << "       [--puzzle dialed|memory]\n"
+              << "       [--puzzle dialed|memory] [--no-title] [--verbose]\n"
               << "  demo scenes: stairs, stairs-top, stairs-sign, climb, descend, stalker, ambush, caught, wanderer, terminal, doom, phone,\n"
               << "               explore, idle, cabinet, part, assemble, tesla, tesla-stalker,\n"
               << "               clue, hexstream, exit-map, glitch, office, ringer, clue-survey, terminal-pause\n";
@@ -87,13 +92,16 @@ int main(int argc, char* argv[]) {
     // GPU is chosen when the driver loads.
     gpu::preferDiscreteGpu();
 
+    con::init();
+    con::banner();
+
     EngineOptions options;
 
     for (int i = 1; i < argc; ++i) {
         const char* arg = argv[i];
         if ((std::strcmp(arg, "--seed") == 0) && i + 1 < argc) {
             if (!parseSeed(argv[++i], options.seed)) {
-                std::cerr << "Invalid seed: " << argv[i] << '\n';
+                con::line("ENGINE", std::string("Invalid seed: ") + argv[i], con::Level::Error);
                 return 1;
             }
         } else if (std::strcmp(arg, "--level") == 0 && i + 1 < argc) {
@@ -106,6 +114,10 @@ int main(int argc, char* argv[]) {
             options.puzzleStage = argv[++i];
         } else if (std::strcmp(arg, "--no-entities") == 0) {
             options.noEntities = true;
+        } else if (std::strcmp(arg, "--no-title") == 0) {
+            options.noTitle = true;
+        } else if (std::strcmp(arg, "--verbose") == 0) {
+            options.verbose = true;
         } else if (std::strcmp(arg, "--dump-sounds") == 0 && i + 1 < argc) {
             options.dumpSoundsDir = argv[++i];
         } else if (std::strcmp(arg, "--screenshot") == 0 && i + 1 < argc) {
@@ -115,7 +127,7 @@ int main(int argc, char* argv[]) {
             const long w = std::strtol(argv[++i], &end, 10);
             const long h = (end && (*end == 'x' || *end == 'X')) ? std::strtol(end + 1, &end, 10) : 0;
             if (w < 64 || h < 64 || *end != '\0') {
-                std::cerr << "Invalid size: " << argv[i] << " (expected e.g. 1280x720)\n";
+                con::line("ENGINE", std::string("Invalid size: ") + argv[i] + " (expected e.g. 1280x720)", con::Level::Error);
                 return 1;
             }
             options.windowWidth = static_cast<int>(w);
@@ -126,7 +138,7 @@ int main(int argc, char* argv[]) {
             printUsage(argv[0]);
             return 0;
         } else if (!parseSeed(arg, options.seed)) {
-            std::cerr << "Unknown argument: " << arg << '\n';
+            con::line("ENGINE", std::string("Unknown argument: ") + arg, con::Level::Error);
             printUsage(argv[0]);
             return 1;
         }
@@ -134,7 +146,7 @@ int main(int argc, char* argv[]) {
 
     Engine engine(options);
     if (!engine.init()) {
-        std::cerr << "Initialisation failed.\n";
+        con::line("ENGINE", "Initialisation failed.", con::Level::Error);
         return 1;
     }
     return engine.run();

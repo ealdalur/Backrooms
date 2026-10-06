@@ -11,6 +11,7 @@
 #include "Actors/Phone.h"
 #include "Actors/Player.h"
 #include "Audio/Soundscape.h"
+#include "Core/ConsoleLog.h"
 #include "Core/GpuSelection.h"
 #include "Gameplay/PhoneCall.h"
 #include "Gameplay/PuzzleChain.h"
@@ -144,7 +145,7 @@ Engine::~Engine() { shutdown(); }
 
 bool Engine::createWindow() {
     if (!SDL_Init(SDL_INIT_VIDEO)) {
-        std::cerr << "SDL could not initialize! SDL Error: " << SDL_GetError() << '\n';
+        con::line("ENGINE", con::format("SDL could not initialise: %s", SDL_GetError()), con::Level::Error);
         return false;
     }
 
@@ -159,19 +160,19 @@ bool Engine::createWindow() {
     m_window = SDL_CreateWindow(cfg::kWindowTitle, m_options.windowWidth, m_options.windowHeight,
                                 SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
     if (!m_window) {
-        std::cerr << "Window could not be created! SDL Error: " << SDL_GetError() << '\n';
+        con::line("ENGINE", con::format("Window could not be created: %s", SDL_GetError()), con::Level::Error);
         return false;
     }
 
     m_context = SDL_GL_CreateContext(m_window);
     if (!m_context) {
-        std::cerr << "OpenGL context could not be created! SDL Error: " << SDL_GetError() << '\n';
+        con::line("ENGINE", con::format("OpenGL context could not be created: %s", SDL_GetError()), con::Level::Error);
         return false;
     }
     SDL_GL_MakeCurrent(m_window, m_context);
 
     if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(SDL_GL_GetProcAddress))) {
-        std::cerr << "Failed to initialize GLAD\n";
+        con::line("ENGINE", "Failed to initialise GLAD", con::Level::Error);
         return false;
     }
 
@@ -181,20 +182,33 @@ bool Engine::createWindow() {
     SDL_GetWindowSizeInPixels(m_window, &m_pixelWidth, &m_pixelHeight);
     const char* glVendor = reinterpret_cast<const char*>(glGetString(GL_VENDOR));
     const char* glRenderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
-    std::cout << "[Engine] OpenGL " << reinterpret_cast<const char*>(glGetString(GL_VERSION)) << " on " << glRenderer
-              << " (" << m_pixelWidth << "x" << m_pixelHeight << ")\n";
-    gpu::reportActiveGpu(glVendor, glRenderer);
+    con::line("ENGINE", con::format("OpenGL {%s} · {%dx%d}", reinterpret_cast<const char*>(glGetString(GL_VERSION)), m_pixelWidth,
+                                    m_pixelHeight));
+    // The GPU once: what it is, and what kind.
+    const gpu::ActiveGpu active = gpu::describeActiveGpu(glVendor, glRenderer);
+    std::string about = "{" + active.name + "}";
+    if (!active.kind.empty()) about += " · " + active.kind;
+    if (active.vram) about += con::format(" · {%.0f GB} VRAM", static_cast<double>(active.vram) / (1024.0 * 1024.0 * 1024.0));
+    if (!active.note.empty()) about += " · " + active.note;
+    con::line("GPU", about);
+    for (size_t i = 0; i < active.warning.size(); ++i) {
+        if (i == 0) con::line("GPU", active.warning[i], con::Level::Warn);
+        else con::detail(active.warning[i], con::Level::Warn);
+    }
     return true;
 }
 
 bool Engine::init() {
+    // The developer log tells the game's secrets; a player's terminal never does.
+    con::setSpoilers(m_options.verbose || !m_options.demo.empty() || !m_options.puzzleStage.empty());
+    con::section("BOOT");
     if (!createWindow()) return false;
 
     m_pointerCursor = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_POINTER);
 
     m_renderer = std::make_unique<Renderer>();
     if (!m_renderer->init(m_pixelWidth, m_pixelHeight)) {
-        std::cerr << "[Engine] Renderer initialisation failed\n";
+        con::line("ENGINE", "Renderer initialisation failed", con::Level::Error);
         return false;
     }
 
@@ -215,13 +229,11 @@ bool Engine::init() {
     m_world->setWallClue(m_puzzle->secrets().phoneNumber);
     if (m_options.puzzleStage == "dialed") m_puzzle->advance(PuzzleStage::NumberDialed);
     else if (m_options.puzzleStage == "memory") m_puzzle->advance(PuzzleStage::MemoryFound);
-    else if (!m_options.puzzleStage.empty()) std::cerr << "[Engine] Unknown puzzle stage '" << m_options.puzzleStage << "'\n";
-    if (!m_options.demo.empty() || !m_options.puzzleStage.empty()) {
-        const PuzzleSecrets& secret = m_puzzle->secrets();
-        std::printf("[Puzzle] Number %s, memory %s, host %s, offset %+d;(%+d,%+d); stage %s\n", secret.phoneNumber.c_str(),
-                    secret.memoryAddress.c_str(), secret.ipAddress.c_str(), secret.floorDelta, secret.chunkDelta.x, secret.chunkDelta.y,
-                    PuzzleChain::stageName(m_puzzle->stage()));
-    }
+    else if (!m_options.puzzleStage.empty()) con::line("ENGINE", "Unknown puzzle stage '" + m_options.puzzleStage + "'", con::Level::Warn);
+    const PuzzleSecrets& secret = m_puzzle->secrets();
+    con::spoiler("PUZZLE", con::format("Number {%s}, memory {%s}, host {%s}, offset {%+d;(%+d,%+d)}; stage %s", secret.phoneNumber.c_str(),
+                                       secret.memoryAddress.c_str(), secret.ipAddress.c_str(), secret.floorDelta, secret.chunkDelta.x,
+                                       secret.chunkDelta.y, PuzzleChain::stageName(m_puzzle->stage())));
     m_nextRing = 45.0f; // the first phone rings soon, so the player learns that they do
 
     // Load the neighbourhood of the origin, find a free spot and spawn there.
@@ -234,15 +246,23 @@ bool Engine::init() {
     teleportPlayer(spawn, level, 0.0f);
     if (!m_options.demo.empty()) setupDemo();
 
-    std::cout << "[Engine] World seed 0x" << std::hex << m_options.seed << std::dec << ", " << m_chunks->chunkCount()
-              << " chunks loaded, spawn (" << m_player->feetPosition().x << ", " << m_player->feetPosition().z
-              << ") on level " << m_focusLevel << "\n"
-              << "[Engine] Controls: WASD move, mouse or arrow keys look, Shift run, Space jump, C crouch,\n"
-              << "         E open doors / use terminals / pick up phones / search cabinets / take parts (Esc leaves),\n"
-              << "         Space pauses a terminal's live log,\n"
-              << "         R assemble the Tesla gun, LMB or F fire it, hold RMB + move mouse to drive,\n"
-              << "         +/- sensitivity, F3 entity debug, F11 fullscreen, F12 screenshot, P pause, Esc quit.\n";
+    con::line("WORLD", con::format("Seed {0x%llx} · {%zu} chunks loaded · spawn {(%.1f, %.1f)} on level {%d}",
+                                   static_cast<unsigned long long>(m_options.seed), m_chunks->chunkCount(), m_player->feetPosition().x,
+                                   m_player->feetPosition().z, m_focusLevel));
+    static const con::KeyHelp kControls[] = {
+        {"WASD", "move"},       {"Mouse / arrows", "look"}, {"Shift", "run"},     {"Space", "jump"},
+        {"C", "crouch"},        {"E", "use or interact"},   {"LMB / F", "fire it"}, {"Hold RMB + mouse", "strafe"},
+        {"F3", "entity debug"}, {"F11", "fullscreen"},      {"F12", "screenshot"}, {"P", "pause"},
+        {"Esc", "quit"},
+    };
+    con::keyTable("CONTROLS", kControls, sizeof(kControls) / sizeof(kControls[0]));
+    con::section("SESSION");
 
+    // The title comes up first, over the start point (not in the developer scenes: their timing is scripted).
+    if (m_options.demo.empty() && !m_options.noTitle) {
+        m_state = GameState::Title;
+        m_fade = 1.0f; // the rooms fade in behind it
+    }
     setState(m_state);
     return true;
 }
@@ -250,6 +270,8 @@ bool Engine::init() {
 // ---- State ---------------------------------------------------------------------------------------
 
 void Engine::setState(GameState state) {
+    // Keys already held when the title goes stay held: the player can be off the moment it is.
+    const bool fromTitle = m_state == GameState::Title;
     m_state = state;
     // Holding a phone, a mouse pointer presses its keys.
     SDL_SetWindowRelativeMouseMode(m_window, state != GameState::Paused && state != GameState::Phone &&
@@ -258,7 +280,7 @@ void Engine::setState(GameState state) {
     if (m_sound) m_sound->setPaused(state == GameState::Paused || state == GameState::QuitPrompt);
     if (state == GameState::Terminal || state == GameState::Phone) SDL_StartTextInput(m_window);
     else SDL_StopTextInput(m_window);
-    m_input.reset();
+    if (!fromTitle) m_input.reset();
 }
 
 void Engine::teleportPlayer(const glm::vec3& feet, int level, float yaw) {
@@ -274,7 +296,7 @@ void Engine::updateFocusLevel() {
     if (y > base + cfg::kLevelSwitchBand * world::kLevelHeight) ++m_focusLevel;
     else if (y < base - cfg::kLevelSwitchBand * world::kLevelHeight) --m_focusLevel;
     else return;
-    std::cout << "[Engine] Now on level " << m_focusLevel << "\n";
+    con::line("WORLD", con::format("Now on level {%d}", m_focusLevel));
 }
 
 void Engine::showMessage(const std::string& text, float seconds) {
@@ -298,8 +320,10 @@ void Engine::processEvents() {
             m_renderer->resize(m_pixelWidth, m_pixelHeight);
             break;
         case SDL_EVENT_WINDOW_FOCUS_LOST:
-            // (Under the quit prompt the game is already holding still.)
-            if (m_state != GameState::Paused && m_state != GameState::QuitPrompt && m_options.screenshotPath.empty()) {
+            // (Under the quit prompt the game is already holding still; under the
+            // title, too - which pauses as it ends if the window is still in the background.)
+            if (m_state != GameState::Paused && m_state != GameState::QuitPrompt && m_state != GameState::Title &&
+                m_options.screenshotPath.empty()) {
                 m_resumeState = m_state;
                 setState(GameState::Paused);
             }
@@ -327,6 +351,17 @@ void Engine::processEvents() {
             }
             break;
         case SDL_EVENT_KEY_DOWN:
+            if (m_state == GameState::Title) {
+                // The player's controls wait for the game to start; only the window's keys work.
+                if (e.key.repeat) break;
+                if (e.key.scancode == SDL_SCANCODE_F11) {
+                    m_fullscreen = !m_fullscreen;
+                    SDL_SetWindowFullscreen(m_window, m_fullscreen);
+                } else if (e.key.scancode == SDL_SCANCODE_F12) {
+                    m_screenshotRequested = true;
+                }
+                break;
+            }
             if (m_state == GameState::QuitPrompt) {
                 // Only a fresh press counts: holding Esc a moment too long must not quit.
                 if (e.key.repeat) break;
@@ -776,7 +811,7 @@ void Engine::startCaught(EntityKind by) {
     m_respawned = false;
     m_sound->playSting();
     setState(GameState::Caught);
-    std::cout << "[Engine] Caught by the " << (by == EntityKind::Stalker ? "Stalker" : "Wanderer") << "\n";
+    con::line("ENTITY", std::string("Caught by the {") + (by == EntityKind::Stalker ? "Stalker" : "Wanderer") + "}");
 }
 
 void Engine::updateCaught(float dt) {
@@ -815,8 +850,35 @@ void Engine::updateCaught(float dt) {
 
 // ---- Simulation --------------------------------------------------------------------------------------
 
+void Engine::updateTitle(float dt) {
+    // The rooms go on - lights flickering, the hum and its sounds - but nothing
+    // that plays the game moves: the player's body stands idle, the entities
+    // and the timers that set things off (the phones ringing) hold where they are.
+    m_simTime += dt;
+    m_titleTime += dt;
+    m_fade = 1.0f - smooth01((m_titleTime - 0.35f) / cfg::kTitleWorldFadeIn);
+    m_player->update(dt, m_idleInput, m_settings, *m_chunks, *m_physics);
+    m_chunks->update(m_player->feetPosition(), m_focusLevel, dt, m_player->bodyBox());
+    m_sound->update(dt, m_simTime, *m_player, *m_chunks, *m_world);
+
+    if (m_titleTime < cfg::kTitleHoldTime + cfg::kTitleFadeTime) return;
+    m_fade = 0.0f;
+    // Clicked away while it was up: start paused, rather than with nobody watching.
+    const bool focused = (SDL_GetWindowFlags(m_window) & SDL_WINDOW_INPUT_FOCUS) != 0;
+    if (!focused && m_options.screenshotPath.empty()) {
+        m_resumeState = GameState::Running;
+        setState(GameState::Paused);
+    } else {
+        setState(GameState::Running);
+    }
+}
+
 void Engine::update(float dt) {
     if (m_state == GameState::Paused || m_state == GameState::QuitPrompt) return;
+    if (m_state == GameState::Title) {
+        updateTitle(dt);
+        return;
+    }
     m_simTime += dt;
     m_lastDt = dt;
     m_noises.clear();
@@ -858,7 +920,7 @@ void Engine::update(float dt) {
     checkNoclip();
     // Fell out of the world (e.g. down a shaft whose floor never loaded): start over nearby.
     if (m_player->feetPosition().y < world::levelFloorY(m_focusLevel) - world::kLevelHeight - 2.0f) {
-        std::cerr << "[Engine] Fell out of the world, respawning\n";
+        con::line("WORLD", "Fell out of the world, respawning", con::Level::Warn);
         const glm::vec3 near(m_player->feetPosition().x, world::levelFloorY(m_focusLevel), m_player->feetPosition().z);
         teleportPlayer(m_chunks->findSpawnPoint(near, m_focusLevel, m_player->shape(), *m_physics), m_focusLevel,
                        m_player->yaw());
@@ -1067,29 +1129,37 @@ void Engine::render(float dt) {
     m_dialogFade += (dialogTarget - m_dialogFade) * (1.0f - std::exp(-14.0f * dt));
     if (std::fabs(dialogTarget - m_dialogFade) < 0.002f) m_dialogFade = dialogTarget;
 
+    // The title: 0..1 as it fades away; the game behind it softly blurred and darkened until then.
+    const bool title = m_state == GameState::Title;
+    const float titleFade = title ? std::clamp((m_titleTime - cfg::kTitleHoldTime) / cfg::kTitleFadeTime, 0.0f, 1.0f) : 1.0f;
+    const float titleUp = 1.0f - smooth01(titleFade);
+
     FrameParams frame;
     frame.camera = cam;
     frame.time = m_simTime;
-    frame.crosshair = 1.0f - std::max(m_phoneBlend, m_cabinetBlend);
+    frame.crosshair = (1.0f - std::max(m_phoneBlend, m_cabinetBlend)) * (1.0f - titleUp);
     frame.crosshairHighlight = m_state == GameState::Running ? m_crosshairHighlight : 0.0f;
     frame.fear = m_entities->fear();
     frame.fade = m_fade;
-    frame.dim = m_dialogFade;
+    frame.dim = std::max(m_dialogFade, cfg::kTitleDim * titleUp);
     frame.glitch = m_glitch;
     frame.office = m_office;
+    frame.ringTime = m_ringingPhone ? m_ringTime : -1.0f;
     frame.lightDisturbances = &m_entities->lightDisturbances();
     frame.entities = &m_entityDraw;
     frame.bolts = &m_gun->bolts();
     frame.glows = &m_gun->glows();
     frame.muzzleGlow = m_gun->muzzleGlow();
     frame.arcLight = m_gun->light();
+    if (frame.arcLight.intensity <= 0.0f) frame.arcLight = ringLight(); // (the gun's discharge outshines it)
     frame.viewModel = &m_viewModel;
     m_renderer->render(frame, *m_chunks, *m_world);
 
     if (m_console && m_terminalBlend > 0.0f) {
         m_renderer->drawTerminal(m_console->screen(), m_console->graphics(), static_cast<float>(m_simTime), dt, m_terminalBlend);
     }
-    drawHud();
+    if (title) m_renderer->drawTitle(m_titleTime, titleFade);
+    else drawHud(); // (the HUD comes up with the game)
     m_renderer->flushHud();
 }
 
@@ -1128,7 +1198,8 @@ bool Engine::saveScreenshot(const std::string& path) const {
     if (!surface) return false;
     const bool ok = SDL_SaveBMP(surface, path.c_str());
     SDL_DestroySurface(surface);
-    std::cout << (ok ? "[Engine] Saved screenshot " : "[Engine] Failed to save screenshot ") << path << '\n';
+    if (ok) con::line("ENGINE", "Saved screenshot {" + path + "}");
+    else con::line("ENGINE", "Failed to save screenshot " + path, con::Level::Error);
     return ok;
 }
 
@@ -1164,6 +1235,8 @@ int Engine::run() {
         SDL_GL_SwapWindow(m_window);
         updateFps(dt);
     }
+    const int seconds = static_cast<int>(runTime);
+    con::line("ENGINE", con::format("Session over after {%d:%02d}. The hum goes on without you.", seconds / 60, seconds % 60));
     return 0;
 }
 

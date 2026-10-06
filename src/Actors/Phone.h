@@ -37,6 +37,7 @@ enum class PhoneLamp : uint8_t {
     Dark = 0,  ///< No messages.
     Blinking,  ///< A message is waiting.
     Lit,       ///< The message is being played back.
+    Ringing,   ///< The phone is ringing: it flashes with every ring.
     Count
 };
 
@@ -83,7 +84,12 @@ public:
     void setMessageWaiting(bool waiting) { m_messageWaiting = waiting && hasMessage(); }
     /// Lit steadily while the message plays back.
     void setLampLit(bool lit) { m_lampLit = lit; }
-    PhoneLamp lamp() const { return m_lampLit ? PhoneLamp::Lit : m_messageWaiting ? PhoneLamp::Blinking : PhoneLamp::Dark; }
+    /// Ringing: the lamp flashes with the bell, so the phone can be told apart from across a room.
+    void setRinging(bool ringing) { m_ringing = ringing; }
+    bool ringing() const { return m_ringing; }
+    PhoneLamp lamp() const {
+        return m_ringing ? PhoneLamp::Ringing : m_lampLit ? PhoneLamp::Lit : m_messageWaiting ? PhoneLamp::Blinking : PhoneLamp::Dark;
+    }
 
     /// Pushes a key (or the lamp button) down for a moment (it springs back in update()).
     void press(int key);
@@ -110,6 +116,7 @@ private:
     bool      m_offHook = false;
     bool      m_messageWaiting;
     bool      m_lampLit = false;
+    bool      m_ringing = false;
     int       m_pressedKey = -1;
     float     m_pressTimer = 0.0f;
 };

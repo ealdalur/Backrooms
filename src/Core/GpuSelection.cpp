@@ -3,13 +3,48 @@
 // ---------------------------------------------------------------------------
 #include "Core/GpuSelection.h"
 
+#include <cctype>
 #include <cstdint>
-#include <iostream>
 #include <string>
 #include <vector>
 
 namespace {
 enum : uint32_t { kVendorNvidia = 0x10DE, kVendorAmd = 0x1002, kVendorIntel = 0x8086 };
+
+bool contains(const std::string& s, const char* what) { return s.find(what) != std::string::npos; }
+
+/// GL_RENDERER without the bus / instruction-set suffix NVIDIA appends ("/PCIe/SSE2").
+[[maybe_unused]] std::string tidyRenderer(const char* glRenderer) {
+    std::string name = glRenderer ? glRenderer : "unknown GPU";
+    for (const char* suffix : {"/PCIe", "/PCI", "/AGP", "/SSE"}) {
+        const size_t at = name.find(suffix);
+        if (at != std::string::npos) name.erase(at);
+    }
+    return name;
+}
+
+/// Discrete or integrated, from the name alone (when the OS cannot say).
+[[maybe_unused]] std::string kindFromName(const std::string& name) {
+    if (contains(name, "llvmpipe") || contains(name, "softpipe") || contains(name, "SwiftShader") ||
+        contains(name, "Basic Render") || contains(name, "GDI Generic")) {
+        return "software";
+    }
+    if (contains(name, "NVIDIA") || contains(name, "GeForce") || contains(name, "Quadro")) return "discrete";
+    if (contains(name, "Intel")) {
+        // Arc cards carry a model number (A770, B580); the iGPUs are just "Arc(TM) Graphics".
+        const size_t arc = name.find("Arc");
+        for (size_t i = arc; arc != std::string::npos && i + 1 < name.size(); ++i) {
+            if ((name[i] == 'A' || name[i] == 'B') && i > arc + 2 && std::isdigit(static_cast<unsigned char>(name[i + 1]))) return "discrete";
+        }
+        return "integrated";
+    }
+    if (contains(name, "AMD") || contains(name, "ATI") || contains(name, "Radeon")) {
+        return contains(name, "RX") || contains(name, "Pro W") || contains(name, "FirePro") || contains(name, "Radeon VII") ? "discrete"
+                                                                                                                      : "integrated";
+    }
+    if (contains(name, "Apple")) return "integrated";
+    return {};
+}
 } // namespace
 
 // ============================================================================
@@ -39,6 +74,7 @@ namespace {
 struct Adapter {
     std::string name;
     uint32_t    vendor = 0;
+    uint64_t    vram = 0; ///< Dedicated video memory (bytes).
 };
 
 /// Maps an OpenGL GL_VENDOR string to a PCI vendor id (0 if unknown).
@@ -70,7 +106,7 @@ std::vector<Adapter> hardwareAdapters() {
     auto add = [&out](IDXGIAdapter1* adapter) {
         DXGI_ADAPTER_DESC1 desc{};
         if (SUCCEEDED(adapter->GetDesc1(&desc)) && !(desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) {
-            out.push_back({narrow(desc.Description), desc.VendorId});
+            out.push_back({narrow(desc.Description), desc.VendorId, static_cast<uint64_t>(desc.DedicatedVideoMemory)});
         }
         adapter->Release();
     };
@@ -103,21 +139,31 @@ void preferDiscreteGpu() {
     (void)AmdPowerXpressRequestHighPerformance;
 }
 
-void reportActiveGpu(const char* glVendor, const char* glRenderer) {
+ActiveGpu describeActiveGpu(const char* glVendor, const char* glRenderer) {
+    ActiveGpu gpu;
+    gpu.name = tidyRenderer(glRenderer);
+    gpu.kind = kindFromName(gpu.name);
     const std::vector<Adapter> adapters = hardwareAdapters();
-    if (adapters.size() < 2) return; // single GPU: nothing to choose
-
-    const Adapter& best = adapters.front();
-    if (vendorFromGlString(glVendor) == best.vendor) {
-        std::cout << "[GPU] Rendering on the high-performance GPU: " << (glRenderer ? glRenderer : best.name) << '\n';
-        return;
+    const uint32_t vendor = vendorFromGlString(glVendor);
+    const Adapter* used = nullptr;
+    for (const Adapter& a : adapters) {
+        if (a.vendor == vendor && !used) used = &a;
     }
-    std::cout << "[GPU] WARNING: OpenGL is running on \"" << (glRenderer ? glRenderer : "?")
-              << "\" instead of the high-performance GPU \"" << best.name << "\".\n"
-              << "      The program requests the discrete GPU, but a per-application override is forcing\n"
-              << "      power saving. To fix it, either:\n"
-              << "        - Windows Settings > System > Display > Graphics: set this program to \"High performance\"\n"
-              << "        - NVIDIA Control Panel > Manage 3D settings > Program Settings: choose the NVIDIA GPU\n";
+    if (adapters.size() >= 2 && used) {
+        // Windows orders them high-performance first: that one is the discrete GPU.
+        gpu.kind = used == &adapters.front() ? "discrete" : "integrated";
+    }
+    if (used && gpu.kind == "discrete") gpu.vram = used->vram;
+
+    if (adapters.size() >= 2 && vendor != adapters.front().vendor) {
+        gpu.warning = {
+            "OpenGL is running on \"" + gpu.name + "\" instead of the high-performance GPU \"" + adapters.front().name + "\".",
+            "The program requests the discrete GPU, but a per-application override is forcing power saving. To fix it, either:",
+            "  - Windows Settings > System > Display > Graphics: set this program to \"High performance\"",
+            "  - NVIDIA Control Panel > Manage 3D settings > Program Settings: choose the NVIDIA GPU",
+        };
+    }
+    return gpu;
 }
 
 } // namespace gpu
@@ -242,11 +288,13 @@ void preferDiscreteGpu() {
     }
 }
 
-void reportActiveGpu(const char* glVendor, const char* glRenderer) {
+ActiveGpu describeActiveGpu(const char* glVendor, const char* glRenderer) {
     (void)glVendor;
-    if (!g_linuxDecision.empty()) {
-        std::cout << "[GPU] " << g_linuxDecision << "; rendering on " << (glRenderer ? glRenderer : "?") << '\n';
-    }
+    ActiveGpu gpu;
+    gpu.name = tidyRenderer(glRenderer);
+    gpu.kind = kindFromName(gpu.name);
+    gpu.note = g_linuxDecision;
+    return gpu;
 }
 
 } // namespace gpu
@@ -258,7 +306,12 @@ void reportActiveGpu(const char* glVendor, const char* glRenderer) {
 
 namespace gpu {
 void preferDiscreteGpu() {}
-void reportActiveGpu(const char*, const char*) {}
+ActiveGpu describeActiveGpu(const char*, const char* glRenderer) {
+    ActiveGpu gpu;
+    gpu.name = tidyRenderer(glRenderer);
+    gpu.kind = kindFromName(gpu.name);
+    return gpu;
+}
 } // namespace gpu
 
 #endif

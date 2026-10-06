@@ -266,6 +266,8 @@ Phone* ChunkManager::phoneById(uint64_t id) {
     return nullptr;
 }
 
+const Phone* ChunkManager::phoneById(uint64_t id) const { return const_cast<ChunkManager*>(this)->phoneById(id); }
+
 FileCabinet* ChunkManager::cabinetById(uint64_t id) {
     for (auto& kv : m_chunks) {
         for (FileCabinet& c : kv.second->cabinets()) {

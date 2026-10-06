@@ -698,25 +698,29 @@ std::vector<Sound> makeClue(uint64_t seed) {
 }
 
 std::vector<Sound> makeBell(uint64_t seed) {
-    // A desk phone ringing: the striker hammering between two steel bell
-    // gongs some twenty times a second for two seconds (one ring of the
-    // cadence), the hollow plastic case booming and buzzing along. The gongs
-    // are big enough to ring low (their fundamentals under 1 kHz), so the
-    // ring still carries muffled through a wall, the way a real one does.
+    // A desk phone ringing: the clapper hammering between two small steel
+    // gongs some twenty times a second each, for two seconds (one ring of the
+    // cadence). The gongs are small and the clapper keeps damping them, so
+    // every blow dies away before the next lands: not a held "bong" but the
+    // fast, rattling "brrring" of a telephone - bright, metallic partials over
+    // a short low knock that still gets through a wall - and the plastic case
+    // buzzing along.
     rnd::Rng rng(seed);
     Noise noise(rng.next());
     const float ring = 2.0f;
     Buffer b = silence(ring + 0.6f);
-    // Inharmonic bell partials over each fundamental.
-    const Mode gongA[] = {{640.0f, 0.6f, 1.0f}, {1350.0f, 0.4f, 0.45f}, {1920.0f, 0.3f, 0.28f}, {2950.0f, 0.18f, 0.16f}};
-    const Mode gongB[] = {{705.0f, 0.6f, 1.0f}, {1490.0f, 0.4f, 0.42f}, {2110.0f, 0.3f, 0.26f}, {3200.0f, 0.18f, 0.15f}};
+    // Inharmonic partials of each gong (Hz, decay s, level), the last one the short low knock of the blow.
+    const Mode gongA[] = {{1050.0f, 0.05f, 1.0f}, {2380.0f, 0.04f, 0.75f}, {3650.0f, 0.03f, 0.55f}, {5200.0f, 0.022f, 0.35f},
+                          {690.0f, 0.03f, 0.85f}};
+    const Mode gongB[] = {{1170.0f, 0.05f, 1.0f}, {2620.0f, 0.04f, 0.7f}, {3980.0f, 0.03f, 0.5f}, {5600.0f, 0.022f, 0.32f},
+                          {740.0f, 0.03f, 0.85f}};
     int k = 0;
     for (float t = 0.01f; t < ring; t += 1.0f / 40.0f, ++k) {
         const float g = 0.22f * (0.85f + 0.3f * rng.nextFloat()) * smooth01(0.0f, 0.06f, t);
-        addModes(b, t, (k & 1) ? gongB : gongA, 4, g, 0.01f, rng);
+        addModes(b, t, (k & 1) ? gongB : gongA, 5, g, 0.01f, rng);
         // The case: a dull knock with every blow, and the rattle of loose plastic.
-        addNoiseThunk(b, noise, t, 0.12f, 320.0f, 0.0005f, 0.012f);
-        addNoiseBurst(b, t, 0.0002f, 0.004f, Biquad::bandpass(rng.range(400.0f, 700.0f), 1.0f), 0.06f, noise);
+        addNoiseThunk(b, noise, t, 0.08f, 320.0f, 0.0005f, 0.01f);
+        addNoiseBurst(b, t, 0.0002f, 0.003f, Biquad::bandpass(rng.range(1500.0f, 3000.0f), 1.2f), 0.05f, noise);
     }
     applyFilter(b, Biquad::highpass(120.0f));
     fadeEdges(b, 0.002f, 0.3f);

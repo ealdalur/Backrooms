@@ -6,6 +6,11 @@
 // the game state machine and all top-level subsystems.
 //
 // States:
+//   Title    - the start: "BACKROOMS" strikes on in fluorescent tubes over
+//              the start point (Render/TitleRenderer), holds, and fades away.
+//              The rooms go on behind it - the lights flicker, the hum plays -
+//              but the player's controls, the entities and the timers that set
+//              things off (the phones ringing) wait until it has gone.
 //   Running  - exploring.
 //   Paused   - P / focus loss; the simulation stops behind a blurred,
 //              darkened screen reading "Paused" (P or a click resumes).
@@ -67,6 +72,7 @@
 class ChunkManager;
 class EntityDirector;
 class PuzzleChain;
+struct ArcLight;
 struct PuzzleEvent;
 enum class PuzzleStage : uint8_t;
 enum class EntityKind : uint8_t;
@@ -120,6 +126,8 @@ struct EngineOptions {
     std::string demo;
     std::string demoInput;               ///< Typed into the terminal in the "terminal" scene, dialled in "phone" ('h' hangs up, 'M' messages; "upper" in "stairs-sign").
     bool        noEntities = false;      ///< Disable the anomalies.
+    bool        noTitle = false;         ///< Straight into the game, without the title (always so in a developer scene).
+    bool        verbose = false;         ///< Developer log: also print what gives the game's secrets away.
     std::string puzzleStage;             ///< Start the puzzle chain this far along: dialed, memory, mapped.
     int         windowWidth = cfg::kWindowWidth;   ///< Initial window size (logical pixels).
     int         windowHeight = cfg::kWindowHeight;
@@ -140,7 +148,7 @@ public:
     int run();
 
 private:
-    enum class GameState { Running, Paused, Terminal, Phone, Cabinet, Caught, QuitPrompt, Noclip };
+    enum class GameState { Title, Running, Paused, Terminal, Phone, Cabinet, Caught, QuitPrompt, Noclip };
 
     /// A point of a scripted walk. `door` marks the approach to a door that
     /// has to be opened first (the edge it hangs in follows).
@@ -155,6 +163,8 @@ private:
     void processEvents();
     void handleTerminalKey(const SDL_KeyboardEvent& key);
     void update(float dt);
+    /// Under the title: only the rooms' own life goes on; then the game starts.
+    void updateTitle(float dt);
     void render(float dt);
     void setState(GameState state);
     /// Measures the frame rate for the HUD's meter.
@@ -223,6 +233,8 @@ private:
     /// Now and then a phone near the player rings (picked up, someone is on the line).
     void updateRinger(float dt);
     void stopRinging();
+    /// The red light a ringing phone's flashing lamp throws on the desk around it (off when none rings).
+    ArcLight ringLight() const;
     /// The glitch room crackles and hisses while the player is near it.
     void updateGlitchHum(float dt);
     /// A line of speech captioned at the bottom of the screen.
@@ -262,6 +274,7 @@ private:
     GameState     m_quitResume = GameState::Running;  ///< State to return to if the player does not quit.
     float         m_dialogFade = 0.0f;                ///< 0..1: the pause screen / quit prompt (and the blur behind it) fading in.
     GameState     m_dialog = GameState::Paused;       ///< Which of the two is (or was last) shown.
+    float         m_titleTime = 0.0f;                 ///< Seconds the title has been up.
     bool          m_quit = false;
 
     SDL_Window*   m_window = nullptr;

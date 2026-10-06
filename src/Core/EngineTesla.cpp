@@ -11,6 +11,7 @@
 #include "Actors/FileCabinet.h"
 #include "Actors/Player.h"
 #include "Audio/Soundscape.h"
+#include "Core/ConsoleLog.h"
 #include "Gameplay/TeslaGun.h"
 #include "Physics/Physics.h"
 #include "Render/Renderer.h"
@@ -212,9 +213,9 @@ void Engine::takeItem(ItemSite& site) {
         message = "ALL FOUR PARTS  -  PRESS R TO ASSEMBLE THE TESLA GUN";
     }
     showMessage(message, 4.0f);
-    std::printf("[Tesla] %s %s%s (site %016llx)\n", swapped ? "Swapped for" : "Picked up", partName(found.type),
-                found.type == PartType::Battery ? (" at " + percent(found.charge)).c_str() : "",
-                static_cast<unsigned long long>(site.id));
+    con::spoiler("TESLA", con::format("%s {%s}%s (site %016llx)", swapped ? "Swapped for" : "Picked up", partName(found.type),
+                                      found.type == PartType::Battery ? (" at " + percent(found.charge)).c_str() : "",
+                                      static_cast<unsigned long long>(site.id)));
 }
 
 bool Engine::beginAssembly() {
@@ -263,7 +264,7 @@ void Engine::updateGun(float dt) {
             m_inventory.assemble();
             m_assembleTimer = -1.0f;
             showMessage("TESLA GUN READY  -  HOLD LEFT MOUSE OR F TO FIRE", 5.0f);
-            std::printf("[Tesla] Gun assembled, battery %s\n", percent(m_inventory.charge()).c_str());
+            con::spoiler("TESLA", "Gun assembled, battery {" + percent(m_inventory.charge()) + "}");
         }
     }
 

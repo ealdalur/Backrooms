@@ -7,6 +7,7 @@
 // ---------------------------------------------------------------------------
 #include "Gameplay/Doom/DoomAssets.h"
 
+#include "Core/ConsoleLog.h"
 #include "Math/Noise.h"
 #include "Math/Random.h"
 #include "Render/BitmapFont.h"
@@ -17,7 +18,6 @@
 #include <cmath>
 #include <functional>
 #include <future>
-#include <iostream>
 #include <memory>
 #include <mutex>
 
@@ -1287,8 +1287,8 @@ DoomAssets::DoomAssets() {
     m_title = toImage(paintTitle(seed + 90), *this, 0.8f);
 
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
-    std::cout << "[Doom] Painted palette, " << static_cast<int>(WallTex::Count) << " walls, " << static_cast<int>(FlatTex::Count)
-              << " flats, " << static_cast<int>(Spr::Count) << " sprites in " << static_cast<int>(ms) << " ms\n";
+    con::spoiler("DOOM", con::format("Painted palette, {%d} walls, {%d} flats, {%d} sprites in {%d ms}", static_cast<int>(WallTex::Count),
+                                     static_cast<int>(FlatTex::Count), static_cast<int>(Spr::Count), static_cast<int>(ms)));
 }
 
 } // namespace doom

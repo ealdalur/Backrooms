@@ -27,6 +27,7 @@ set(BACKROOMS_SOURCES
   src/Audio/StorySounds.cpp
   src/Audio/TeslaSounds.cpp
 
+  src/Core/ConsoleLog.cpp
   src/Core/Engine.cpp
   src/Core/EnginePuzzle.cpp
   src/Core/EngineTesla.cpp
@@ -64,6 +65,7 @@ set(BACKROOMS_SOURCES
   src/Render/ShaderSources.cpp
   src/Render/TerminalRenderer.cpp
   src/Render/TextOverlay.cpp
+  src/Render/TitleRenderer.cpp
   src/Render/Texture.cpp
 
   src/World/Chunk.cpp
@@ -106,6 +108,7 @@ set(BACKROOMS_HEADERS
   src/Audio/TeslaSounds.h
 
   src/Core/Config.h
+  src/Core/ConsoleLog.h
   src/Core/Engine.h
   src/Core/GpuSelection.h
   src/Core/Input.h
@@ -147,6 +150,7 @@ set(BACKROOMS_HEADERS
   src/Render/ShaderSources.h
   src/Render/TerminalRenderer.h
   src/Render/TextOverlay.h
+  src/Render/TitleRenderer.h
   src/Render/Texture.h
 
   src/World/Chunk.h

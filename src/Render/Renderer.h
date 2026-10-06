@@ -5,7 +5,8 @@
 // furniture/door/terminal/phone/cabinet/gun-part meshes, the clustered light
 // grid, the entity renderer, the discharge renderer, the terminal CRT overlay
 // and the HDR post chain, and draws the loaded world from the player's
-// camera each frame - then the gun in the player's hands over it.
+// camera each frame - then the gun in the player's hands over it. The
+// title screen is drawn over the finished frame.
 // ---------------------------------------------------------------------------
 
 #include "Actors/FileCabinet.h"
@@ -26,6 +27,7 @@
 #include "Render/Shader.h"
 #include "Render/TerminalRenderer.h"
 #include "Render/TextOverlay.h"
+#include "Render/TitleRenderer.h"
 
 #include <array>
 #include <cstdint>
@@ -59,6 +61,7 @@ struct FrameParams {
     float  dim = 0.0f;                                         ///< 0..1, the game held under a dialog (blurred, darkened).
     float  glitch = 0.0f;                                      ///< 0..1, the picture tearing apart (noclipping out).
     bool   office = false;                                     ///< The office's air and light instead of the Backrooms'.
+    float  ringTime = -1.0f;                                   ///< Seconds into the ringing phone's ringing (< 0: none rings).
     const std::vector<LightDisturbance>* lightDisturbances = nullptr;
     const EntityDrawList*                entities = nullptr;
     // The Tesla gun.
@@ -85,6 +88,10 @@ public:
     /// Clears the CRT persistence buffer (a different terminal is being used).
     void resetTerminal();
 
+    /// The title screen, over the frame (and its tagline on the HUD). Call after render().
+    /// @param time Seconds since it came up; @param fade 0..1 as it fades away.
+    void drawTitle(float time, float fade);
+
     /// HUD text overlay (FPS meter, prompts, messages). Queue with hud(),
     /// then call flushHud() after everything else, before swapping.
     TextOverlay& hud() { return m_hud; }
@@ -104,6 +111,7 @@ private:
     EntityRenderer    m_entities;
     LightningRenderer m_lightning;
     TerminalRenderer  m_terminal;
+    TitleRenderer     m_title;
 
     std::array<GpuMesh, kFurnitureTypeCount>                m_furnitureMeshes;
     std::array<std::vector<glm::mat4>, kFurnitureTypeCount> m_furnitureInstances;

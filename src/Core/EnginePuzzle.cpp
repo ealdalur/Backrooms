@@ -14,9 +14,11 @@
 #include "Actors/Player.h"
 #include "Audio/Soundscape.h"
 #include "Audio/StorySounds.h"
+#include "Core/ConsoleLog.h"
 #include "Gameplay/PhoneCall.h"
 #include "Gameplay/PuzzleChain.h"
 #include "Gameplay/TerminalConsole.h"
+#include "Gameplay/TeslaGun.h"
 #include "Math/Random.h"
 #include "Physics/Physics.h"
 #include "Render/Renderer.h"
@@ -36,11 +38,11 @@ namespace {
 
 constexpr float kRingCycle = 6.0f;  ///< A ring of the bell every 6 s (2 s on, 4 s off)...
 constexpr int   kRings     = 6;     ///< ...this many times, then it gives up.
-constexpr float kBellGain  = 0.6f;
+constexpr float kBellGain  = 0.71f;
 constexpr float kBellCarry = 4.0f;  ///< A bell carries: full level within 4 m, then 1/distance.
 constexpr float kRingNear  = 3.0f;  ///< The phone that rings is no nearer than this...
 constexpr float kRingFar   = 16.0f; ///< ...and no farther if it is in view...
-constexpr float kRingFarWall = 10.0f; ///< ...or than this behind one wall (never more).
+constexpr float kRingFarWall = 8.0f;  ///< ...or than this behind one wall (never more): a bright bell loses a lot to a wall.
 
 inline float smooth01(float x) {
     x = std::clamp(x, 0.0f, 1.0f);
@@ -54,7 +56,7 @@ inline float pitchToward(const glm::vec3& d) { return std::asin(std::clamp(d.y /
 // ---- The chain ---------------------------------------------------------------------------------
 
 void Engine::advancePuzzle(PuzzleStage stage, const char* why) {
-    if (m_puzzle->advance(stage)) std::printf("[Puzzle] %s: %s\n", PuzzleChain::stageName(stage), why);
+    if (m_puzzle->advance(stage)) con::spoiler("PUZZLE", con::format("{%s}: %s", PuzzleChain::stageName(stage), why));
 }
 
 void Engine::handlePuzzleEvents(const std::vector<PuzzleEvent>& events) {
@@ -82,7 +84,8 @@ void Engine::armExit(const ChunkCoord& exit) {
         for (int dx = -1; dx <= 1; ++dx) m_chunks->reload({exit.x + dx, exit.z + dz, exit.level});
     }
     if (const auto& cell = m_world->exitCell()) {
-        std::printf("[Puzzle] The exit: chunk (%d, %d) on level %d, the room in cell (%d, %d)\n", exit.x, exit.z, exit.level, cell->x, cell->y);
+        con::spoiler("PUZZLE", con::format("The exit: chunk {(%d, %d)} on level {%d}, the room in cell {(%d, %d)}", exit.x, exit.z,
+                                           exit.level, cell->x, cell->y));
     }
 }
 
@@ -100,10 +103,10 @@ void Engine::startNoclip() {
     m_noclipSwitched = false;
     m_monologueStarted = false;
     stopRinging();
-    m_sound->playInHead(SoundId::NoclipTear, 0.54f); // loud enough to tear reality, not the player's ears
+    m_sound->playInHead(SoundId::NoclipTear, 0.38f); // loud enough to tear reality, not the player's ears
     setState(GameState::Noclip);
-    std::printf("[Puzzle] Noclip: through the wall at (%.1f, %.1f) on level %d\n", m_player->feetPosition().x, m_player->feetPosition().z,
-                m_focusLevel);
+    con::spoiler("PUZZLE", con::format("Noclip: through the wall at {(%.1f, %.1f)} on level {%d}", m_player->feetPosition().x,
+                                       m_player->feetPosition().z, m_focusLevel));
 }
 
 void Engine::updateNoclip(float dt) {
@@ -167,8 +170,8 @@ void Engine::enterOffice() {
         teleportPlayer(m_chunks->findSpawnPoint(feet, office::kLevel, m_player->shape(), *m_physics), office::kLevel, yaw);
     }
     m_player->setViewAngles(yaw, glm::radians(-14.0f)); // looking down at the desk
-    std::printf("[Puzzle] The office: %zu chunks, the player at (%.2f, %.2f)\n", m_chunks->chunkCount(), m_player->feetPosition().x,
-                m_player->feetPosition().z);
+    con::spoiler("PUZZLE", con::format("The office: {%zu} chunks, the player at {(%.2f, %.2f)}", m_chunks->chunkCount(),
+                                       m_player->feetPosition().x, m_player->feetPosition().z));
 }
 
 void Engine::say(const std::string& line, float seconds) {
@@ -179,17 +182,36 @@ void Engine::say(const std::string& line, float seconds) {
 // ---- Phones ringing ------------------------------------------------------------------------------
 
 void Engine::stopRinging() {
+    if (m_ringingPhone) {
+        if (Phone* phone = m_chunks->phoneById(m_ringingPhone)) phone->setRinging(false); // its lamp goes dark
+    }
     m_ringingPhone = 0;
     m_ringTime = 0.0f;
 }
 
+ArcLight Engine::ringLight() const {
+    ArcLight light;
+    const Phone* phone = m_ringingPhone ? static_cast<const ChunkManager&>(*m_chunks).phoneById(m_ringingPhone) : nullptr;
+    if (!phone) return light;
+    // The same flash as the lamp itself (the world shader's ringing lamp): fast
+    // during each 2 s ring of the cadence, a faint glow between rings.
+    const float blink = m_ringTime * 10.0f - std::floor(m_ringTime * 10.0f);
+    const float flash = std::fmod(m_ringTime, kRingCycle) < 2.0f ? (blink >= 0.45f ? 1.0f : 0.0f) : 0.15f;
+    light.position = glm::vec3(phone->lampMatrix()[3]) + glm::vec3(0.0f, 0.06f, 0.0f);
+    light.color = glm::vec3(1.0f, 0.12f, 0.06f);
+    light.intensity = 0.45f * flash; // a little lamp: it tints the desk round it, no more
+    light.range = 1.75f;
+    return light;
+}
+
 void Engine::updateRinger(float dt) {
     if (m_ringingPhone) {
-        const Phone* phone = m_chunks->phoneById(m_ringingPhone);
+        Phone* phone = m_chunks->phoneById(m_ringingPhone);
         if (!phone || phone->offHook()) {
             stopRinging();
             return;
         }
+        phone->setRinging(true); // (every frame: its chunk may have been rebuilt)
         const float before = m_ringTime;
         m_ringTime += dt;
         if (before == 0.0f || std::floor(before / kRingCycle) != std::floor(m_ringTime / kRingCycle)) {
@@ -231,8 +253,8 @@ void Engine::updateRinger(float dt) {
     m_ringingPhone = pick[walls]->id();
     m_ringTime = 0.0f;
     if (!m_options.demo.empty()) {
-        std::printf("[Demo] A phone %.1fm away starts ringing (%s)\n", glm::length(pick[walls]->center() - eye),
-                    walls == 0 ? "in view" : "one wall away");
+        std::printf("[Demo] t=%.2f a phone %.1fm away starts ringing (%s; id %llx)\n", m_demoTime, glm::length(pick[walls]->center() - eye),
+                    walls == 0 ? "in view" : "one wall away", static_cast<unsigned long long>(m_ringingPhone));
     }
 }
 
@@ -433,6 +455,31 @@ void Engine::updatePuzzleDemo() {
         m_console->type(text);
         m_console->submit(terminalContext());
     };
+    if ((demo == "ringer" || demo == "office") && m_ringingPhone && (m_options.demoInput == "look" || m_options.demoInput == "look-far")) {
+        // --type look / look-far: stand 3 m / 8 m in front of the ringing phone, looking at it.
+        static uint64_t placed = 0;
+        if (const Phone* phone = m_chunks->phoneById(m_ringingPhone)) {
+            if (placed != m_ringingPhone) {
+                const glm::vec3 front = glm::normalize(glm::vec3(phone->modelMatrix() * glm::vec4(0.0f, 0.0f, 1.0f, 0.0f)));
+                const glm::vec3 out = glm::normalize(glm::vec3(front.x, 0.0f, front.z));
+                // As far back as asked - but not out of the room (no wall between the player and the phone).
+                glm::vec3 stand = phone->center() + out * 2.0f;
+                for (float d = m_options.demoInput == "look" ? 3.0f : 8.0f; d > 2.0f; d -= 0.5f) {
+                    const glm::vec3 p = phone->center() + out * d;
+                    if (m_world->wallsBetween(m_focusLevel, glm::vec2(phone->center().x, phone->center().z), glm::vec2(p.x, p.z), 1) == 0) {
+                        stand = p;
+                        break;
+                    }
+                }
+                stand.y = world::levelFloorY(m_focusLevel);
+                m_player->teleport(stand, m_player->yaw());
+                std::printf("[Demo] Looking at the ringing phone from %.1fm\n", glm::length(glm::vec2(stand.x - phone->center().x, stand.z - phone->center().z)));
+                placed = m_ringingPhone;
+            }
+            const glm::vec3 d = phone->center() - m_player->eyePosition();
+            m_player->setViewAngles(yawToward(d), pitchToward(d));
+        }
+    }
     if (demo == "terminal-pause") {
         // SPACE on the live log, ESC, sit down again, SPACE: does the stream come back?
         auto press = [this](SDL_Scancode code, const char* text) {

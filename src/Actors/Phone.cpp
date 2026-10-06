@@ -265,11 +265,11 @@ MeshData Phone::buildKeyMesh(int key) {
 MeshData Phone::buildLampMesh(PhoneLamp lamp) {
     // A lens button: dark sides reaching down into the hump (no gap when it is
     // pressed), the red lens on top. The lens UVs carry the state for the
-    // shader: +2 in u lights it steadily, +4 makes it blink.
+    // shader: +2 in u lights it steadily, +4 makes it blink, +6 flashes it with the bell.
     MeshData m;
     const glm::mat4 I(1.0f);
     box(m, I, {-kLampHalfW, -0.004f, -kLampHalfD}, {kLampHalfW, kLampTop, kLampHalfD}, MaterialId::DarkPlastic, mesh::FaceSides);
-    const float du = lamp == PhoneLamp::Lit ? 2.0f : lamp == PhoneLamp::Blinking ? 4.0f : 0.0f;
+    const float du = lamp == PhoneLamp::Lit ? 2.0f : lamp == PhoneLamp::Blinking ? 4.0f : lamp == PhoneLamp::Ringing ? 6.0f : 0.0f;
     atlasQuad(m, I, -kLampHalfW, kLampHalfW, -kLampHalfD, kLampHalfD, kLampTop, {3 * kCell + 0.02f + du, 3 * kCell + 0.02f},
               {4 * kCell - 0.02f + du, 4 * kCell - 0.02f});
     return m;

@@ -24,6 +24,7 @@
 #include "Audio/SpeechSynth.h"
 #include "Audio/SynthKit.h"
 #include "Audio/TeslaSounds.h"
+#include "Core/ConsoleLog.h"
 #include "Math/Noise.h"
 #include "Math/Random.h"
 
@@ -1020,8 +1021,8 @@ void SoundBank::build() {
     }
 
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
-    std::cout << "[Audio] Synthesised " << kSoundIdCount << " sounds (" << static_cast<int>(totalSamples / kRate)
-              << " s of audio) in " << static_cast<int>(ms) << " ms\n";
+    con::line("AUDIO", con::format("Synthesised {%d} sounds ({%d s} of audio) in {%d ms}", kSoundIdCount,
+                                   static_cast<int>(totalSamples / kRate), static_cast<int>(ms)));
 }
 
 void SoundBank::writeWavFiles(const std::string& directory) const {

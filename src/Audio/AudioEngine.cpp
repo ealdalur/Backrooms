@@ -4,10 +4,10 @@
 #include "Audio/AudioEngine.h"
 
 #include "Audio/SoundBank.h"
+#include "Core/ConsoleLog.h"
 
 #include <algorithm>
 #include <cmath>
-#include <iostream>
 
 namespace {
 constexpr int kBlockFrames = 512; ///< Frames mixed per inner pass.
@@ -25,7 +25,7 @@ AudioEngine::~AudioEngine() { shutdown(); }
 
 bool AudioEngine::init() {
     if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
-        std::cerr << "[Audio] SDL audio unavailable (" << SDL_GetError() << "); continuing without sound\n";
+        con::line("AUDIO", con::format("SDL audio unavailable (%s); continuing without sound", SDL_GetError()), con::Level::Warn);
         return false;
     }
     SDL_AudioSpec spec{};
@@ -34,7 +34,7 @@ bool AudioEngine::init() {
     spec.freq = dsp::kSampleRate;
     m_stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, &AudioEngine::streamCallback, this);
     if (!m_stream) {
-        std::cerr << "[Audio] Could not open playback device (" << SDL_GetError() << "); continuing without sound\n";
+        con::line("AUDIO", con::format("Could not open playback device (%s); continuing without sound", SDL_GetError()), con::Level::Warn);
         SDL_QuitSubSystem(SDL_INIT_AUDIO);
         return false;
     }

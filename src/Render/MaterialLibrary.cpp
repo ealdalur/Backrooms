@@ -5,6 +5,7 @@
 // ---------------------------------------------------------------------------
 #include "Render/MaterialLibrary.h"
 
+#include "Core/ConsoleLog.h"
 #include "Math/Noise.h"
 #include "Math/Random.h"
 #include "Render/AtlasLayout.h"
@@ -18,7 +19,6 @@
 #include <cstring>
 #include <functional>
 #include <future>
-#include <iostream>
 #include <vector>
 
 #ifndef GL_MAX_TEXTURE_MAX_ANISOTROPY
@@ -1042,8 +1042,8 @@ bool MaterialLibrary::build(int size) {
     }
 
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
-    std::cout << "[Materials] Generated " << kMaterialCount << " procedural materials at " << size << "x" << size
-              << " in " << static_cast<int>(ms) << " ms (anisotropy " << maxAniso << "x)\n";
+    con::line("RENDER", con::format("Generated {%d} procedural materials at {%dx%d} in {%d ms} (anisotropy {%gx})", kMaterialCount, size,
+                                    size, static_cast<int>(ms), static_cast<double>(maxAniso)));
     return glGetError() == GL_NO_ERROR;
 }
 

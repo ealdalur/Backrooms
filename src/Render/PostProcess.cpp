@@ -3,10 +3,10 @@
 // ---------------------------------------------------------------------------
 #include "Render/PostProcess.h"
 
+#include "Core/ConsoleLog.h"
 #include "Render/ShaderSources.h"
 
 #include <algorithm>
-#include <iostream>
 
 namespace {
 constexpr int kMaxBloomMips = 6;
@@ -37,7 +37,7 @@ bool PostProcess::init(int width, int height, int msaaSamples) {
     const GLenum msaaStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     if (msaaStatus != GL_FRAMEBUFFER_COMPLETE) {
-        std::cerr << "[PostProcess] HDR framebuffer incomplete (0x" << std::hex << msaaStatus << std::dec << ")\n";
+        con::line("RENDER", con::format("HDR framebuffer incomplete ({0x%x})", static_cast<unsigned>(msaaStatus)), con::Level::Error);
         return false;
     }
     return true;
