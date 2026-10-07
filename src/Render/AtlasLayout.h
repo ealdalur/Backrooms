@@ -79,6 +79,8 @@ enum class Sign : int {
     PosterBlue,     ///< Blue gradient poster (team spirit), black frame.
     Brass,          ///< Brushed brass plate.
     Chart,          ///< Gridded paper with a bar chart that only goes up.
+    // Fourth row (cj = 0).
+    PosterDoom,     ///< DOOM: the flared logo over hellfire and a horned skull, black caption band.
     Count
 };
 

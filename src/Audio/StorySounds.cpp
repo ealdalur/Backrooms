@@ -76,9 +76,29 @@ float heardLevel(const Buffer& speech) {
 }
 const char* const kMonologueText = "Phew, back in the real world. How long have I been gone? I guess I'm still at work...";
 
+// The Wanderer at its desk: the voice that begged in the dark, bored stiff.
+struct Grumble {
+    const char* phonemes;
+    const char* text;
+    bool        question; ///< The pitch rises at the end.
+};
+const Grumble kGrumbles[] = {
+    {"OW | M AE N || W ER K | S AH K S", "Oh man, work sucks.", false},
+    {"IH Z | IH T | T AY M | T UW | G OW | HH OW M | Y EH T", "Is it time to go home yet?", true},
+    {"AY | HH EY T | M AH N D EY Z", "I hate Mondays.", false},
+    {"AH N AH DH ER || M IY T IH NG", "Another meeting...", false},
+    {"HH AE Z | EH N IY W AH N | S IY N | M AY | S T EY P L ER", "Has anyone seen my stapler?", true},
+    {"AY | K AE N T | S IY | M AY | S K R IY N", "I can't see my screen.", false},
+    {"F AY V | M AO R | M IH N AH T S", "Five more minutes...", false},
+};
+constexpr int kGrumbleCount = static_cast<int>(sizeof(kGrumbles) / sizeof(kGrumbles[0]));
+
 } // namespace
 
 const char* monologueText() { return kMonologueText; }
+
+int workGrumbleCount() { return kGrumbleCount; }
+const char* workGrumbleText(int variant) { return variant >= 0 && variant < kGrumbleCount ? kGrumbles[variant].text : ""; }
 
 std::vector<Sound> makeNoclipTear(uint64_t seed) {
     // A sawtooth screaming up five octaves while the bit depth and sample rate
@@ -168,6 +188,73 @@ std::vector<Sound> makeMonologue(uint64_t seed) {
     const float level = 0.089f / std::max(heardLevel(b), 1e-4f);
     for (float& s : b) s = std::tanh(level * s);
     return {{std::move(b), false}};
+}
+
+std::vector<Sound> makeWorkGrumble(uint64_t seed) {
+    // The Wanderer's own voice (its mutter in Audio/SoundBank): low, breathy,
+    // shaky, a little worn tape - but spoken out loud, bored rather than begging.
+    std::vector<Sound> out;
+    int v = 0;
+    for (const Grumble& g : kGrumbles) {
+        rnd::Rng rng(rnd::hashCombine(seed, static_cast<uint64_t>(v++)));
+        speech::Voice voice;
+        voice.seed = rng.next();
+        voice.pitchStart = rng.range(80.0f, 88.0f);
+        voice.pitchEnd = voice.pitchStart * (g.question ? 1.25f : rng.range(0.7f, 0.78f));
+        voice.whisper = 0.2f;
+        voice.breathiness = 0.4f;
+        voice.tempo = rng.range(1.15f, 1.35f);
+        voice.tract = rng.range(0.88f, 0.93f);
+        voice.jitter = 0.035f;
+        voice.tremor = 0.45f;
+        Buffer b = tapeWow(speech::say(g.phonemes, voice), 0.02f, rng.range(0.4f, 0.8f), rng.next());
+        applyFilter(b, Biquad::lowpass(4200.0f));
+        fadeEdges(b, 0.005f, 0.08f);
+        normalize(b, 0.9f);
+        out.push_back({std::move(b), false});
+    }
+    return out;
+}
+
+std::vector<Sound> makeWorkSnarl(uint64_t seed) {
+    // The Stalker at its desk: a low, wet snarl swelling through a throat that
+    // opens as it goes, rattling at ~28 Hz, over a growling subharmonic - and a
+    // hiss through its teeth to finish.
+    std::vector<Sound> out;
+    for (int v = 0; v < 4; ++v) {
+        rnd::Rng rng(rnd::hashCombine(seed, static_cast<uint64_t>(v)));
+        Noise noise(rng.next());
+        const float dur = rng.range(1.0f, 1.8f);
+        Buffer b = silence(dur + 0.6f);
+        const float f0 = rng.range(52.0f, 68.0f), jaw0 = rng.range(360.0f, 460.0f), jaw1 = rng.range(620.0f, 760.0f);
+        const float rattleHz = rng.range(24.0f, 32.0f);
+        Biquad f1 = Biquad::bandpass(jaw0, 4.0f), f2 = Biquad::bandpass(rng.range(1100.0f, 1450.0f), 5.0f),
+               f3 = Biquad::bandpass(rng.range(2400.0f, 2900.0f), 6.0f);
+        double phase = 0.0;
+        float jitter = 0.0f;
+        for (size_t i = 0; i < samplesFor(dur); ++i) {
+            const float t = timeOf(i), x = t / dur;
+            if (i % 64 == 0) {
+                f1.configure(Biquad::Type::Bandpass, jaw0 + (jaw1 - jaw0) * std::sin(dsp::kPi * x), 4.0f);
+                jitter = 0.12f * noise();
+            }
+            phase += f0 * (1.0f + 0.3f * std::sin(dsp::kPi * x) + jitter) / kRate;
+            const float saw = static_cast<float>(2.0 * (phase - std::floor(phase)) - 1.0);
+            const float sub = static_cast<float>(std::sin(dsp::kPi * phase)); // an octave below
+            const float rattle = 0.5f + 0.5f * std::sin(dsp::kTwoPi * rattleHz * t + 3.0f * std::sin(dsp::kTwoPi * 3.1f * t));
+            const float src = (0.7f * saw + 0.45f * sub + 0.4f * noise()) * (0.35f + 0.65f * rattle);
+            const float env = smooth01(0.0f, 0.12f, t) * (1.0f - smooth01(0.7f * dur, dur, t)) * (0.6f + 0.4f * std::sin(dsp::kPi * x));
+            b[i] = (f1.process(src) + 0.55f * f2.process(src) + 0.25f * f3.process(src)) * env;
+        }
+        addNoiseBurst(b, dur - 0.15f, 0.06f, 0.12f, Biquad::bandpass(rng.range(4000.0f, 5500.0f), 1.2f), 0.5f, noise, 0.5f);
+        for (float& s : b) s = std::tanh(2.4f * s);
+        applyFilter(b, Biquad::lowpass(6500.0f));
+        applyFilter(b, Biquad::highpass(40.0f));
+        fadeEdges(b, 0.005f, 0.15f);
+        normalize(b, 0.9f);
+        out.push_back({std::move(b), false});
+    }
+    return out;
 }
 
 } // namespace storysfx

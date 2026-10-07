@@ -922,6 +922,88 @@ void generateSignage(Canvas& c) {
             }
             break;
         }
+        case atlas::Sign::PosterDoom: {
+            // Somebody's DOOM poster: the logo's chunky block letters flaring out
+            // towards the ends (yellow-hot on top, cooling to blood red, outlined,
+            // a drop shadow), over a horned skull glaring out of hellfire, and a
+            // black caption band at the bottom for the words.
+            col = glm::vec3(0.07f, 0.06f, 0.06f); // the frame
+            spec = 0.45f;
+            if (edge < 0.025f) break;
+            col = glm::vec3(0.015f, 0.01f, 0.01f);
+            // Poster space: x across, scaled to the poster's 0.40 x 0.56 m so circles stay round.
+            const float px = (cu - 0.5f) * (0.40f / 0.56f), py = cv;
+            if (cv > 0.19f && cv < 0.97f) {
+                // Hellfire: a dark crimson sky, tongues of flame licking up from the bottom.
+                const float h = (cv - 0.19f) / 0.78f;
+                col = glm::mix(glm::vec3(0.45f, 0.05f, 0.02f), glm::vec3(0.05f, 0.008f, 0.008f), sat(h * 1.6f));
+                const float n = noise::fbm(cu * 8.0f, h * 4.0f, 8, 4, 4, 0xD00Au);
+                const float heat = sat(1.0f - h * 2.4f + (n - 0.5f) * 1.1f);
+                const glm::vec3 fire = heat < 0.5f ? glm::mix(glm::vec3(0.6f, 0.06f, 0.02f), glm::vec3(1.0f, 0.45f, 0.05f), heat * 2.0f)
+                                                   : glm::mix(glm::vec3(1.0f, 0.45f, 0.05f), glm::vec3(1.0f, 0.9f, 0.45f), heat * 2.0f - 1.0f);
+                col = glm::mix(col, fire, smooth(0.12f, 0.4f, heat));
+                // The skull: cranium, jaw, horns; the eye sockets burn.
+                const glm::vec2 q(std::fabs(px), py);
+                const float cranium = glm::length(q - glm::vec2(0.0f, 0.5f)) - 0.12f;
+                const bool jaw = q.x < 0.075f - (0.43f - q.y) * 0.25f && q.y > 0.355f && q.y < 0.43f;
+                const bool horn = glm::length(q - glm::vec2(0.135f, 0.60f)) < 0.085f && glm::length(q - glm::vec2(0.105f, 0.635f)) > 0.075f &&
+                                  q.y > 0.55f;
+                const float eye = glm::length((q - glm::vec2(0.047f, 0.49f)) * glm::vec2(1.0f, 1.35f)) - 0.032f;
+                const bool nose = q.y > 0.43f && q.y < 0.465f && q.x < (q.y - 0.43f) * 0.6f;
+                if (horn) {
+                    col = glm::vec3(0.32f, 0.25f, 0.2f) * (0.6f + 0.4f * sat((q.y - 0.55f) / 0.12f));
+                } else if (cranium < 0.0f || jaw) {
+                    const float lit = 0.5f + 0.5f * sat((py - 0.36f) / 0.26f);
+                    col = glm::vec3(0.78f, 0.7f, 0.56f) * lit + glm::vec3(0.35f, 0.06f, 0.0f) * (1.0f - lit); // fire-lit from below
+                    if (jaw && fract(q.x * 70.0f) < 0.18f) col *= 0.35f;                                    // between the teeth
+                    if (jaw && std::fabs(q.y - 0.395f) < 0.004f) col *= 0.3f;                                // the bite
+                    if (eye < 0.0f) {
+                        col = glm::mix(glm::vec3(1.0f, 0.12f, 0.03f), glm::vec3(1.0f, 0.75f, 0.3f), sat(-eye / 0.032f));
+                        emissive = 0.8f;
+                    }
+                    if (nose) col *= 0.2f;
+                }
+            }
+            // The logo, flared: the letters grow towards the poster's ends.
+            static const char* const kLetters[4][5] = {
+                {"11110", "11011", "11011", "11011", "11110"}, // D
+                {"01110", "11011", "11011", "11011", "01110"}, // O
+                {"01110", "11011", "11011", "11011", "01110"}, // O
+                {"10001", "11011", "11111", "10101", "10001"}, // M
+            };
+            // How far down a letter (0..1) a point is, or < 0 off the letters; `bevel` lights the blocks' top-left edges.
+            auto logo = [&](float lu, float lv, float* bevel) -> float {
+                if (lu < 0.07f || lu > 0.93f) return -1.0f;
+                const float lx = (lu - 0.07f) / 0.86f * 4.0f;
+                const int li = std::min(3, static_cast<int>(lx));
+                const float fx = (lx - static_cast<float>(li) - 0.05f) / 0.9f;
+                const float height = 0.14f + 0.08f * std::pow(std::fabs(lu - 0.5f) * 2.0f, 1.5f);
+                const float fy = (0.92f - lv) / height;
+                if (fx < 0.0f || fx >= 1.0f || fy < 0.0f || fy >= 1.0f) return -1.0f;
+                if (kLetters[li][static_cast<int>(fy * 5.0f)][static_cast<int>(fx * 5.0f)] != '1') return -1.0f;
+                if (bevel) *bevel = (fract(fy * 5.0f) < 0.16f ? 0.25f : 0.0f) + (fract(fx * 5.0f) < 0.12f ? 0.12f : 0.0f) -
+                                    (fract(fy * 5.0f) > 0.86f ? 0.25f : 0.0f);
+                return fy;
+            };
+            float bevel = 0.0f;
+            const float fy = logo(cu, cv, &bevel);
+            if (fy >= 0.0f) {
+                const glm::vec3 hot = fy < 0.35f ? glm::mix(glm::vec3(1.0f, 0.92f, 0.35f), glm::vec3(1.0f, 0.55f, 0.08f), fy / 0.35f)
+                                                 : glm::mix(glm::vec3(1.0f, 0.55f, 0.08f), glm::vec3(0.55f, 0.04f, 0.02f), (fy - 0.35f) / 0.65f);
+                col = hot * (1.0f + bevel);
+                spec = 0.7f;
+            } else {
+                const float o = 0.006f;
+                const bool outline = logo(cu - o, cv, nullptr) >= 0.0f || logo(cu + o, cv, nullptr) >= 0.0f ||
+                                     logo(cu, cv - o, nullptr) >= 0.0f || logo(cu, cv + o, nullptr) >= 0.0f;
+                if (outline) col = glm::vec3(0.02f);
+                else if (logo(cu - 0.014f, cv + 0.014f, nullptr) >= 0.0f) col *= 0.25f; // the drop shadow
+            }
+            // The caption band, a red rule over it.
+            if (cv < 0.17f) col = glm::vec3(0.012f);
+            else if (cv < 0.185f) col = glm::vec3(0.5f, 0.05f, 0.02f);
+            break;
+        }
         default:
             col = glm::vec3(0.5f);
             break;

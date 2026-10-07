@@ -25,8 +25,9 @@
 //   EX exit lobbies, each with an emergency exit that does not open.
 // Inside the ring: a field of cubicle pods (four cubicles each, dingy fabric
 // partitions) split by aisles, with plants, water coolers and bins along the
-// walkways. Nobody is here. The terminals and phones work just like the ones
-// in the Backrooms. That is the joke.
+// walkways. Nobody is here (well - almost: see workerDesk). The terminals and
+// phones work just like the ones in the Backrooms. That is the joke. A DOOM
+// poster hangs in the player's own cubicle.
 // ---------------------------------------------------------------------------
 
 #include "World/Chunk.h"
@@ -70,5 +71,14 @@ void furnish(ChunkBlueprint& bp, uint64_t seed);
 
 /// Where the player arrives: standing in a cubicle, looking at its desk.
 void spawn(glm::vec3& feet, float& yaw);
+
+/// Who else made it out (an Easter egg, see AI/OfficeWorkers): the Wanderer
+/// (0) and the Stalker (1) at work in two neighbouring cubicles, in the corner
+/// of the cubicle field farthest from the player's. Their desks' model
+/// matrices (desk space: +Z towards whoever sits there).
+glm::mat4 workerDesk(int worker);
+inline const glm::vec3 kWorkerTerminal{-0.2f, 0.75f, -0.04f}; ///< Desk space: where the terminal stands...
+inline const glm::vec3 kWorkerKeys{-0.2f, 0.79f, 0.24f};      ///< ...the middle of its keyboard...
+inline const glm::vec3 kWorkerSeat{-0.2f, 0.0f, 0.8f};        ///< ...and the chair, square in front of it.
 
 } // namespace office

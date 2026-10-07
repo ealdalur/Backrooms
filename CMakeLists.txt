@@ -15,6 +15,7 @@ set(BACKROOMS_SOURCES
   src/AI/Agent.cpp
   src/AI/EntityDirector.cpp
   src/AI/NavGrid.cpp
+  src/AI/OfficeWorkers.cpp
   src/AI/Stalker.cpp
   src/AI/Wanderer.cpp
 
@@ -93,6 +94,7 @@ set(BACKROOMS_HEADERS
   src/AI/EntityDirector.h
   src/AI/NavGrid.h
   src/AI/NoiseEvent.h
+  src/AI/OfficeWorkers.h
   src/AI/Perception.h
   src/AI/Stalker.h
   src/AI/Wanderer.h

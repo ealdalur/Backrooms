@@ -71,6 +71,7 @@
 
 class ChunkManager;
 class EntityDirector;
+class OfficeWorkers;
 class PuzzleChain;
 struct ArcLight;
 struct PuzzleEvent;
@@ -91,6 +92,10 @@ struct ItemSite;
 struct TerminalContext;
 namespace doom { struct Controls; }
 
+/// How the window starts: Auto is full screen on a discrete GPU, else windowed
+/// at the default size (cfg::kWindowWidth x kWindowHeight).
+enum class WindowMode : uint8_t { Auto, Windowed, Fullscreen };
+
 /// Start-up options (read from the command line by Core/CommandLine).
 struct EngineOptions {
     uint64_t    seed = cfg::kDefaultWorldSeed;
@@ -105,8 +110,9 @@ struct EngineOptions {
     bool        noTitle = false;         ///< Straight into the game, without the title (always so in a developer scene).
     bool        verbose = false;         ///< Developer log: also print what gives the game's secrets away.
     std::string puzzleStage;             ///< Start the puzzle chain this far along: dialed, memory.
-    int         windowWidth = cfg::kWindowWidth;   ///< Initial window size (logical pixels).
+    int         windowWidth = cfg::kWindowWidth;   ///< Window size (logical pixels) - also what F11 returns to from full screen.
     int         windowHeight = cfg::kWindowHeight;
+    WindowMode  windowMode = WindowMode::Auto;     ///< --size, --windowed and --screenshot make it Windowed; --fullscreen, Fullscreen.
     std::string dumpSoundsDir;           ///< If set: write every synthesised sound there as WAV.
 };
 
@@ -266,6 +272,7 @@ private:
     std::unique_ptr<Renderer>       m_renderer;
     std::unique_ptr<Soundscape>     m_sound;
     std::unique_ptr<EntityDirector> m_entities;
+    std::unique_ptr<OfficeWorkers>  m_workers;   ///< Who else made it out: at their desks in the office.
     std::unique_ptr<PuzzleChain>    m_puzzle;
     bool                            m_office = false; ///< Escaped: the world is the office now.
     EntityDrawList                  m_entityDraw;

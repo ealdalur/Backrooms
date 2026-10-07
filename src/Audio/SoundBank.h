@@ -107,6 +107,8 @@ enum class SoundId : uint8_t {
     PhoneBell,        ///< A desk phone ringing in the room (one 2 s ring of the cadence).
     NoclipTear,       ///< Reality tearing as the player noclips out of the Backrooms.
     Monologue,        ///< The player, in the office: "Phew, back in the real world..."
+    WorkGrumble,      ///< The Wanderer at its office desk: "Oh man, work sucks"; variant = the line (storysfx::workGrumbleText).
+    WorkSnarl,        ///< The Stalker at its office desk: a wet, rattling snarl.
     Count
 };
 

@@ -25,7 +25,9 @@ const OptionHelp kOptions[] = {
     {"<seed>", "World seed, decimal or 0x hex: same seed, same world."},
     {"--seed <n>", "The same, as an option."},
     {"--level <n>", "Storey to start on (0 = the classic floor)."},
-    {"--size <w>x<h>", "Window size in logical pixels, e.g. 1280x720."},
+    {"--fullscreen", "Start full screen (the default on a discrete GPU)."},
+    {"--windowed", "Start in a window (the default on an integrated GPU)."},
+    {"--size <w>x<h>", "The window's size in logical pixels, e.g. 1280x720."},
     {"--no-title", "Straight into the game, without the title screen."},
     {"--no-entities", "Without the Stalker and the Wanderer."},
     {"--screenshot <file.bmp>", "Save the frame after --delay seconds, and exit."},
@@ -279,6 +281,7 @@ bool parseCommandLine(int argc, char* argv[], EngineOptions& options, int& exitC
     };
 
     bool help = false;
+    bool sized = false; // --size: a window of that size, unless --fullscreen says otherwise
     std::string topic; // "" = whatever the rest of the command line is about
     for (int i = 1; i < argc; ++i) {
         const char* arg = argv[i];
@@ -343,6 +346,7 @@ bool parseCommandLine(int argc, char* argv[], EngineOptions& options, int& exitC
             const long w = std::strtol(v, &end, 10);
             const long h = (end && (*end == 'x' || *end == 'X')) ? std::strtol(end + 1, &end, 10) : 0;
             if (w < 64 || h < 64 || *end != '\0') return fail(std::string("Invalid size: ") + v, "Width x height, e.g. --size 1280x720.");
+            sized = true;
             options.windowWidth = static_cast<int>(w);
             options.windowHeight = static_cast<int>(h);
         } else if (std::strcmp(arg, "--screenshot") == 0) {
@@ -361,12 +365,18 @@ bool parseCommandLine(int argc, char* argv[], EngineOptions& options, int& exitC
             options.noEntities = true;
         } else if (std::strcmp(arg, "--no-title") == 0) {
             options.noTitle = true;
+        } else if (std::strcmp(arg, "--fullscreen") == 0) {
+            options.windowMode = WindowMode::Fullscreen;
+        } else if (std::strcmp(arg, "--windowed") == 0) {
+            options.windowMode = WindowMode::Windowed;
         } else if (std::strcmp(arg, "--verbose") == 0) {
             options.verbose = true;
         } else if (arg[0] == '-' || !parseSeed(arg, options.seed)) {
             return fail(std::string("Unknown argument: ") + arg, "Backrooms --help lists every option.");
         }
     }
+
+    if (sized && options.windowMode == WindowMode::Auto) options.windowMode = WindowMode::Windowed;
 
     if (help) {
         // --demo phone --help: about that scene; --puzzle memory --help: about the stages.

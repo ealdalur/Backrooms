@@ -1005,6 +1005,7 @@ void SoundBank::build() {
         teslasfx::makeCabinetOpen, teslasfx::makeCabinetClose, teslasfx::makeWandererPain, teslasfx::makeWandererDeath,
         teslasfx::makeStalkerPain, teslasfx::makeStalkerDeath, teslasfx::makeVaporize,
         phonesfx::makeClue, phonesfx::makeBell, storysfx::makeNoclipTear, storysfx::makeMonologue,
+        storysfx::makeWorkGrumble, storysfx::makeWorkSnarl,
     };
 
     // Every sound is independent: synthesise them all concurrently.
@@ -1040,7 +1041,7 @@ void SoundBank::writeWavFiles(const std::string& directory) const {
         "phone_operator", "phone_static", "phone_voice", "phone_breath", "phone_jenny", "phone_beep", "phone_message",
         "part_pickup", "part_swap", "assemble_snap", "weapon_power_up", "tesla_arc", "tesla_zap", "tesla_dry_click",
         "battery_low", "cabinet_open", "cabinet_close", "wanderer_pain", "wanderer_death", "stalker_pain",
-        "stalker_death", "vaporize", "phone_clue", "phone_bell", "noclip_tear", "monologue",
+        "stalker_death", "vaporize", "phone_clue", "phone_bell", "noclip_tear", "monologue", "work_grumble", "work_snarl",
     };
     static_assert(sizeof(kNames) / sizeof(kNames[0]) == kSoundIdCount, "one file name per SoundId");
     auto put16 = [](std::ofstream& f, uint16_t v) { f.put(static_cast<char>(v & 0xFF)).put(static_cast<char>(v >> 8)); };

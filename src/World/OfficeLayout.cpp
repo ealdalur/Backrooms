@@ -39,6 +39,24 @@ constexpr float kPanelHalf   = 0.03f; ///< Half thickness.
 constexpr int kSpawnX = 8, kSpawnZ = 7;
 constexpr int kSpawnQx = -1, kSpawnQz = -1;
 
+/// The pod the Wanderer and the Stalker work in - the cubicle field's corner
+/// farthest from the player's (some 45 m away) - and their quadrants: side by
+/// side along its south row, the Stalker's cubicle opening onto the corridor.
+constexpr int kWorkersX = 15, kWorkersZ = 2;
+constexpr int kWorkerQx[2] = {-1, 1};
+constexpr int kWorkerQz = -1;
+
+/// Whose cubicle quadrant (sx, sz) of pod (gx, gz) is: 0 the Wanderer's, 1 the Stalker's, -1 nobody's.
+int workerAt(int gx, int gz, float sx, float sz) {
+    if (gx != kWorkersX || gz != kWorkersZ || sz != static_cast<float>(kWorkerQz)) return -1;
+    return sx == static_cast<float>(kWorkerQx[0]) ? 0 : 1;
+}
+
+/// Where the desk of quadrant (sx, sz) of a pod centred at `centre` stands, against its back panel.
+glm::vec3 deskPosition(const glm::vec3& centre, float sx, float sz) {
+    return {centre.x + sx * kPod * 0.5f, centre.y, centre.z + sz * (kPod - kPanelHalf - 0.375f - 0.01f)};
+}
+
 constexpr glm::ivec2 kConferenceDoor(11, kDepth - 1);
 
 bool inside(int gx, int gz) { return gx >= 0 && gx < kWidth && gz >= 0 && gz < kDepth; }
@@ -280,6 +298,16 @@ private:
         fittedText(w, along, bottom + 0.215f, depth, p.title, decals::Ink::PrintWhite, {0.52f, 0.07f}, 0.055f);
         fittedText(w, along, bottom + 0.105f, depth, p.line, decals::Ink::PrintWhite, {0.52f, 0.05f}, 0.02f);
     }
+    /// Somebody in this office plays DOOM: the poster, its logo and hellfire painted
+    /// in the signage atlas, the caption printed on its black band.
+    void doomPoster(const Wall& w, float along, float yCentre) {
+        const glm::vec2 size(0.40f, 0.56f);
+        const float depth = 0.004f;
+        panel(w, along, yCentre, size, atlas::Sign::PosterDoom, depth, MaterialId::DarkPlastic);
+        const float bottom = yCentre - size.y * 0.5f;
+        fittedText(w, along, bottom + 0.086f, depth, "RIP AND TEAR", decals::Ink::PrintRed, {0.32f, 0.03f}, 0.03f);
+        fittedText(w, along, bottom + 0.045f, depth, "(YOUR TPS REPORTS)", decals::Ink::PrintWhite, {0.30f, 0.018f}, 0.018f);
+    }
     void notice(const Wall& w, float along, float yCentre) {
         const glm::vec2 size(0.30f, 0.40f);
         const float depth = 0.002f;
@@ -350,15 +378,28 @@ private:
         const bool spawnPod = m_gx == kSpawnX && m_gz == kSpawnZ;
         for (int q = 0; q < 4; ++q) {
             const float sx = (q & 1) ? 1.0f : -1.0f, sz = (q & 2) ? 1.0f : -1.0f;
-            const glm::vec3 deskPos(cx + sx * e * 0.5f, m_origin.y, cz + sz * (e - kPanelHalf - 0.375f - 0.01f));
+            const glm::vec3 deskPos = deskPosition(m_centre, sx, sz);
             const glm::vec3 user(0.0f, 0.0f, -sz); // the occupant faces the back panel
             const FurnitureInstance& desk = add(FurnitureType::Desk, deskPos, yawFacing(user));
             const glm::mat4 deskModel = desk.model;
             const bool home = spawnPod && sx == static_cast<float>(kSpawnQx) && sz == static_cast<float>(kSpawnQz);
-            deskKit(deskModel, 0.75f, glm::vec3(-0.2f, 0.75f, -0.04f), 0.7f, 0.6f, 0.40f, 0.52f, home);
+            const int worker = workerAt(m_gx, m_gz, sx, sz);
+            deskKit(deskModel, 0.75f, kWorkerTerminal, 0.7f, 0.6f, 0.40f, 0.52f, home || worker >= 0);
             if (home) {
                 // The player's own chair, swivelled aside: they are standing where it was.
                 add(FurnitureType::Chair, glm::vec3(cx + sx * 0.33f, m_origin.y, cz + sz * 0.45f), sx * kPi * 0.5f);
+                // Pinned up on the back panel beside the monitor, over the phone.
+                const Wall back{glm::vec3(cx, m_origin.y, cz + sz * (e - kPanelHalf)), user, glm::cross(-user, kUp)};
+                const glm::vec3 spot(deskModel * glm::vec4(0.47f, 0.0f, 0.0f, 1.0f));
+                doomPoster(back, glm::dot(spot - back.face, back.right), 1.11f);
+            } else if (worker >= 0) {
+                // Somebody's chair, pulled up square to the keyboard: they are sitting in it.
+                add(FurnitureType::Chair, glm::vec3(deskModel * glm::vec4(kWorkerSeat, 1.0f)), yawFacing(-user));
+                // A name plate by the way in, on the outside of the cubicle's side panel.
+                const glm::vec3 n(sx, 0.0f, 0.0f);
+                const Wall side{glm::vec3(cx + sx * (e + kPanelHalf), m_origin.y, cz + sz * 1.45f), n, glm::cross(-n, kUp)};
+                if (worker == 0) placard(side, 0.0f, 1.2f, "THE WANDERER", "VISUAL QUALITY ASSURANCE", atlas::Sign::PlacardDark);
+                else placard(side, 0.0f, 1.2f, "THE STALKER", "EMPLOYEE MONITORING", atlas::Sign::PlacardDark);
             } else if (m_rng.chance(0.85f)) {
                 const glm::vec3 p = deskPos + user * (0.375f + m_rng.range(0.35f, 0.6f)) + glm::vec3(m_rng.range(-0.15f, 0.15f), 0.0f, 0.0f);
                 add(FurnitureType::Chair, p, yawFacing(-user) + m_rng.range(-0.5f, 0.5f));
@@ -700,6 +741,12 @@ void spawn(glm::vec3& feet, float& yaw) {
     feet = glm::vec3(centre.x + sx * kPod * 0.5f, centre.y, deskZ - sz * (0.375f + 0.55f));
     // Looking at the desk: along +sz (Camera yaw 0 looks down -z).
     yaw = sz < 0.0f ? 0.0f : kPi;
+}
+
+glm::mat4 workerDesk(int worker) {
+    const glm::vec3 centre((static_cast<float>(kWorkersX) + 0.5f) * S, world::levelFloorY(kLevel), (static_cast<float>(kWorkersZ) + 0.5f) * S);
+    const float sx = static_cast<float>(kWorkerQx[worker == 0 ? 0 : 1]), sz = static_cast<float>(kWorkerQz);
+    return Furniture::makeInstance(FurnitureType::Desk, deskPosition(centre, sx, sz), yawFacing(glm::vec3(0.0f, 0.0f, -sz))).model;
 }
 
 } // namespace office

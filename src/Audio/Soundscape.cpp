@@ -173,9 +173,10 @@ void Soundscape::updateEntities(float dt, const EntityAudioState& state, const s
     m_audio.setVoicePitch(m_heart, 1.0f + 0.9f * fear);
 }
 
-void Soundscape::playEffect(SoundId id, const glm::vec3& at, float gain, const WorldGenerator& generator, float refDistance) {
+void Soundscape::playEffect(SoundId id, const glm::vec3& at, float gain, const WorldGenerator& generator, float refDistance,
+                            int variant) {
     if (!m_enabled) return;
-    playAt(id, at, gain, 0.04f, 0.1f, generator, 0.0f, refDistance);
+    playAt(id, at, gain, 0.04f, 0.1f, generator, 0.0f, refDistance, variant);
 }
 
 void Soundscape::setMonitorHum(bool on, const glm::vec3& at, const WorldGenerator& generator) {
@@ -342,7 +343,7 @@ Soundscape::Spatial Soundscape::spatialize(const glm::vec3& source, float refDis
 }
 
 void Soundscape::playAt(SoundId id, const glm::vec3& source, float gain, float pitchJitter, float reverbSend,
-                        const WorldGenerator& generator, float delay, float refDistance) {
+                        const WorldGenerator& generator, float delay, float refDistance, int variant) {
     const Spatial s = spatialize(source, refDistance, generator);
     VoiceParams p;
     p.gain = gain * s.gain;
@@ -351,7 +352,7 @@ void Soundscape::playAt(SoundId id, const glm::vec3& source, float gain, float p
     p.pitch = 1.0f + m_rng.range(-pitchJitter, pitchJitter);
     p.reverbSend = reverbSend;
     p.delay = delay;
-    m_audio.play(m_bank.get(id, pickVariant(id)), p);
+    m_audio.play(m_bank.get(id, variant >= 0 ? variant : pickVariant(id)), p);
 }
 
 void Soundscape::play2D(SoundId id, float gain, float pan, float pitch, float reverbSend, float lowpassHz) {

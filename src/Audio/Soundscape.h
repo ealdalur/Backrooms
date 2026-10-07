@@ -72,8 +72,9 @@ public:
 
     /// A positional one-shot (terminal keys, beeps...). Within `refDistance` it
     /// plays at full gain, falling off with 1/distance beyond: things that
-    /// carry (a ringing bell) get a larger one.
-    void playEffect(SoundId id, const glm::vec3& at, float gain, const WorldGenerator& generator, float refDistance = 1.5f);
+    /// carry (a ringing bell) get a larger one. `variant` < 0 picks one at random.
+    void playEffect(SoundId id, const glm::vec3& at, float gain, const WorldGenerator& generator, float refDistance = 1.5f,
+                    int variant = -1);
 
     /// Hum of the monitor in use; `on` = false silences it.
     void setMonitorHum(bool on, const glm::vec3& at, const WorldGenerator& generator);
@@ -137,7 +138,7 @@ private:
     /// the far end of the occlusion test.
     glm::vec2 occlusionProbe(const glm::vec3& source) const;
     void playAt(SoundId id, const glm::vec3& source, float gain, float pitchJitter, float reverbSend,
-                const WorldGenerator& generator, float delay = 0.0f, float refDistance = 1.5f);
+                const WorldGenerator& generator, float delay = 0.0f, float refDistance = 1.5f, int variant = -1);
     void play2D(SoundId id, float gain, float pan, float pitch, float reverbSend, float lowpassHz = 20000.0f);
     int pickVariant(SoundId id);
 

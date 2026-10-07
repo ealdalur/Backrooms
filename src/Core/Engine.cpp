@@ -7,10 +7,12 @@
 
 #include "AI/EntityDirector.h"
 #include "AI/NavGrid.h"
+#include "AI/OfficeWorkers.h"
 #include "Actors/FileCabinet.h"
 #include "Actors/Phone.h"
 #include "Actors/Player.h"
 #include "Audio/Soundscape.h"
+#include "Audio/StorySounds.h"
 #include "Core/ConsoleLog.h"
 #include "Core/GpuSelection.h"
 #include "Gameplay/PhoneCall.h"
@@ -157,8 +159,9 @@ bool Engine::createWindow() {
     // The scene renders into an MSAA HDR framebuffer; the back buffer needs neither.
     SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 0);
 
+    // Hidden until it is known whether it goes full screen (that needs the GPU, so the GL context).
     m_window = SDL_CreateWindow(cfg::kWindowTitle, m_options.windowWidth, m_options.windowHeight,
-                                SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
+                                SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN);
     if (!m_window) {
         con::line("ENGINE", con::format("Window could not be created: %s", SDL_GetError()), con::Level::Error);
         return false;
@@ -179,13 +182,23 @@ bool Engine::createWindow() {
     // Prefer adaptive vsync, fall back to regular vsync.
     if (!SDL_GL_SetSwapInterval(-1)) SDL_GL_SetSwapInterval(1);
 
-    SDL_GetWindowSizeInPixels(m_window, &m_pixelWidth, &m_pixelHeight);
     const char* glVendor = reinterpret_cast<const char*>(glGetString(GL_VENDOR));
     const char* glRenderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
-    con::line("ENGINE", con::format("OpenGL {%s} · {%dx%d}", reinterpret_cast<const char*>(glGetString(GL_VERSION)), m_pixelWidth,
-                                    m_pixelHeight));
-    // The GPU once: what it is, and what kind.
     const gpu::ActiveGpu active = gpu::describeActiveGpu(glVendor, glRenderer);
+
+    // A discrete GPU can afford every pixel of the screen: full screen. Anything
+    // else starts windowed at the default size (F11 switches either way).
+    // A screenshot run stays windowed, so its pictures come out the same size.
+    m_fullscreen = m_options.windowMode == WindowMode::Fullscreen ||
+                   (m_options.windowMode == WindowMode::Auto && active.kind == "discrete" && m_options.screenshotPath.empty());
+    if (m_fullscreen) SDL_SetWindowFullscreen(m_window, true);
+    SDL_ShowWindow(m_window);
+    SDL_SyncWindow(m_window); // the renderer is built at the size the window really has
+    SDL_GetWindowSizeInPixels(m_window, &m_pixelWidth, &m_pixelHeight);
+
+    con::line("ENGINE", con::format("OpenGL {%s} · {%dx%d} %s", reinterpret_cast<const char*>(glGetString(GL_VERSION)), m_pixelWidth,
+                                    m_pixelHeight, m_fullscreen ? "full screen" : "windowed"));
+    // The GPU once: what it is, and what kind.
     std::string about = "{" + active.name + "}";
     if (!active.kind.empty()) about += " · " + active.kind;
     if (active.vram) about += con::format(" · {%.0f GB} VRAM", static_cast<double>(active.vram) / (1024.0 * 1024.0 * 1024.0));
@@ -222,6 +235,7 @@ bool Engine::init() {
                                               cfg::kChunkBuildBudget);
     m_physics = std::make_unique<Physics>(cfg::kStepHeight);
     m_entities = std::make_unique<EntityDirector>(*m_world, *m_chunks, m_options.seed);
+    m_workers = std::make_unique<OfficeWorkers>(rnd::hashCombine(m_options.seed, 0x0FF1'CE00ull));
     m_entities->setEnabled(!m_options.noEntities);
     m_gun = std::make_unique<TeslaGun>(rnd::hashCombine(m_options.seed, 0x7E51'A600ull));
     // The way out: its number goes up on the walls before the first chunk is built.
@@ -944,6 +958,23 @@ void Engine::update(float dt) {
     if (const auto gone = m_entities->takeVaporised()) {
         showMessage(*gone == EntityKind::Stalker ? "THE STALKER IS GONE. FOR GOOD." : "THE WANDERER IS GONE. FOR GOOD.", 5.0f);
     }
+    // In the office, the two of them are at work.
+    if (m_office && m_workers->working()) {
+        std::vector<OfficeWorkers::Sound> sounds;
+        m_workers->update(dt, sounds);
+        for (const OfficeWorkers::Sound& s : sounds) {
+            m_sound->playEffect(s.id, s.at, s.gain, *m_world, s.refDistance, s.variant);
+            const float dist = glm::length(s.at - m_player->eyePosition());
+            // Near enough to make out the Wanderer's words: they are captioned.
+            if (s.id == SoundId::WorkGrumble && m_dialogueTimer <= 0.0f && dist < 8.0f) say(storysfx::workGrumbleText(s.variant), 3.0f);
+            if (!m_options.demo.empty() && s.id != SoundId::TerminalKey) {
+                std::printf("[Demo] t=%.2f %s, %.1fm away\n", m_demoTime,
+                            s.id == SoundId::WorkGrumble ? (std::string("the Wanderer: \"") + storysfx::workGrumbleText(s.variant) + "\"").c_str()
+                                                         : "the Stalker snarls",
+                            dist);
+            }
+        }
+    }
     if (m_state == GameState::Caught) updateCaught(dt);
     if (m_state == GameState::Noclip) updateNoclip(dt);
 
@@ -1119,6 +1150,7 @@ void Engine::render(float dt) {
     const Camera cam = viewCamera();
     m_entityDraw.clear();
     m_entities->buildDrawList(m_entityDraw, cam);
+    if (m_office) m_workers->buildDrawList(m_entityDraw, cam);
 
     buildViewModel(cam);
     // The pause screen and the quit prompt fade in (and out) over a fraction of a
@@ -1236,7 +1268,8 @@ int Engine::run() {
         updateFps(dt);
     }
     const int seconds = static_cast<int>(runTime);
-    con::line("ENGINE", con::format("Session over after {%d:%02d}. The hum goes on without you.", seconds / 60, seconds % 60));
+    con::line("ENGINE", con::format("Session over after {%d:%02d}. %s", seconds / 60, seconds % 60,
+                                    m_office ? "You made it out." : "The hum goes on without you."));
     return 0;
 }
 
@@ -1245,6 +1278,7 @@ void Engine::shutdown() {
     m_sound.reset(); // stops the audio thread before anything it reads goes away
     m_renderer.reset();
     m_entities.reset();
+    m_workers.reset();
     m_gun.reset();
     m_consoles.clear();
     m_call.reset();

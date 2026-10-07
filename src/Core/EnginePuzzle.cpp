@@ -10,6 +10,7 @@
 
 #include "AI/EntityDirector.h"
 #include "AI/NavGrid.h"
+#include "AI/OfficeWorkers.h"
 #include "Actors/Phone.h"
 #include "Actors/Player.h"
 #include "Audio/Soundscape.h"
@@ -143,7 +144,9 @@ void Engine::enterOffice() {
     m_office = true;
     m_world->setRealm(world::Realm::Office);
     m_chunks->clear();
-    m_entities->setEnabled(false); // nobody is here
+    m_entities->setEnabled(false); // nobody is here - well, nobody hunting
+    // Both of them have clocked in, in the far corner - vaporised or not, they always made it out.
+    if (!m_options.noEntities) m_workers->clockIn();
     m_consoles.clear();
     m_console = nullptr;
     m_terminalId = m_lastTerminalId = 0;
@@ -172,6 +175,14 @@ void Engine::enterOffice() {
     m_player->setViewAngles(yaw, glm::radians(-14.0f)); // looking down at the desk
     con::spoiler("PUZZLE", con::format("The office: {%zu} chunks, the player at {(%.2f, %.2f)}", m_chunks->chunkCount(),
                                        m_player->feetPosition().x, m_player->feetPosition().z));
+    // Out: no secret any more, so the terminal says so (though not where the way was).
+    const int inside = static_cast<int>(m_simTime);
+    con::section("OUTSIDE");
+    con::line("WORLD", con::format("You noclipped out of the Backrooms after {%d:%02d} inside.", inside / 60, inside % 60));
+    con::detail("Walls: mono-blue. Carpet: dry.");
+    con::detail("Fluorescent hum: still present. Suspicious.");
+    con::detail("Phones: still ringing. Inbox: 4,096 unread.");
+    con::detail("This is the real world. Probably.");
 }
 
 void Engine::say(const std::string& line, float seconds) {

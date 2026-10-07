@@ -11,8 +11,8 @@
 namespace cfg {
 
 // ----- Window ---------------------------------------------------------------
-inline constexpr int         kWindowWidth  = 1280;
-inline constexpr int         kWindowHeight = 720;
+inline constexpr int         kWindowWidth  = 1600;
+inline constexpr int         kWindowHeight = 900;
 inline constexpr const char* kWindowTitle  = "Backrooms";
 
 // ----- Title screen ---------------------------------------------------------
