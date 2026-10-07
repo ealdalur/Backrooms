@@ -30,12 +30,17 @@
 // written in marker, pen, pencil, spray paint or blood (World/Decals) - and
 // very rarely the puzzle's phone number (setWallClue), alone.
 //
-// The exit: once the puzzle chain has located it (setExitChunk), one room of
-// that chunk - the one with the most walls - becomes the glitch room. Its
-// walls are built from loose tiles of the Glitch material that jitter,
-// blink out and smear (the world shader animates them), and they are not
-// solid: walking into one is the way out (ChunkBlueprint::glitchZones).
-// That chunk is also guaranteed a terminal, whose MAP shows the room.
+// The exit: once the puzzle chain has located it (setExitChunk), the chunk a
+// ping points to is guaranteed a terminal - its only one - and the glitch
+// room is never in that chunk, but in one next door, within reach of that
+// terminal's MAP (world::kMapReach cells), so getting there is not enough:
+// the MAP has to show the way. Of the rooms that fit, a walled-in one well
+// clear of the chunk's edge is preferred. (All of it is a rule the generator
+// applies whenever those chunks are built: they come back the same however
+// often they are unloaded and reloaded.) Its walls are built from loose tiles of the
+// Glitch material that jitter, blink out and smear (the world shader
+// animates them), and they are not solid: walking into one is the way out
+// (ChunkBlueprint::glitchZones).
 //
 // Realms: after the escape the generator builds the office instead
 // (setRealm, World/OfficeLayout) - the same grid, light blue paint.
@@ -68,11 +73,16 @@ public:
     /// The phone number written - rarely - on the walls ("" for none).
     void setWallClue(const std::string& text) { m_wallClue = text; }
 
-    /// Makes `c` the exit chunk (or none). Loaded copies must be rebuilt.
+    /// Makes `c` the exit chunk - the one a ping points to (or none). Loaded
+    /// copies of it and of the chunks round it must be rebuilt.
     void setExitChunk(const std::optional<ChunkCoord>& c);
     const std::optional<ChunkCoord>& exitChunk() const { return m_exitChunk; }
-    /// The glitch room of the exit chunk: global cell (x, y) and level (z).
+    /// The cell (global x, y) of the terminal the exit chunk is guaranteed.
+    const std::optional<glm::ivec2>& exitTerminalCell() const { return m_exitTerminal; }
+    /// The glitch room - in a chunk next to the exit chunk: global cell (x, y) and level (z).
     const std::optional<glm::ivec3>& exitCell() const { return m_exitCell; }
+    /// The chunk the glitch room is in.
+    std::optional<ChunkCoord> glitchChunk() const;
 
     /// Seed of a whole storey (level 0 uses the world seed itself).
     uint64_t levelSeed(int level) const;
@@ -149,6 +159,7 @@ private:
     world::Realm m_realm = world::Realm::Backrooms;
     std::string m_wallClue;
     std::optional<ChunkCoord> m_exitChunk;
+    std::optional<glm::ivec2> m_exitTerminal;
     std::optional<glm::ivec3> m_exitCell;
     int m_exitWalls = 0; ///< Solid walls round the exit room (0: it gets a free-standing glitch slab).
     mutable std::unordered_map<ChunkCoord, ChunkLayout, ChunkCoordHash> m_layoutCache;

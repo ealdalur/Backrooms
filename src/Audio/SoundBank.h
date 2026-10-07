@@ -103,7 +103,7 @@ enum class SoundId : uint8_t {
     StalkerDeath,     ///< The screech coming apart into hissing steam.
     Vaporize,         ///< Frying crackle, a deep whump and steam: a body burning away.
     // The way out (Audio/PhoneSounds, Audio/StorySounds).
-    PhoneClue,        ///< The number on the wall answers: "I was able to overwrite the memory at 7A9F..."
+    PhoneClue,        ///< The number on the wall answers: "I was able to overwrite the memory at..." - in pieces (phonesfx::kClueIntro...).
     PhoneBell,        ///< A desk phone ringing in the room (one 2 s ring of the cadence).
     NoclipTear,       ///< Reality tearing as the player noclips out of the Backrooms.
     Monologue,        ///< The player, in the office: "Phew, back in the real world..."

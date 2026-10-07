@@ -64,11 +64,16 @@ void Engine::handlePuzzleEvents(const std::vector<PuzzleEvent>& events) {
     for (const PuzzleEvent& e : events) {
         switch (e.kind) {
         case PuzzleEvent::Kind::MemoryShown:
-            advancePuzzle(PuzzleStage::MemoryFound, "7A9F scrolled past on a terminal");
+            advancePuzzle(PuzzleStage::MemoryFound, "the memory's line scrolled past on a terminal");
             break;
         case PuzzleEvent::Kind::Pinged:
             if (m_office) break; // out here the maps are "here"
-            if (m_puzzle->mapExit(e.from)) armExit(*m_puzzle->exitChunk());
+            if (m_puzzle->mapExit(e.from, e.terminal)) {
+                const PuzzleSecrets& secret = m_puzzle->secrets();
+                con::spoiler("PUZZLE", "Pinged from " + locationText(e.from.level, e.from.x, e.from.z) + ": the exit is {" +
+                                           PuzzleChain::offsetText(secret.floorDelta, secret.chunkDelta.x, secret.chunkDelta.y) + "} from there");
+                armExit(*m_puzzle->exitChunk());
+            }
             advancePuzzle(PuzzleStage::TargetMapped, "the host in the memory answered a ping");
             break;
         case PuzzleEvent::Kind::ExitMapped:
@@ -80,13 +85,26 @@ void Engine::handlePuzzleEvents(const std::vector<PuzzleEvent>& events) {
 
 void Engine::armExit(const ChunkCoord& exit) {
     m_world->setExitChunk(exit);
-    // Rebuild it if it is loaded - and its neighbours, whose writing may be on the other face of a wall that now glitches.
-    for (int dz = -1; dz <= 1; ++dz) {
-        for (int dx = -1; dx <= 1; ++dx) m_chunks->reload({exit.x + dx, exit.z + dz, exit.level});
+    // Rebuild what is loaded of it (its terminal), of the chunk next door with
+    // the glitch room, and of their neighbours, whose writing may be on the
+    // other face of a wall that now glitches.
+    std::vector<ChunkCoord> rebuild;
+    for (const auto& around : {std::optional<ChunkCoord>(exit), m_world->glitchChunk()}) {
+        if (!around) continue;
+        for (int dz = -1; dz <= 1; ++dz) {
+            for (int dx = -1; dx <= 1; ++dx) {
+                const ChunkCoord c{around->x + dx, around->z + dz, around->level};
+                if (std::find(rebuild.begin(), rebuild.end(), c) == rebuild.end()) rebuild.push_back(c);
+            }
+        }
     }
+    for (const ChunkCoord& c : rebuild) m_chunks->reload(c);
     if (const auto& cell = m_world->exitCell()) {
-        con::spoiler("PUZZLE", con::format("The exit: chunk {(%d, %d)} on level {%d}, the room in cell {(%d, %d)}", exit.x, exit.z,
-                                           exit.level, cell->x, cell->y));
+        const ChunkCoord room = *m_world->glitchChunk();
+        con::spoiler("PUZZLE", con::format("The exit: chunk {(%d, %d)} on level {%d} (its terminal in cell (%d, %d)); the room next door, "
+                                           "in chunk {(%d, %d)}, cell {(%d, %d)}",
+                                           exit.x, exit.z, exit.level, m_world->exitTerminalCell()->x, m_world->exitTerminalCell()->y,
+                                           room.x, room.z, cell->x, cell->y));
     }
 }
 
@@ -190,6 +208,43 @@ void Engine::say(const std::string& line, float seconds) {
     m_dialogueTimer = seconds;
 }
 
+// ---- Developer scenes ----------------------------------------------------------------------------
+
+void Engine::sitAtTerminal(uint64_t id) {
+    Terminal* t = m_chunks->terminalById(id);
+    if (!t) return;
+    glm::vec3 seat = t->viewPoint() + t->screenNormal() * 0.3f;
+    seat.y = world::levelFloorY(m_focusLevel);
+    teleportPlayer(seat, m_focusLevel, yawToward(t->screenCenter() - seat));
+    if (Terminal* again = m_chunks->terminalById(id)) enterTerminal(*again); // (re-found: teleporting may reload its chunk)
+    m_terminalBlend = 1.0f;
+}
+
+void Engine::standInGlitchRoom(bool walkIn) {
+    const auto& cell = m_world->exitCell();
+    if (!cell) return;
+    const float S = world::kCellSize;
+    const int level = cell->z;
+    const glm::vec3 centre((static_cast<float>(cell->x) + 0.5f) * S, world::levelFloorY(level), (static_cast<float>(cell->y) + 0.5f) * S);
+    glm::vec3 wall = centre + glm::vec3(1.2f, 0.0f, 0.0f); // the free-standing slab, if there are no walls
+    const struct { int gx, gz; world::EdgeAxis axis; glm::vec3 dir; } sides[4] = {
+        {cell->x, cell->y, world::EdgeAxis::West, {-1, 0, 0}}, {cell->x + 1, cell->y, world::EdgeAxis::West, {1, 0, 0}},
+        {cell->x, cell->y, world::EdgeAxis::South, {0, 0, -1}}, {cell->x, cell->y + 1, world::EdgeAxis::South, {0, 0, 1}}};
+    for (const auto& side : sides) {
+        if (m_world->edge(level, side.gx, side.gz, side.axis) == world::EdgeType::Wall) {
+            wall = centre + side.dir * (S * 0.5f);
+            break;
+        }
+    }
+    const glm::vec3 toWall = glm::normalize(wall - centre);
+    const glm::vec3 stand = wall - toWall * 2.2f;
+    teleportPlayer(stand, level, yawToward(toWall));
+    m_player->setViewAngles(yawToward(toWall), 0.0f);
+    m_autopilot.clear();
+    if (walkIn) m_autopilot.push_back({wall + toWall * 0.5f}); // straight into it
+    m_autopilotIndex = 0;
+}
+
 // ---- Phones ringing ------------------------------------------------------------------------------
 
 void Engine::stopRinging() {
@@ -289,15 +344,7 @@ void Engine::setupPuzzleDemo() {
     const std::string& demo = m_options.demo;
     const glm::vec3 feet = m_player->feetPosition();
     // Sits down at a terminal (found again by id after the teleport, which may rebuild its chunk).
-    auto sitAt = [this](uint64_t id) {
-        Terminal* t = m_chunks->terminalById(id);
-        if (!t) return;
-        glm::vec3 seat = t->viewPoint() + t->screenNormal() * 0.3f;
-        seat.y = world::levelFloorY(m_focusLevel);
-        teleportPlayer(seat, m_focusLevel, yawToward(t->screenCenter() - seat));
-        if (Terminal* again = m_chunks->terminalById(id)) enterTerminal(*again);
-        m_terminalBlend = 1.0f;
-    };
+    auto sitAt = [this](uint64_t id) { sitAtTerminal(id); };
     auto nearestTerminal = [&]() -> const Terminal* {
         const Terminal* best = nullptr;
         float bestDist = 1e9f;
@@ -358,39 +405,32 @@ void Engine::setupPuzzleDemo() {
         const uint64_t id = t->id();
         if (demo == "hexstream") {
             advancePuzzle(PuzzleStage::NumberDialed, "(scene) the call was made");
+            sitAt(id);
         } else {
-            // Its chunk becomes the exit.
+            // Its chunk becomes the exit - and the player sits at the terminal it is guaranteed (whose MAP shows the room).
             const ChunkCoord c = ChunkCoord::fromWorld(t->center().x, t->center().z, m_focusLevel);
             m_puzzle->advance(PuzzleStage::TargetMapped);
             armExit(c);
+            uint64_t at = id;
+            if (const auto& cell = m_world->exitTerminalCell()) {
+                if (const Chunk* chunk = m_chunks->chunkAt(c)) {
+                    for (const Terminal& term : chunk->terminals()) {
+                        const glm::ivec2 tc(static_cast<int>(std::floor(term.center().x / world::kCellSize)),
+                                            static_cast<int>(std::floor(term.center().z / world::kCellSize)));
+                        if (tc == *cell) at = term.id();
+                    }
+                }
+            }
+            sitAt(at);
         }
-        sitAt(id);
     } else if (demo == "glitch") {
-        // This chunk becomes the exit; stand in the glitch room, facing one of its walls.
+        // This chunk becomes the exit; stand in the glitch room next door, facing one of its walls.
         armExit(ChunkCoord::fromWorld(feet.x, feet.z, m_focusLevel));
-        const auto& cell = m_world->exitCell();
-        if (!cell) {
+        if (!m_world->exitCell()) {
             std::cerr << "[Demo] No room for the exit here\n";
             return;
         }
-        const float S = world::kCellSize;
-        const glm::vec3 centre((static_cast<float>(cell->x) + 0.5f) * S, world::levelFloorY(m_focusLevel), (static_cast<float>(cell->y) + 0.5f) * S);
-        glm::vec3 wall = centre + glm::vec3(1.2f, 0.0f, 0.0f); // the free-standing slab, if there are no walls
-        const struct { int gx, gz; world::EdgeAxis axis; glm::vec3 dir; } sides[4] = {
-            {cell->x, cell->y, world::EdgeAxis::West, {-1, 0, 0}}, {cell->x + 1, cell->y, world::EdgeAxis::West, {1, 0, 0}},
-            {cell->x, cell->y, world::EdgeAxis::South, {0, 0, -1}}, {cell->x, cell->y + 1, world::EdgeAxis::South, {0, 0, 1}}};
-        for (const auto& side : sides) {
-            if (m_world->edge(m_focusLevel, side.gx, side.gz, side.axis) == world::EdgeType::Wall) {
-                wall = centre + side.dir * (S * 0.5f);
-                break;
-            }
-        }
-        const glm::vec3 toWall = glm::normalize(wall - centre);
-        const glm::vec3 stand = wall - toWall * 2.2f;
-        teleportPlayer(stand, m_focusLevel, yawToward(toWall));
-        m_player->setViewAngles(yawToward(toWall), 0.0f);
-        if (m_options.demoInput == "walk") m_autopilot.push_back({wall + toWall * 0.5f}); // straight into it
-        m_autopilotIndex = 0;
+        standInGlitchRoom(m_options.demoInput == "walk");
     } else if (demo == "office" || demo == "office-tesla") {
         // Straight through: the noclip from the moment the screen is black.
         startNoclip();
@@ -569,7 +609,7 @@ void Engine::updatePuzzleDemo() {
             streaming = m_demoTime;
             m_demoStep = 2;
         } else if (m_demoStep == 2 && m_puzzle->reached(PuzzleStage::MemoryFound)) {
-            std::printf("[Demo] 7A9F came up after %.1fs of HEX streaming\n", m_demoTime - streaming);
+            std::printf("[Demo] %s came up after %.1fs of HEX streaming\n", m_puzzle->secrets().memoryAddress.c_str(), m_demoTime - streaming);
             m_demoStep = 3;
             m_demoWait = m_demoTime + 0.3f;
         } else if (m_demoStep == 3 && m_demoTime > m_demoWait) {
@@ -587,7 +627,7 @@ void Engine::updatePuzzleDemo() {
             dumpScreen();
             m_demoStep = 6;
         } else if (m_demoStep == 2 && m_demoTime - streaming > 180.0f) {
-            std::printf("[Demo] 7A9F did not come up in 3 minutes\n");
+            std::printf("[Demo] %s did not come up in 3 minutes\n", m_puzzle->secrets().memoryAddress.c_str());
             m_demoStep = 6;
         }
     } else if (demo == "exit-map") {
@@ -598,6 +638,45 @@ void Engine::updatePuzzleDemo() {
             dumpScreen();
             m_screenshotRequested = true;
             m_demoStep = 2;
+        } else if (m_options.demoInput == "return") {
+            // --type return: off 100 chunks and 100 floors (everything round here unloads), and back again:
+            // still the one terminal, the room on its MAP, and its walls a way out.
+            const ChunkCoord exit = *m_world->exitChunk();
+            if (m_demoStep == 2 && m_demoTime > 5.5f) {
+                leaveTerminal(false);
+                const glm::vec3 feet = m_player->feetPosition();
+                const int far = exit.level + 100;
+                teleportPlayer(glm::vec3(feet.x + 100.0f * world::kChunkSize, world::levelFloorY(far), feet.z), far, m_player->yaw());
+                std::printf("[Demo] t=%.2f 100 chunks east and 100 floors up: %zu chunks loaded, the exit chunk %s, the room's chunk %s\n",
+                            m_demoTime, m_chunks->chunkCount(), m_chunks->chunkAt(exit) ? "still loaded" : "unloaded",
+                            m_chunks->chunkAt(*m_world->glitchChunk()) ? "still loaded" : "unloaded");
+                m_demoStep = 3;
+            } else if (m_demoStep == 3 && m_demoTime > 7.5f) {
+                // Back to the terminal's room - built afresh - and sit down at whatever terminal the chunk has.
+                const glm::ivec2 cell = *m_world->exitTerminalCell();
+                const float S = world::kCellSize;
+                teleportPlayer(glm::vec3((static_cast<float>(cell.x) + 0.5f) * S, world::levelFloorY(exit.level), (static_cast<float>(cell.y) + 0.5f) * S),
+                               exit.level, m_player->yaw());
+                int count = 0;
+                uint64_t id = 0;
+                if (const Chunk* chunk = m_chunks->chunkAt(exit)) {
+                    for (const Terminal& t : chunk->terminals()) {
+                        ++count;
+                        id = t.id();
+                    }
+                }
+                std::printf("[Demo] t=%.2f back: %d terminal%s in the exit chunk\n", m_demoTime, count, count == 1 ? "" : "s");
+                if (id) sitAtTerminal(id);
+                m_demoStep = 4;
+            } else if (m_demoStep == 4 && m_demoTime > 9.5f) {
+                command("map");
+                m_demoStep = 5;
+            } else if (m_demoStep == 5 && m_demoTime > 12.5f) {
+                dumpScreen();
+                leaveTerminal(false);
+                standInGlitchRoom(true); // and walk into its wall
+                m_demoStep = 6;
+            }
         }
     }
     if (demo == "office-tesla" && m_office && m_state == GameState::Running) {

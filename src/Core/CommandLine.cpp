@@ -117,10 +117,12 @@ const std::vector<SceneGroup>& sceneGroups() {
               {{"<n>", "the n-th nearest writing of any kind (0 = the nearest)"}, {"doom", "the nearest note about DOOM"}}},
              {"clue-survey", "How many rooms of exploring pass between copies of the number, and how long a room takes to walk.",
               {{"<routes>", "routes surveyed (default 40)"}}},
-             {"hexstream", "The call already made: streams a terminal's HEX log until 7A9F comes up, then pauses it.",
+             {"hexstream", "The call already made: streams a terminal's HEX log until the memory's line comes up, then pauses it.",
               {{"ping", "...and pings the host it shows (any text does)"}}},
-             {"exit-map", "The nearest terminal's chunk becomes the exit; runs MAP on it.", {}},
-             {"glitch", "This chunk becomes the exit: stands in the glitch room, facing one of its walls.",
+             {"exit-map", "The nearest terminal's chunk becomes the exit: at the terminal it is given, runs MAP (the room is next door).",
+              {{"return", "...then goes 100 chunks and 100 floors away and back, counts the chunk's terminals, maps again and walks "
+                          "into the room's wall"}}},
+             {"glitch", "This chunk becomes the exit: stands in the glitch room next door, facing one of its walls.",
               {{"walk", "walks into the wall"}}},
              {"office", "Straight to the office, through the noclip.",
               {{"\"<x> <z> [yaw] [pitch]\"", "then looks round from there (degrees)"}}},
@@ -144,7 +146,7 @@ struct StageHelp {
 /// The stages --puzzle starts at (Engine::init maps them onto PuzzleStage).
 const StageHelp kStages[] = {
     {"dialed", "The number on the wall has already been called."},
-    {"memory", "...and the memory at 7A9F has been seen on a terminal's HEX stream."},
+    {"memory", "...and the memory's line has been seen on a terminal's HEX stream."},
 };
 
 const Scene* findScene(const std::string& name, const char** group = nullptr) {

@@ -29,6 +29,7 @@
 #include "Audio/SoundBank.h"
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace phonesfx {
@@ -106,10 +107,18 @@ inline constexpr const char* kJennyNumber = "8675309";
 const char* jennyText();
 inline constexpr float kJennySpeechStart = 0.95f;
 
-/// What the voice at the number on the wall says (the PhoneClue sound), and
-/// when, into it, she starts talking.
-const char* clueText();
+/// The voice at the number on the wall (the PhoneClue sound) comes in three
+/// pieces, played back to back: what she says first ("I was able to overwrite
+/// the memory at"), the address - one recording per address in the pool,
+/// PuzzleChain::memoryAddress - and the rest ("...ping that, hurry though...").
+inline constexpr int   kClueIntro = 0;
+inline constexpr int   kClueOutro = 1;
+inline constexpr int   kClueFirstAddress = 2;   ///< + the address's index in the pool.
+inline constexpr float kClueJoin = 0.04f;       ///< How far each piece overlaps the next.
+/// When, into the first piece, she starts talking.
 inline constexpr float kClueSpeechStart = 0.3f;
+/// Everything she says, with `address` in it (the caption).
+std::string clueText(const std::string& address);
 
 std::vector<Sound> makeLine(uint64_t seed);
 std::vector<Sound> makeDialTone(uint64_t seed);

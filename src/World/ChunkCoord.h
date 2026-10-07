@@ -2,7 +2,8 @@
 // ---------------------------------------------------------------------------
 // ChunkCoord.h
 // Integer (x, z, level) address of a chunk on the infinite, multi-storey
-// grid, plus hashing so it can key unordered containers.
+// grid, plus hashing so it can key unordered containers, and how a position
+// is written for the player (the HUD, a terminal's ping).
 // ---------------------------------------------------------------------------
 
 #include "Math/Random.h"
@@ -11,6 +12,8 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <string>
 
 struct ChunkCoord {
     int32_t x = 0;
@@ -36,6 +39,13 @@ struct ChunkCoord {
     float originZ() const { return static_cast<float>(z) * world::kChunkSize; }
     float originY() const { return world::levelFloorY(level); }
 };
+
+/// "FLOOR 0  |  CHUNK [3, -1]": where a chunk is, as the HUD shows it.
+inline std::string locationText(int floor, int x, int z) {
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "FLOOR %d  |  CHUNK [%d, %d]", floor, x, z);
+    return buf;
+}
 
 struct ChunkCoordHash {
     size_t operator()(const ChunkCoord& c) const {

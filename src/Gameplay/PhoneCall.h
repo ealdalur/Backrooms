@@ -35,7 +35,8 @@
 // rings twice, and someone answers through the static, in a hurry: "I was
 // able to overwrite the memory at 7A9F... ping that, hurry though, I don't
 // know how long it will last" - and the line drops back to the dial tone
-// (clueAnswered reports it).
+// (clueAnswered reports it). The address she reads out is the one the
+// puzzle chain picked for this call (Gameplay/PuzzleChain).
 //
 // A phone that was ringing when it was picked up (incoming) has someone on
 // the line already.
@@ -80,10 +81,11 @@ public:
     /// @param lineSeed    Decides what each number does (fixed per world).
     /// @param sessionSeed Varies everything else from one pick-up to the next.
     /// @param mailbox     What the phone's voicemail box holds.
-    /// @param clueNumber  The digits of the number on the wall ("" for none).
+    /// @param clueNumber  The digits of the number on the wall ("" for none)...
+    /// @param clueMemory  ...and which memory address the voice there names (PuzzleChain::memoryAddress).
     /// @param incoming    The phone was ringing: someone is already on the line.
     PhoneCall(const SoundBank& bank, uint64_t lineSeed, uint64_t sessionSeed, const PhoneMailbox& mailbox,
-              const std::string& clueNumber = std::string(), bool incoming = false);
+              const std::string& clueNumber = std::string(), int clueMemory = 0, bool incoming = false);
 
     /// A keypad key ("123456789*0#"), from the keyboard or a click.
     void press(char key);
@@ -145,6 +147,8 @@ private:
     /// the sound). Returns its end time.
     float speak(SoundId id, int variant, float gain, float delay, const std::string& caption, bool anomalous,
                 float captionDelay = 0.0f);
+    /// Captions speech heard from `start` to `end` (clock time).
+    void addCaption(const std::string& text, float start, float end, bool anomalous);
     /// Silences the earpiece and forgets its speech: the line has moved on.
     void cancelEarpiece();
     /// One of the voices breaking through: interference, then the voice, the tone ducking under both.
@@ -185,7 +189,8 @@ private:
     bool   m_answers = false;
     bool   m_jenny = false;       ///< This call is to 867-5309 (nothing else gets on the line).
     bool   m_hungUp = false;
-    std::string m_clueNumber;     ///< The number on the wall.
+    std::string m_clueNumber;     ///< The number on the wall...
+    int    m_clueMemory = 0;      ///< ...and the memory address its voice names.
     bool   m_clue = false;        ///< This call is to it (nothing else gets on the line).
     bool   m_clueAnswered = false;
     bool   m_incoming = false;

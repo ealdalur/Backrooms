@@ -3,6 +3,8 @@
 // ---------------------------------------------------------------------------
 #include "Gameplay/PhoneCall.h"
 
+#include "Gameplay/PuzzleChain.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -46,8 +48,9 @@ Voice pick(const Voice (&list)[N], rnd::Rng& rng, int avoid) {
 } // namespace
 
 PhoneCall::PhoneCall(const SoundBank& bank, uint64_t lineSeed, uint64_t sessionSeed, const PhoneMailbox& mailbox,
-                     const std::string& clueNumber, bool incoming)
-    : m_bank(bank), m_lineSeed(lineSeed), m_rng(sessionSeed), m_mailbox(mailbox), m_clueNumber(clueNumber), m_incoming(incoming) {
+                     const std::string& clueNumber, int clueMemory, bool incoming)
+    : m_bank(bank), m_lineSeed(lineSeed), m_rng(sessionSeed), m_mailbox(mailbox), m_clueNumber(clueNumber), m_clueMemory(clueMemory),
+      m_incoming(incoming) {
     m_phantomTimer = m_rng.range(6.0f, 14.0f);
 }
 
@@ -72,16 +75,20 @@ float PhoneCall::speak(SoundId id, int variant, float gain, float delay, const s
     sound(id, variant, gain, delay);
     const float start = m_clock + delay;
     const float end = start + m_bank.duration(id, variant);
+    addCaption(caption, start + captionDelay, end, anomalous);
+    return end;
+}
+
+void PhoneCall::addCaption(const std::string& text, float start, float end, bool anomalous) {
     m_speechUntil = std::max(m_speechUntil, end);
     // Keep the queue in start order; drop lines long gone.
     m_captions.erase(std::remove_if(m_captions.begin(), m_captions.end(),
                                     [this](const Caption& c) { return c.end + 1.0f < m_clock; }),
                      m_captions.end());
-    const Caption c{caption, start + captionDelay, end, anomalous};
+    const Caption c{text, start, end, anomalous};
     m_captions.insert(std::upper_bound(m_captions.begin(), m_captions.end(), c,
                                        [](const Caption& a, const Caption& b) { return a.start < b.start; }),
                       c);
-    return end;
 }
 
 void PhoneCall::cancelEarpiece() {
@@ -316,7 +323,16 @@ void PhoneCall::update(float dt, const PhoneContext& ctx) {
         // A crackle as it is snatched up, the message in one breath - and the line is gone.
         if (m_step == 0) {
             sound(SoundId::PhoneStatic, -1, 0.55f);
-            m_wait = speak(SoundId::PhoneClue, 0, 0.9f, 0.3f, phonesfx::clueText(), true, phonesfx::kClueSpeechStart) - m_clock;
+            // In three pieces, back to back: the address in the middle is the one this call is about.
+            const float start = m_clock + 0.3f;
+            float at = start;
+            for (int piece : {phonesfx::kClueIntro, phonesfx::kClueFirstAddress + m_clueMemory, phonesfx::kClueOutro}) {
+                sound(SoundId::PhoneClue, piece, 0.9f, at - m_clock);
+                at += m_bank.duration(SoundId::PhoneClue, piece) - phonesfx::kClueJoin;
+            }
+            const float end = at + phonesfx::kClueJoin;
+            addCaption(phonesfx::clueText(PuzzleChain::memoryAddress(m_clueMemory)), start + phonesfx::kClueSpeechStart, end, true);
+            m_wait = end - m_clock;
             m_duckUntil = m_clock + m_wait;
             m_clueAnswered = true;
             m_step = 1;

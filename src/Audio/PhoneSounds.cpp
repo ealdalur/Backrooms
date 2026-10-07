@@ -7,6 +7,7 @@
 
 #include "Audio/SpeechSynth.h"
 #include "Audio/SynthKit.h"
+#include "Gameplay/PuzzleChain.h"
 
 #include <algorithm>
 #include <cmath>
@@ -107,16 +108,30 @@ struct CluePhrase {
     float emphasis;
     float tempo; ///< > 1 = slower.
 };
-const CluePhrase kCluePhrases[] = {
+const CluePhrase kIntroPhrases[] = {
     {"AY W AA Z | EY B AH L T UW", 228.0f, 246.0f, 0.03f, 1.0f, 0.72f},                   // I was able to
     {"OW V ER R AY T | DH AH M EH M ER IY | AE T", 246.0f, 214.0f, 0.1f, 1.05f, 0.72f},     // overwrite the memory at
-    {"S EH V AH N | EY | N AY N | EH F", 236.0f, 204.0f, 0.45f, 1.2f, 0.95f},               // seven... A... nine... F...
+};
+const CluePhrase kOutroPhrases[] = {
     {"P IH NG | DH AE T", 262.0f, 236.0f, 0.1f, 1.2f, 0.75f},                                // ping that,
     {"HH ER IY | DH OW", 270.0f, 232.0f, 0.08f, 1.1f, 0.72f},                                // hurry though,
     {"AY D OW N T N OW | HH AW L AO NG", 240.0f, 226.0f, 0.02f, 1.0f, 0.72f},                // I don't know how long
     {"IH T W IH L | L AE S T", 232.0f, 196.0f, 0.0f, 1.0f, 0.78f},                           // it will last
 };
-const char* const kClueText = "I was able to overwrite the memory at 7A9F... ping that, hurry though, I don't know how long it will last";
+
+/// An address read out a character at a time: "7A9F" -> "S EH V AH N | EY | N AY N | EH F".
+std::string spellAddress(const std::string& address) {
+    static const char* const kDigits[16] = {"Z IH R OW", "W AH N",  "T UW", "TH R IY", "F AO R", "F AY V", "S IH K S", "S EH V AH N",
+                                            "EY T",      "N AY N",  "EY",   "B IY",    "S IY",   "D IY",   "IY",       "EH F"};
+    std::string out;
+    for (char c : address) {
+        const int v = c >= '0' && c <= '9' ? c - '0' : c >= 'A' && c <= 'F' ? 10 + c - 'A' : -1;
+        if (v < 0) continue;
+        if (!out.empty()) out += " | ";
+        out += kDigits[v];
+    }
+    return out;
+}
 
 // Messages left in voicemail: said in pieces, with their own contours, by
 // people falling apart (the pauses are where they stop to breathe, or sob).
@@ -310,7 +325,9 @@ const Line& voice(Voice v) { return kVoices[static_cast<size_t>(v)].line; }
 
 const char* jennyText() { return kJennyText; }
 
-const char* clueText() { return kClueText; }
+std::string clueText(const std::string& address) {
+    return "I was able to overwrite the memory at " + address + "... ping that, hurry though, I don't know how long it will last";
+}
 
 const char* messageText(Message m) { return kMessages[static_cast<size_t>(m)].text; }
 
@@ -654,6 +671,8 @@ std::vector<Sound> makeClue(uint64_t seed) {
     // woman's voice right up against her mouthpiece, shaking, hurried, the
     // interference never quite letting go of the line. It stops dead after
     // "last": the line is gone before she is (PhoneCall cuts it there).
+    // In pieces (kClueIntro, kClueOutro, then one per memory address): the
+    // address she reads out is whichever one the call is about.
     rnd::Rng rng(seed);
     Noise noise(rng.next());
     speech::Voice v = voiceOf(Who::Woman, rng);
@@ -661,40 +680,61 @@ std::vector<Sound> makeClue(uint64_t seed) {
     v.breathiness = 0.4f;
     v.whisper = 0.12f;
     v.jitter = 0.035f;
-    float t = kClueSpeechStart;
-    Buffer b = silence(t);
-    for (const CluePhrase& p : kCluePhrases) {
-        v.seed = rng.next();
-        v.pitchStart = p.pitchStart;
-        v.pitchEnd = p.pitchEnd;
-        v.tempo = p.tempo;
-        const Buffer part = speech::say(p.phonemes, v);
-        const size_t at = samplesFor(t - 0.03f); // skip say()'s lead-in
-        if (b.size() < at + part.size()) b.resize(at + part.size(), 0.0f);
-        for (size_t i = 0; i < part.size(); ++i) b[at + i] += p.emphasis * part[i];
-        t += static_cast<float>(part.size()) / kRate - 0.15f + p.pause;
+
+    // Her phrases, run together from `lead` seconds in.
+    auto say = [&](const CluePhrase* phrases, size_t count, float lead) {
+        float t = lead;
+        Buffer b = silence(t);
+        for (size_t k = 0; k < count; ++k) {
+            const CluePhrase& p = phrases[k];
+            v.seed = rng.next();
+            v.pitchStart = p.pitchStart;
+            v.pitchEnd = p.pitchEnd;
+            v.tempo = p.tempo;
+            const Buffer part = speech::say(p.phonemes, v);
+            const size_t at = samplesFor(t - 0.03f); // skip say()'s lead-in
+            if (b.size() < at + part.size()) b.resize(at + part.size(), 0.0f);
+            for (size_t i = 0; i < part.size(); ++i) b[at + i] += p.emphasis * part[i];
+            t += static_cast<float>(part.size()) / kRate - 0.15f + p.pause;
+        }
+        b.resize(samplesFor(t + kClueJoin), 0.0f);
+        return b;
+    };
+    // Down the line: the same worn tape and interference on every piece.
+    auto line = [&](Buffer b, bool first, bool last, int breaks) {
+        b = tapeWow(b, 0.012f, rng.range(0.6f, 1.0f), rng.next());
+        dropouts(b, rng, breaks);
+        normalize(b, 1.0f);
+        // The interference: hiss that swells and fades, crackle, a whistle that wanders.
+        const uint64_t swell = rng.next();
+        float phase = 0.0f;
+        for (size_t i = 0; i < b.size(); ++i) {
+            const float tt = timeOf(i);
+            const float scrape = first ? 0.35f * (1.0f - smooth01(0.0f, kClueSpeechStart, tt)) : 0.0f; // snatched up
+            const float bed = 0.07f + 0.08f * noise::value1D(tt * 2.5, swell) + scrape;
+            phase += (900.0f + 700.0f * noise::value1D(tt * 0.8, swell + 1)) / kRate;
+            phase -= std::floor(phase);
+            b[i] += bed * noise() + 0.02f * std::sin(dsp::kTwoPi * phase);
+        }
+        addCrackle(b, 14.0f, 0.5f, noise, rng);
+        crunch(b, 6, 32.0f);
+        for (float& s : b) s = std::tanh(1.6f * s);
+        telephoneBand(b);
+        fadeEdges(b, first ? 0.005f : kClueJoin, last ? 0.002f : kClueJoin); // the end is cut, not faded
+        normalize(b, 0.9f);
+        return Sound{std::move(b), false};
+    };
+
+    std::vector<Sound> out;
+    out.push_back(line(say(kIntroPhrases, sizeof(kIntroPhrases) / sizeof(kIntroPhrases[0]), kClueSpeechStart), true, false, 1));
+    out.push_back(line(say(kOutroPhrases, sizeof(kOutroPhrases) / sizeof(kOutroPhrases[0]), 0.0f), false, true, 1));
+    // The address, slowly, a character at a time, so it cannot be misheard (and never broken up).
+    for (int i = 0; i < PuzzleChain::kMemoryAddressCount; ++i) {
+        const std::string phonemes = spellAddress(PuzzleChain::memoryAddress(i));
+        const CluePhrase address{phonemes.c_str(), 236.0f, 204.0f, 0.45f, 1.2f, 0.95f};
+        out.push_back(line(say(&address, 1, 0.0f), false, false, 0));
     }
-    b.resize(samplesFor(t + 0.05f), 0.0f);
-    b = tapeWow(b, 0.012f, rng.range(0.6f, 1.0f), rng.next());
-    dropouts(b, rng, 1);
-    normalize(b, 1.0f);
-    // The interference: hiss that swells and fades, crackle, a whistle that wanders.
-    const uint64_t swell = rng.next();
-    float phase = 0.0f;
-    for (size_t i = 0; i < b.size(); ++i) {
-        const float tt = timeOf(i);
-        const float bed = 0.07f + 0.08f * noise::value1D(tt * 2.5, swell) + 0.35f * (1.0f - smooth01(0.0f, kClueSpeechStart, tt));
-        phase += (900.0f + 700.0f * noise::value1D(tt * 0.8, swell + 1)) / kRate;
-        phase -= std::floor(phase);
-        b[i] += bed * noise() + 0.02f * std::sin(dsp::kTwoPi * phase);
-    }
-    addCrackle(b, 14.0f, 0.5f, noise, rng);
-    crunch(b, 6, 32.0f);
-    for (float& s : b) s = std::tanh(1.6f * s);
-    telephoneBand(b);
-    fadeEdges(b, 0.005f, 0.002f); // no fade at the end: it is cut
-    normalize(b, 0.9f);
-    return {{std::move(b), false}};
+    return out;
 }
 
 std::vector<Sound> makeBell(uint64_t seed) {

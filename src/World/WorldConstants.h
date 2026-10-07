@@ -120,4 +120,8 @@ inline constexpr int floorMod(int a, int b) {
     return a - floorDiv(a, b) * b;
 }
 
+/// A terminal's MAP shows this many cells round its own, each way: 9 x 9
+/// cells (45 m), its own chunk and a margin of the ones round it.
+inline constexpr int kMapReach = 4;
+
 } // namespace world

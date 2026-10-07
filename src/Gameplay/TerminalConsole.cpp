@@ -580,7 +580,7 @@ void TerminalConsole::cmdWhoami(const Args&, const TerminalContext&) {
 
 void TerminalConsole::cmdPing(const Args& args, const TerminalContext& ctx) {
     const std::string host = args.empty() ? "10.0.0.1" : toUpper(args[0]);
-    if (ctx.puzzle && !args.empty() && args[0] == ctx.puzzle->secrets().ipAddress) {
+    if (ctx.puzzle && !args.empty() && !ctx.puzzle->secrets().ipAddress.empty() && args[0] == ctx.puzzle->secrets().ipAddress) {
         pingTarget(host, ctx);
         return;
     }
@@ -611,11 +611,15 @@ void TerminalConsole::pingTarget(const std::string& host, const TerminalContext&
         print(line, TerminalScreen::Normal, 0.0f, 0.6f);
     }
     print("4 PACKETS SENT, 4 RECEIVED, 0% LOSS.", TerminalScreen::Dim, 0.0f, 0.3f);
-    print("DATA RETURNED FROM " + host + ":", TerminalScreen::Bright, 0.0f, 0.8f);
+    // Where the maps are, counted from this terminal - shaped like the HUD's
+    // "FLOOR 0  |  CHUNK [3, -1]" without the words, every number signed.
+    // (A ping from somewhere else gives other numbers.)
     const ChunkCoord from = ChunkCoord::fromWorld(ctx.playerFeet.x, ctx.playerFeet.z, ctx.level);
-    // Out here, in the "real world", the maps are... here.
-    printAnomaly(ctx.office ? "maps are here: +0;(+0,+0)" : ctx.puzzle->payloadFrom(from), 1.0f);
-    if (!ctx.office) m_puzzleEvents.push_back({PuzzleEvent::Kind::Pinged, from});
+    const ChunkCoord to = ctx.office ? from : ctx.puzzle->targetFrom(from, m_id); // out in the "real world", the maps are... here
+    print("DATA RETURNED FROM " + host + ": " + PuzzleChain::offsetText(to.level - from.level, to.x - from.x, to.z - from.z),
+          TerminalScreen::Bright, 0.0f, 0.8f);
+    printAnomaly(ctx.office ? "maps are here. they always were." : "maps are here. count from where you are.", 1.0f);
+    if (!ctx.office) m_puzzleEvents.push_back({PuzzleEvent::Kind::Pinged, from, m_id});
 }
 
 void TerminalConsole::cmdMap(const Args&, const TerminalContext& ctx) {
@@ -628,7 +632,7 @@ void TerminalConsole::cmdMap(const Args&, const TerminalContext& ctx) {
     // this screen (walls run along the grid, so a quarter turn is exact).
     // Walls: - |   doors: = :   arches: . (gaps are open plan)
     // @ this terminal   ^ stairs up   v stairs down
-    const int R = 4; // 9 x 9 cells: 19 rows, plus title and legend
+    const int R = world::kMapReach; // 9 x 9 cells: 19 rows, plus title and legend
     const float S = world::kCellSize;
     const glm::ivec2 me(static_cast<int>(std::floor(ctx.playerFeet.x / S)), static_cast<int>(std::floor(ctx.playerFeet.z / S)));
     const glm::ivec2 up = ctx.mapUp;
@@ -647,10 +651,10 @@ void TerminalConsole::cmdMap(const Args&, const TerminalContext& ctx) {
         const glm::ivec2 toCorner = up - right; // each component is +-1
         return cellAt(cx, cy) + (toCorner + glm::ivec2(1)) / 2;
     };
-    // The glitch room, if this terminal stands in its chunk: drawn blinking.
+    // The glitch room, if it is on this map (it is always on the map of the
+    // terminal in the chunk a ping points to - in a chunk next door): drawn blinking.
     const auto& exitCell = w.exitCell();
-    const bool showExit = !ctx.office && exitCell && w.exitChunk() && exitCell->z == ctx.level &&
-                          *w.exitChunk() == ChunkCoord::fromWorld(ctx.playerFeet.x, ctx.playerFeet.z, ctx.level);
+    const bool showExit = !ctx.office && exitCell && exitCell->z == ctx.level;
     auto isExit = [&](int cx, int cy) { return showExit && cellAt(cx, cy) == glm::ivec2(exitCell->x, exitCell->y); };
     bool exitDrawn = false;
     auto edgeChar = [](world::EdgeType t, bool horizontal) {

@@ -155,28 +155,75 @@ void WorldGenerator::setRealm(world::Realm realm) {
 
 void WorldGenerator::setExitChunk(const std::optional<ChunkCoord>& c) {
     m_exitChunk = c;
+    m_exitTerminal.reset();
     m_exitCell.reset();
     m_exitWalls = 0;
     if (!c || m_realm != world::Realm::Backrooms) return;
-    // The room with the most walls (among cells 0..3, which own all four of
-    // their edges), so there is plenty of wall to walk into.
+    const int level = c->level;
+    auto wallsRound = [&](int gx, int gz) {
+        const EdgeType sides[4] = {edge(level, gx, gz, EdgeAxis::West), edge(level, gx + 1, gz, EdgeAxis::West),
+                                   edge(level, gx, gz, EdgeAxis::South), edge(level, gx, gz + 1, EdgeAxis::South)};
+        int walls = 0;
+        for (EdgeType e : sides) walls += e == EdgeType::Wall ? 1 : 0;
+        return walls;
+    };
+
+    // ---- The terminal the chunk is guaranteed (its MAP shows the way): in one
+    // room - one with a wall, if any - starting the search somewhere random.
+    const int start = static_cast<int>(rnd::hashCoords(chunkSeed(*c), 0, 0, kSaltExit) % static_cast<uint64_t>(kN * kN));
+    std::optional<glm::ivec2> anyRoom;
+    for (int k = 0; k < kN * kN && !m_exitTerminal; ++k) {
+        const int cell = (start + k) % (kN * kN);
+        const int gx = c->x * kN + cell % kN, gz = c->z * kN + cell / kN;
+        if (cellRole(level, gx, gz) != CellRole::Room) continue;
+        if (!anyRoom) anyRoom = glm::ivec2(gx, gz);
+        if (wallsRound(gx, gz) > 0) m_exitTerminal = glm::ivec2(gx, gz);
+    }
+    if (!m_exitTerminal) m_exitTerminal = anyRoom; // all open plan: the desk stands free
+    if (!m_exitTerminal) return;                    // (no room at all: no way out here)
+    const glm::ivec2 terminal = *m_exitTerminal;
+
+    // ---- The glitch room: never in this chunk, but in one next door, on the
+    // terminal's MAP (within kMapReach cells of it either way). Rooms well clear
+    // of this chunk's edge come first (they are not stumbled on while looking
+    // for the terminal), then rooms with the most walls (plenty to walk into).
+    // Only cells 0..3 of a chunk, which own all four of their edges, qualify.
+    const glm::ivec2 lo(c->x * kN, c->z * kN), hi = lo + glm::ivec2(kN - 1);
     int best = -1;
-    for (int lz = 0; lz < kN - 1; ++lz) {
-        for (int lx = 0; lx < kN - 1; ++lx) {
-            const int gx = c->x * kN + lx, gz = c->z * kN + lz;
-            if (cellRole(c->level, gx, gz) != CellRole::Room) continue;
-            const EdgeType sides[4] = {edge(c->level, gx, gz, EdgeAxis::West), edge(c->level, gx + 1, gz, EdgeAxis::West),
-                                       edge(c->level, gx, gz, EdgeAxis::South), edge(c->level, gx, gz + 1, EdgeAxis::South)};
-            int walls = 0;
-            for (EdgeType e : sides) walls += e == EdgeType::Wall ? 1 : 0;
-            const int score = walls * 16 + static_cast<int>(rnd::hashCoords(m_seed, gx, gz, kSaltExit) & 15u);
-            if (score > best) {
-                best = score;
-                m_exitCell = glm::ivec3(gx, gz, c->level);
-                m_exitWalls = walls;
+    auto consider = [&](int gx, int gz, int clear) {
+        if (cellRole(level, gx, gz) != CellRole::Room || glm::ivec2(gx, gz) == terminal) return;
+        const int walls = wallsRound(gx, gz);
+        const int score = std::min(clear, 3) * 64 + walls * 16 + static_cast<int>(rnd::hashCoords(m_seed, gx, gz, kSaltExit) & 15u);
+        if (score > best) {
+            best = score;
+            m_exitCell = glm::ivec3(gx, gz, level);
+            m_exitWalls = walls;
+        }
+    };
+    for (int dz = -1; dz <= 1; ++dz) {
+        for (int dx = -1; dx <= 1; ++dx) {
+            if (dx == 0 && dz == 0) continue;
+            for (int lz = 0; lz < kN - 1; ++lz) {
+                for (int lx = 0; lx < kN - 1; ++lx) {
+                    const int gx = (c->x + dx) * kN + lx, gz = (c->z + dz) * kN + lz;
+                    if (std::abs(gx - terminal.x) > world::kMapReach || std::abs(gz - terminal.y) > world::kMapReach) continue;
+                    // Cells between this one and the chunk's edge.
+                    const int clear = std::max({lo.x - gx, gx - hi.x, lo.y - gz, gz - hi.y});
+                    consider(gx, gz, clear);
+                }
             }
         }
     }
+    if (best >= 0) return;
+    // Nowhere next door on the map (a wall of stairwells?): in the chunk itself, as a last resort.
+    for (int lz = 0; lz < kN - 1; ++lz) {
+        for (int lx = 0; lx < kN - 1; ++lx) consider(c->x * kN + lx, c->z * kN + lz, 0);
+    }
+}
+
+std::optional<ChunkCoord> WorldGenerator::glitchChunk() const {
+    if (!m_exitCell) return std::nullopt;
+    return ChunkCoord{world::floorDiv(m_exitCell->x, kN), world::floorDiv(m_exitCell->y, kN), m_exitCell->z};
 }
 
 bool WorldGenerator::isExitCell(int level, int gx, int gz) const {
@@ -421,7 +468,7 @@ ChunkBlueprint WorldGenerator::generate(const ChunkCoord& c) const {
         }
     }
     // An exit room without a wall to walk into gets a slab of glitch standing in its middle.
-    if (m_exitCell && m_exitWalls == 0 && m_exitChunk && *m_exitChunk == c) {
+    if (m_exitCell && m_exitWalls == 0 && glitchChunk() == c) {
         const glm::vec3 mid((static_cast<float>(m_exitCell->x) + 0.5f) * S, origin.y, (static_cast<float>(m_exitCell->y) + 0.5f) * S);
         addGlitchWall(bp, origin, AABB(mid + glm::vec3(-1.2f, 0.0f, -HT), mid + glm::vec3(1.2f, H, HT)), EdgeAxis::South);
     }
@@ -762,22 +809,16 @@ void WorldGenerator::placeFurniture(ChunkBlueprint& bp, const glm::vec3& origin)
     const float T = world::kWallThickness;
     const int level = bp.coord.level;
 
-    // The exit chunk always has a terminal (its MAP shows the way out): one
-    // room - one with a wall, if any - gets a desk and a computer whatever its roll.
+    // The exit chunk always has a terminal (its MAP shows the way out): its
+    // room (picked by setExitChunk) gets a desk and a computer whatever its
+    // roll - and it is the only one there: every terminal in the chunk the ping
+    // points to shows the glitch room, because there is no other to try. (This
+    // is a rule of the generator, not an edit: the chunk comes back the same
+    // whenever it is rebuilt.)
+    const bool exitChunk = m_exitChunk && *m_exitChunk == bp.coord;
     int forcedCell = -1;
-    if (m_exitChunk && *m_exitChunk == bp.coord) {
-        const int start = static_cast<int>(rnd::hashCoords(bp.seed, 0, 0, kSaltExit) % static_cast<uint64_t>(kN * kN));
-        int anyRoom = -1;
-        for (int k = 0; k < kN * kN && forcedCell < 0; ++k) {
-            const int cell = (start + k) % (kN * kN);
-            const int gx = bp.coord.x * kN + cell % kN, gz = bp.coord.z * kN + cell / kN;
-            if (cellRole(level, gx, gz) != CellRole::Room || isExitCell(level, gx, gz)) continue;
-            if (anyRoom < 0) anyRoom = cell;
-            const bool walled = edge(level, gx, gz, EdgeAxis::West) == EdgeType::Wall || edge(level, gx + 1, gz, EdgeAxis::West) == EdgeType::Wall ||
-                                edge(level, gx, gz, EdgeAxis::South) == EdgeType::Wall || edge(level, gx, gz + 1, EdgeAxis::South) == EdgeType::Wall;
-            if (walled) forcedCell = cell;
-        }
-        if (forcedCell < 0) forcedCell = anyRoom; // all open plan: the desk stands free
+    if (exitChunk && m_exitTerminal) {
+        forcedCell = (m_exitTerminal->y - bp.coord.z * kN) * kN + (m_exitTerminal->x - bp.coord.x * kN);
     }
 
     for (int lz = 0; lz < kN; ++lz) {
@@ -865,7 +906,9 @@ void WorldGenerator::placeFurniture(ChunkBlueprint& bp, const glm::vec3& origin)
 
             // Occasionally a desk carries a retro computer, facing the chair.
             auto maybeTerminal = [&]() {
-                if (!terminalRng.chance(world::kTerminalChance) && !(forceTerminal && deskCount == 0)) return false;
+                const bool rolled = terminalRng.chance(world::kTerminalChance); // (rolled anyway: the stream stays the same)
+                const bool forced = forceTerminal && deskCount == 0;
+                if (exitChunk ? !forced : !(rolled || forced)) return false;
                 const glm::mat4 model =
                     glm::translate(bp.furniture.back().model, glm::vec3(-0.2f, 0.75f, -0.04f)); // on the desk top
                 const uint64_t id = rnd::hashCoords(levelSeed(level), gx, gz, kSaltTerminal + static_cast<uint64_t>(deskCount));

@@ -25,12 +25,13 @@
 // the screen holds still to be read) and resumes it.
 //
 // The puzzle chain (Gameplay/PuzzleChain): once the voice on the phone has
-// overwritten memory at 7A9F, a terminal streaming its HEX log sooner or
-// later shows that line - its ASCII column the IP address (a Poisson
-// process: 95 % within two minutes of watching the HEX stream, a quarter of
-// that rate in the mixed ALL log). PING of that address answers with a storey
-// and chunk offset to the exit, and MAP on a terminal in the exit chunk
-// shows the glitch room blinking. The console reports what the player saw
+// overwritten the memory at its address, a terminal streaming its HEX log
+// sooner or later shows that line - its ASCII column the IP address (a
+// Poisson process: 95 % within two minutes of watching the HEX stream, a
+// quarter of that rate in the mixed ALL log). PING of that address answers
+// with the offset from this terminal to the exit, shaped like the HUD's
+// position without its words ("+2 | [-4, +3]"), and MAP on a terminal in
+// the exit chunk shows the glitch room blinking. The console reports what the player saw
 // (takePuzzleEvents); the Engine moves the chain on.
 //
 // Graphics mode: the hidden DOOM command boots a game (Gameplay/Doom) that
@@ -206,7 +207,7 @@ private:
     termtext::StreamMode m_mode = termtext::StreamMode::All;
     float m_streamTimer = 0.0f;
     bool  m_streamPaused = false;    ///< SPACE on the live log.
-    float m_memoryClock = 0.0f;      ///< Weighted seconds of HEX streaming since 7A9F last had its chance to appear.
+    float m_memoryClock = 0.0f;      ///< Weighted seconds of HEX streaming since the memory's line last had its chance to appear.
     double m_uptime = 0.0;           ///< Seconds since boot (kernel timestamps).
     float m_session = 0.0f;          ///< Seconds the player has spent here this visit.
     float m_warnCooldown = 0.0f;

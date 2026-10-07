@@ -43,7 +43,7 @@
 //              (Core/EnginePuzzle.cpp). Then they are Running again, there.
 //
 // The puzzle chain (Gameplay/PuzzleChain) runs through it all: the phone
-// number on a wall, the call, the memory at 7A9F on a terminal's hex stream,
+// number on a wall, the call, the memory it names on a terminal's hex stream,
 // the ping and its offset, the glitch room on the MAP, the way out. The
 // Engine carries the chain's answers to the world generator (the clue on the
 // walls, the exit chunk), the phones (the clue's number) and the terminals,
@@ -222,6 +222,10 @@ private:
     /// A line of speech captioned at the bottom of the screen.
     void say(const std::string& line, float seconds);
     void setupPuzzleDemo();
+    /// Seats the player at terminal `id` (developer scenes).
+    void sitAtTerminal(uint64_t id);
+    /// Stands the player in the glitch room, facing one of its walls (`walkIn`: and walks into it).
+    void standInGlitchRoom(bool walkIn);
     void updatePuzzleDemo();
 
     // ---- Entities / noise -----------------------------------------------------------------

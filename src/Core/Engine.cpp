@@ -244,10 +244,12 @@ bool Engine::init() {
     if (m_options.puzzleStage == "dialed") m_puzzle->advance(PuzzleStage::NumberDialed);
     else if (m_options.puzzleStage == "memory") m_puzzle->advance(PuzzleStage::MemoryFound);
     else if (!m_options.puzzleStage.empty()) con::line("ENGINE", "Unknown puzzle stage '" + m_options.puzzleStage + "'", con::Level::Warn);
+    // (The memory, its host and the offset to the exit are decided in play: by the phone and the terminal used.)
     const PuzzleSecrets& secret = m_puzzle->secrets();
-    con::spoiler("PUZZLE", con::format("Number {%s}, memory {%s}, host {%s}, offset {%+d;(%+d,%+d)}; stage %s", secret.phoneNumber.c_str(),
-                                       secret.memoryAddress.c_str(), secret.ipAddress.c_str(), secret.floorDelta, secret.chunkDelta.x,
-                                       secret.chunkDelta.y, PuzzleChain::stageName(m_puzzle->stage())));
+    con::spoiler("PUZZLE", con::format("Number {%s}; stage %s", secret.phoneNumber.c_str(), PuzzleChain::stageName(m_puzzle->stage())));
+    if (secret.memoryIndex >= 0) {
+        con::spoiler("PUZZLE", con::format("Memory {%s} holds {%s}", secret.memoryAddress.c_str(), secret.ipAddress.c_str()));
+    }
     m_nextRing = 45.0f; // the first phone rings soon, so the player learns that they do
 
     // Load the neighbourhood of the origin, find a free spot and spawn there.
@@ -645,7 +647,7 @@ void Engine::enterPhone(Phone& phone) {
     if (phone.messageWaiting()) mailbox.message = static_cast<int>(box % static_cast<uint64_t>(phonesfx::kMessageCount));
     mailbox.miscounts = (box >> 32) % 5u == 0u;
     m_call = std::make_unique<PhoneCall>(m_sound->bank(), rnd::hashCombine(m_options.seed, 0x9403'CA11ull), session, mailbox,
-                                         m_puzzle->secrets().phoneDigits, incoming);
+                                         m_puzzle->secrets().phoneDigits, m_puzzle->memoryFor(phone.id()), incoming);
     m_phoneKeys.clear();
     m_phoneHangUp = false;
     m_phoneHover = -1;
@@ -748,7 +750,15 @@ void Engine::updatePhone(float dt) {
     ctx.stalkerBehind = m_entities->stalkerBehindPlayer();
     ctx.wandererDistance = m_entities->wandererDistance();
     m_call->update(dt, ctx);
-    if (m_call->clueAnswered()) advancePuzzle(PuzzleStage::NumberDialed, "the number on the wall answered");
+    if (m_call->clueAnswered()) {
+        // The phone it was answered on decides the memory (and the host in it), if no call has yet.
+        if (m_puzzle->answeredOn(phone->id())) {
+            const PuzzleSecrets& secret = m_puzzle->secrets();
+            con::spoiler("PUZZLE", con::format("Called from phone %016llx: memory {%s} holds {%s}", static_cast<unsigned long long>(phone->id()),
+                                               secret.memoryAddress.c_str(), secret.ipAddress.c_str()));
+        }
+        advancePuzzle(PuzzleStage::NumberDialed, "the number on the wall answered");
+    }
     const bool log = m_options.demo == "phone"; // scripted verification of the line's behaviour
     for (const PhoneSoundEvent& e : m_call->takeSounds()) {
         if (e.id == SoundId::Count) m_sound->stopEarpieceSounds(); // the line moved on
@@ -1060,8 +1070,7 @@ void Engine::drawHud() {
     // Where the player is: the storey and the chunk under their feet.
     const glm::vec3 feet = m_player->feetPosition();
     const ChunkCoord here = ChunkCoord::fromWorld(feet.x, feet.z, m_focusLevel);
-    char where[64];
-    std::snprintf(where, sizeof(where), "FLOOR %d  |  CHUNK [%d, %d]", m_focusLevel, here.x, here.z);
+    const std::string where = locationText(m_focusLevel, here.x, here.z);
     hud.text(where, 10.0f * s, 10.0f * s, TextOverlay::Align::Left, 1.0f, ink * glm::vec4(1, 1, 1, 1.0f - m_fade), true);
     if (m_player->mouseDriveActive()) {
         hud.text("MOUSE DRIVE", 10.0f * s, 24.0f * s, TextOverlay::Align::Left, 1.0f, ink * glm::vec4(1, 1, 1, 0.8f), true);
