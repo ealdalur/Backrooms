@@ -18,39 +18,6 @@ constexpr float kTwoPi = 6.28318530718f;
 inline glm::vec2 xz(const glm::vec3& v) { return {v.x, v.z}; }
 inline float yawToward(const glm::vec3& from, const glm::vec3& to) { return std::atan2(to.x - from.x, to.z - from.z); }
 
-/// Squared distance between segments p1-q1 and p2-q2, with the parameters of
-/// the closest points on each (Ericson, "Real-Time Collision Detection" 5.1.9).
-float segmentDistance2(const glm::vec3& p1, const glm::vec3& q1, const glm::vec3& p2, const glm::vec3& q2, float& s, float& t) {
-    const glm::vec3 d1 = q1 - p1, d2 = q2 - p2, r = p1 - p2;
-    const float a = glm::dot(d1, d1), e = glm::dot(d2, d2), f = glm::dot(d2, r);
-    constexpr float eps = 1e-8f;
-    if (a <= eps && e <= eps) {
-        s = t = 0.0f;
-    } else if (a <= eps) {
-        s = 0.0f;
-        t = std::clamp(f / e, 0.0f, 1.0f);
-    } else {
-        const float c = glm::dot(d1, r);
-        if (e <= eps) {
-            t = 0.0f;
-            s = std::clamp(-c / a, 0.0f, 1.0f);
-        } else {
-            const float b = glm::dot(d1, d2), denom = a * e - b * b;
-            s = denom > eps ? std::clamp((b * f - c * e) / denom, 0.0f, 1.0f) : 0.0f;
-            t = (b * s + f) / e;
-            if (t < 0.0f) {
-                t = 0.0f;
-                s = std::clamp(-c / a, 0.0f, 1.0f);
-            } else if (t > 1.0f) {
-                t = 1.0f;
-                s = std::clamp((b - c) / a, 0.0f, 1.0f);
-            }
-        }
-    }
-    const glm::vec3 c1 = p1 + d1 * s, c2 = p2 + d2 * t;
-    return glm::dot(c1 - c2, c1 - c2);
-}
-
 const char* entityName(EntityKind kind) { return kind == EntityKind::Stalker ? "Stalker" : "Wanderer"; }
 } // namespace
 
@@ -330,7 +297,7 @@ int EntityDirector::shockTest(const glm::vec3& a, const glm::vec3& b, float radi
         for (const CreatureRig::Limb& l : limbs) {
             float s = 0.0f, t = 0.0f;
             const float r = radius + std::max(l.ra, l.rb);
-            if (segmentDistance2(a, b, l.a, l.b, s, t) > r * r || s >= bestS) continue;
+            if (rig::segmentDistance2(a, b, l.a, l.b, s, t) > r * r || s >= bestS) continue;
             bestS = s;
             best = id;
             hit = a + (b - a) * s;

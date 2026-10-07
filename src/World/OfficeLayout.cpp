@@ -3,6 +3,8 @@
 // ---------------------------------------------------------------------------
 #include "World/OfficeLayout.h"
 
+#include "Actors/TeslaParts.h"
+#include "Gameplay/Items.h"
 #include "Math/Random.h"
 #include "Render/MeshBuilder.h"
 #include "World/Decals.h"
@@ -29,6 +31,7 @@ constexpr uint64_t kSaltTerminal = 0x0FF1'0002ull;
 constexpr uint64_t kSaltPhone    = 0x0FF1'0003ull;
 constexpr uint64_t kSaltCabinet  = 0x0FF1'0004ull;
 constexpr uint64_t kSaltText     = 0x0FF1'0005ull;
+constexpr uint64_t kSaltBattery  = 0x0FF1'0006ull;
 
 // Partitions.
 constexpr float kPod         = 1.9f;  ///< Half size of a four-cubicle pod.
@@ -58,6 +61,8 @@ glm::vec3 deskPosition(const glm::vec3& centre, float sx, float sz) {
 }
 
 constexpr glm::ivec2 kConferenceDoor(11, kDepth - 1);
+/// The corner office whose desk has a spare battery on it (the boss's: north-west).
+constexpr glm::ivec2 kBossOffice(0, kDepth - 1);
 
 bool inside(int gx, int gz) { return gx >= 0 && gx < kWidth && gz >= 0 && gz < kDepth; }
 
@@ -251,6 +256,22 @@ private:
         }
     }
 
+    /// A spare battery pack for the Tesla gun, left lying on a surface (+Y up)
+    /// with `charge` left in it - for a player who got out on a flat one.
+    /// (One per cell, its id fixed: the cell's random choices are not disturbed.)
+    void spareBattery(const glm::mat4& surface, float charge) {
+        Item item;
+        item.id = rnd::hashCoords(m_seed, m_gx, m_gz, kSaltBattery);
+        item.type = PartType::Battery;
+        item.charge = charge;
+        ItemSite site;
+        site.id = item.id;
+        site.kind = SiteKind::Desk;
+        site.local = surface * tesla::restTransform(PartType::Battery, SiteKind::Desk, rnd::toUnit(item.id) * 0.7f - 0.35f);
+        site.item = item;
+        m_bp.items.push_back(site);
+    }
+
     // ---- Things on walls --------------------------------------------------------------------
     glm::vec3 onWall(const Wall& w, float along, float y, float out) const {
         return w.face + kUp * y + w.right * along + w.n * out;
@@ -392,6 +413,8 @@ private:
                 const Wall back{glm::vec3(cx, m_origin.y, cz + sz * (e - kPanelHalf)), user, glm::cross(-user, kUp)};
                 const glm::vec3 spot(deskModel * glm::vec4(0.47f, 0.0f, 0.0f, 1.0f));
                 doomPoster(back, glm::dot(spot - back.face, back.right), 1.11f);
+                // And a fully charged battery pack beside the monitor: the gun can still be used out here.
+                spareBattery(glm::translate(deskModel, glm::vec3(-0.6f, 0.75f, 0.1f)), 1.0f);
             } else if (worker >= 0) {
                 // Somebody's chair, pulled up square to the keyboard: they are sitting in it.
                 add(FurnitureType::Chair, glm::vec3(deskModel * glm::vec4(kWorkerSeat, 1.0f)), yawFacing(-user));
@@ -492,6 +515,9 @@ private:
         const FurnitureInstance& desk = add(FurnitureType::ExecDesk, deskPos, yawFacing(-in));
         const glm::mat4 deskModel = desk.model;
         deskKit(deskModel, 0.76f, glm::vec3(-0.45f, 0.76f, -0.12f), 0.75f, 0.95f, 0.45f, 0.7f, false);
+        if (m_gx == kBossOffice.x && m_gz == kBossOffice.y) {
+            spareBattery(glm::translate(deskModel, glm::vec3(0.05f, 0.76f, 0.2f)), 1.0f); // between the keyboard and the clutter
+        }
         add(FurnitureType::ExecChair, deskPos - in * 0.95f, yawFacing(in) + m_rng.range(-0.3f, 0.3f));
         if (visitors) {
             for (float s : {-1.0f, 1.0f}) {
@@ -565,6 +591,8 @@ private:
             for (float x : {0.0f, 0.25f}) {
                 add(FurnitureType::Mug, w.face + w.right * x + w.n * 0.3f + glm::vec3(0.0f, 0.9f, 0.0f), m_rng.range(0.0f, 6.28f));
             }
+            // Somebody left a battery pack by the coffee maker (three quarters charged).
+            spareBattery(glm::translate(glm::mat4(1.0f), w.face + w.right * -1.75f + w.n * 0.32f + glm::vec3(0.0f, 0.9f, 0.0f)), 0.75f);
             notice(w, 1.4f, 1.55f);
         } else {
             // Microwave and fridge.
@@ -627,6 +655,7 @@ private:
         }
         add(FurnitureType::ExecChair, centre + glm::vec3(-2.3f, 0.0f, 0.0f), yawFacing(glm::vec3(1, 0, 0)));
         add(FurnitureType::PaperStack, centre + glm::vec3(0.8f, 0.76f, -0.2f), 0.3f);
+        spareBattery(glm::translate(tableModel, glm::vec3(-0.8f, 0.76f, -0.15f)), 0.5f); // left after a presentation, half charged
         whiteboard(wallOf(m_centre, 0), 0.0f, 1.45f);
     }
 

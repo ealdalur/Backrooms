@@ -235,7 +235,7 @@ bool Engine::init() {
                                               cfg::kChunkBuildBudget);
     m_physics = std::make_unique<Physics>(cfg::kStepHeight);
     m_entities = std::make_unique<EntityDirector>(*m_world, *m_chunks, m_options.seed);
-    m_workers = std::make_unique<OfficeWorkers>(rnd::hashCombine(m_options.seed, 0x0FF1'CE00ull));
+    m_workers = std::make_unique<OfficeWorkers>(rnd::hashCombine(m_options.seed, 0x0FF1'CE00ull), *m_chunks, *m_physics);
     m_entities->setEnabled(!m_options.noEntities);
     m_gun = std::make_unique<TeslaGun>(rnd::hashCombine(m_options.seed, 0x7E51'A600ull));
     // The way out: its number goes up on the walls before the first chunk is built.
@@ -959,20 +959,32 @@ void Engine::update(float dt) {
         showMessage(*gone == EntityKind::Stalker ? "THE STALKER IS GONE. FOR GOOD." : "THE WANDERER IS GONE. FOR GOOD.", 5.0f);
     }
     // In the office, the two of them are at work.
-    if (m_office && m_workers->working()) {
+    if (m_office) {
         std::vector<OfficeWorkers::Sound> sounds;
         m_workers->update(dt, sounds);
         for (const OfficeWorkers::Sound& s : sounds) {
-            m_sound->playEffect(s.id, s.at, s.gain, *m_world, s.refDistance, s.variant);
+            // Each fades out to silence towards its range.
             const float dist = glm::length(s.at - m_player->eyePosition());
+            const float audible = 1.0f - smooth01((dist - 0.55f * s.range) / (0.45f * s.range));
+            if (audible > 0.0f) m_sound->playEffect(s.id, s.at, s.gain * audible, *m_world, s.refDistance, s.variant);
             // Near enough to make out the Wanderer's words: they are captioned.
             if (s.id == SoundId::WorkGrumble && m_dialogueTimer <= 0.0f && dist < 8.0f) say(storysfx::workGrumbleText(s.variant), 3.0f);
             if (!m_options.demo.empty() && s.id != SoundId::TerminalKey) {
-                std::printf("[Demo] t=%.2f %s, %.1fm away\n", m_demoTime,
-                            s.id == SoundId::WorkGrumble ? (std::string("the Wanderer: \"") + storysfx::workGrumbleText(s.variant) + "\"").c_str()
-                                                         : "the Stalker snarls",
-                            dist);
+                const std::string what = s.id == SoundId::WorkGrumble ? "the Wanderer: \"" + std::string(storysfx::workGrumbleText(s.variant)) + "\""
+                                         : s.id == SoundId::WorkSnarl ? std::string("the Stalker snarls")
+                                         : s.id == SoundId::Vaporize  ? std::string("a worker vaporises")
+                                                                      : std::string("a worker shrieks");
+                std::printf("[Demo] t=%.2f %s, %.1fm away%s\n", m_demoTime, what.c_str(), dist, audible > 0.0f ? "" : " (out of earshot)");
             }
+        }
+        // Vaporised at their desks: the incident goes on record.
+        while (const auto fired = m_workers->takeVaporised()) {
+            const bool wanderer = *fired == OfficeWorkers::Wanderer;
+            con::line("HR", con::format("Workplace incident: {%s} (%s) was vaporised at their desk.", wanderer ? "THE WANDERER" : "THE STALKER",
+                                        wanderer ? "Visual Quality Assurance" : "Employee Monitoring"));
+            con::detail("HR has been notified.");
+            if (!m_workers->staffed()) con::detail("Both positions are now open. Your workload has been adjusted accordingly.");
+            showMessage("HR HAS BEEN NOTIFIED.", 5.0f);
         }
     }
     if (m_state == GameState::Caught) updateCaught(dt);
@@ -1666,8 +1678,8 @@ void Engine::setupDemo() {
         const uint64_t routeSeed = m_options.demoInput.empty() ? 1 : std::strtoull(m_options.demoInput.c_str(), nullptr, 10);
         m_autopilot = exploreRoute(feet, m_focusLevel, 600, routeSeed);
         m_autopilotIndex = 0;
-    } else if (demo == "clue" || demo == "hexstream" || demo == "exit-map" || demo == "glitch" || demo == "office" || demo == "ringer" ||
-               demo == "clue-survey" || demo == "terminal-pause") {
+    } else if (demo == "clue" || demo == "hexstream" || demo == "exit-map" || demo == "glitch" || demo == "office" || demo == "office-tesla" ||
+               demo == "ringer" || demo == "clue-survey" || demo == "terminal-pause") {
         setupPuzzleDemo();
     } else if (demo != "idle") { // "idle": nothing staged, entity activity is just logged
         std::cerr << "[Demo] Unknown demo '" << demo << "'\n";

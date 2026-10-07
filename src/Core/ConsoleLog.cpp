@@ -125,7 +125,7 @@ Rgb tagColour(const char* tag) {
     };
     static const Entry kTags[] = {
         {"ENGINE", {104, 204, 255}}, {"GPU", {198, 140, 255}},   {"RENDER", {124, 160, 255}}, {"AUDIO", {110, 232, 152}},
-        {"WORLD", {255, 214, 92}},   {"ENTITY", {255, 112, 92}}, {"INPUT", {150, 220, 220}},
+        {"WORLD", {255, 214, 92}},   {"ENTITY", {255, 112, 92}}, {"INPUT", {150, 220, 220}},  {"HR", {120, 170, 255}},
     };
     for (const Entry& e : kTags) {
         if (std::strcmp(e.tag, tag) == 0) return e.colour;

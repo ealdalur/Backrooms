@@ -8,6 +8,7 @@
 #include "Core/Engine.h"
 
 #include "AI/EntityDirector.h"
+#include "AI/OfficeWorkers.h"
 #include "Actors/FileCabinet.h"
 #include "Actors/Player.h"
 #include "Audio/Soundscape.h"
@@ -291,7 +292,8 @@ void Engine::updateGun(float dt) {
     ctx.ready = m_inventory.assembled() && running && !assembling && m_gunRaise >= 1.0f && m_swapDip <= 0.0f;
     ctx.world = m_chunks.get();
     ctx.physics = m_physics.get();
-    ctx.targets = m_entities.get();
+    // In the office the arcs find whoever is at work there instead.
+    ctx.targets = m_office ? static_cast<IShockable*>(m_workers.get()) : static_cast<IShockable*>(m_entities.get());
     m_gun->update(dt, ctx, m_inventory);
 
     for (const GunSoundEvent& e : m_gun->takeSounds()) {

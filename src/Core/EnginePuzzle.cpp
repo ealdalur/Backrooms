@@ -391,10 +391,20 @@ void Engine::setupPuzzleDemo() {
         m_player->setViewAngles(yawToward(toWall), 0.0f);
         if (m_options.demoInput == "walk") m_autopilot.push_back({wall + toWall * 0.5f}); // straight into it
         m_autopilotIndex = 0;
-    } else if (demo == "office") {
+    } else if (demo == "office" || demo == "office-tesla") {
         // Straight through: the noclip from the moment the screen is black.
         startNoclip();
         m_noclipTimer = 2.05f;
+        if (demo == "office-tesla") {
+            // ...with the gun assembled and a full battery: for the two at their desks.
+            for (int t = 0; t < kPartTypeCount; ++t) {
+                Item item;
+                item.id = rnd::hashCombine(0xDE30ull, static_cast<uint64_t>(t));
+                item.type = static_cast<PartType>(t);
+                m_inventory.give(item);
+            }
+            m_inventory.assemble();
+        }
     } else if (demo == "ringer") {
         m_nextRing = 1.0f;
     } else if (demo == "terminal-pause") {
@@ -589,7 +599,30 @@ void Engine::updatePuzzleDemo() {
             m_screenshotRequested = true;
             m_demoStep = 2;
         }
-    } else if (demo == "glitch" || demo == "office") {
+    }
+    if (demo == "office-tesla" && m_office && m_state == GameState::Running) {
+        // In the doorway of one of their cubicles, the trigger held until it is gone
+        // (--type stalker: the Stalker; both: the Wanderer, then the Stalker).
+        const bool both = m_options.demoInput == "both";
+        const OfficeWorkers::Worker target = m_options.demoInput == "stalker" || (both && !m_workers->atDesk(OfficeWorkers::Wanderer))
+                                                 ? OfficeWorkers::Stalker
+                                                 : OfficeWorkers::Wanderer;
+        const int step = target == OfficeWorkers::Wanderer ? 1 : 2;
+        if (m_demoStep < step && m_workers->atDesk(target)) {
+            const glm::vec3 door = target == OfficeWorkers::Wanderer ? glm::vec3(74.6f, 0.0f, 12.1f) : glm::vec3(81.6f, 0.0f, 12.0f);
+            teleportPlayer(door, office::kLevel, m_player->yaw());
+            m_gunRaise = 1.0f;
+            m_demoStep = step;
+            std::printf("[Demo] t=%.2f in the doorway of the %s's cubicle, %.1fm from it\n", m_demoTime,
+                        target == OfficeWorkers::Wanderer ? "Wanderer" : "Stalker", glm::length(m_workers->centre(target) - m_player->eyePosition()));
+        }
+        if (m_workers->atDesk(target)) {
+            const glm::vec3 d = m_workers->centre(target) - m_player->eyePosition();
+            m_player->setViewAngles(yawToward(d), pitchToward(d));
+        }
+        m_demoTrigger = m_workers->atDesk(target);
+    }
+    if (demo == "glitch" || demo == "office" || demo == "office-tesla") {
         static GameState last = GameState::Running;
         static bool officeLogged = false;
         if (m_state != last) {

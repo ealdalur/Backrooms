@@ -26,6 +26,10 @@ struct TwoBone {
 /// bending the joint towards `pole` (a direction).
 TwoBone solveTwoBone(const glm::vec3& root, const glm::vec3& target, float l1, float l2, const glm::vec3& pole);
 
+/// Squared distance between segments p1-q1 and p2-q2, with the parameters of
+/// the closest points on each: what a bolt of the Tesla gun tests a limb with.
+float segmentDistance2(const glm::vec3& p1, const glm::vec3& q1, const glm::vec3& p2, const glm::vec3& q2, float& s, float& t);
+
 } // namespace rig
 
 class CreatureRig {

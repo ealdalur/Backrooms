@@ -124,6 +124,9 @@ const std::vector<SceneGroup>& sceneGroups() {
               {{"walk", "walks into the wall"}}},
              {"office", "Straight to the office, through the noclip.",
               {{"\"<x> <z> [yaw] [pitch]\"", "then looks round from there (degrees)"}}},
+             {"office-tesla", "Straight to the office with the gun: from a cubicle doorway, fires at the Wanderer at its desk until it "
+                              "is vaporised.",
+              {{"stalker", "at the Stalker instead"}, {"both", "the Wanderer, then the Stalker"}}},
          }},
         {"MENUS",
          {
